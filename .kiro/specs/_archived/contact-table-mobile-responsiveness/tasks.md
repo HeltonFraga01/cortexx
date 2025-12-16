@@ -1,0 +1,96 @@
+# Implementation Plan
+
+- [x] 1. Configurar breakpoint customizado xs no Tailwind
+  - Adicionar breakpoint `xs: '475px'` ao `tailwind.config.ts`
+  - _Requirements: 5.3_
+
+- [x] 2. Corrigir sobreposição de colunas na ContactsTable
+  - [x] 2.1 Aplicar larguras mínimas nas colunas do body (RowComponent)
+    - Coluna telefone: adicionar `min-w-[120px]` e `truncate`
+    - Coluna nome: alterar `min-w-[100px]` para `min-w-[120px]`
+    - Coluna tags: alterar `min-w-[80px]` para `min-w-[100px]`
+    - _Requirements: 1.1, 1.3, 1.4, 1.5_
+  - [x] 2.2 Aplicar larguras mínimas nas colunas do header
+    - Sincronizar larguras do header com as do body
+    - Adicionar `truncate` onde necessário
+    - _Requirements: 1.1, 1.4, 1.5_
+  - [x] 2.3 Ajustar largura mínima da tabela
+    - Alterar `min-w-[600px]` para `min-w-[500px] xs:min-w-[600px]`
+    - _Requirements: 4.4_
+
+- [ ] 3. Sincronizar scroll horizontal entre header e body
+  - [ ] 3.1 Refatorar estrutura de containers
+    - Remover `overflow-x-auto` do container externo
+    - Criar wrapper interno com `overflow-x-auto` envolvendo header + body
+    - _Requirements: 2.1, 2.4_
+  - [ ] 3.2 Aplicar sticky apenas no eixo vertical ao header
+    - Adicionar `sticky top-0 z-10` ao header
+    - Remover qualquer fixação horizontal
+    - _Requirements: 2.2, 2.5_
+  - [ ] 3.3 Garantir alinhamento perfeito header/body
+    - Verificar que larguras de colunas são idênticas
+    - Testar scroll horizontal em diferentes viewports
+    - _Requirements: 2.2, 2.3_
+
+- [ ] 4. Otimizar espaço e legibilidade em mobile
+  - [ ] 4.1 Ajustar padding das células
+    - Alterar `px-1` para `px-2` em todas as células (body e header)
+    - Manter `sm:px-4` para desktop
+    - _Requirements: 4.1, 4.4_
+  - [ ] 4.2 Aumentar tamanho mínimo de fonte
+    - Alterar `text-[10px]` para `text-xs` (12px)
+    - Manter `sm:text-sm` para desktop
+    - _Requirements: 4.2_
+  - [ ] 4.3 Ocultar coluna de tags em viewports muito pequenos
+    - Adicionar `hidden xs:flex` na coluna de tags (body e header)
+    - _Requirements: 4.5_
+
+- [x] 5. Corrigir layout da ilha de seleção (ContactSelection)
+  - [x] 5.0 Adicionar padding bottom ao container principal quando há seleção
+    - Adicionar `pb-32 sm:pb-28` condicionalmente quando `selectedCount > 0`
+    - Evita que a ilha flutuante sobreponha o conteúdo da tabela
+    - _Fix: Desktop overlap issue_
+  - [x] 5.1 Centralizar ilha de seleção no desktop
+    - Usar `useEffect` para detectar viewport e aplicar `transform: translateX(-50%)` inline
+    - Adicionar `sm:max-w-4xl` para limitar largura máxima
+    - Remover animação `sm:animate-slide-up` que conflitava com o transform
+    - _Fix: Desktop centering issue_
+  - [x] 5.2 Melhorar organização dos botões no desktop
+    - Usar `justify-between` para distribuir badge, botões e limpar
+    - Adicionar `flex-shrink-0` em todos os elementos para evitar encolhimento
+    - Adicionar `flex-wrap` para permitir quebra de linha se necessário
+    - Usar breakpoints responsivos (xl/lg) para abreviar textos em telas menores
+    - Reduzir gaps de 6 para 3 e de 4 para 2 para economizar espaço
+    - _Fix: Button overflow issue_
+  - [x] 5.3 Refatorar layout desktop para grid responsivo
+    - Alterar de `flex` com `justify-between` para layout em duas linhas
+    - Linha 1: Badge + Botão Limpar (justify-between)
+    - Linha 2: Grid 2x2 em tablets (sm-lg) e 1x4 em desktop (lg+)
+    - Usar `grid-cols-2 lg:grid-cols-4` para transição suave
+    - Botões principais (Enviar e Exportar) ocupam 2 colunas em tablets
+    - _Fix: Button overlap in medium screens_
+  - [x] 5.4 Ajustar breakpoints de texto nos botões
+    - Alterar de `xl:inline/hidden` para `md:inline/hidden`
+    - Textos completos aparecem a partir de 768px (tablets)
+    - Textos abreviados em telas menores (sm: 640px-768px)
+    - _Fix: Better text visibility on tablets_
+
+- [ ] 6. Validar responsividade em múltiplos viewports
+  - [ ] 6.1 Testar em viewport 320px (iPhone SE)
+    - Verificar que colunas não se sobrepõem
+    - Verificar que ilha de seleção não quebra
+    - Verificar scroll horizontal funciona
+    - _Requirements: 1.1, 2.1, 3.1_
+  - [ ] 6.2 Testar em viewport 375px (iPhone 12/13)
+    - Verificar legibilidade de texto
+    - Verificar área de toque dos botões
+    - Verificar alinhamento header/body
+    - _Requirements: 1.2, 2.2, 4.2_
+  - [ ] 6.3 Testar em viewport 768px (iPad)
+    - Verificar transição para layout desktop
+    - Verificar que coluna de tags está visível
+    - _Requirements: 4.5_
+  - [ ] 6.4 Testar scroll horizontal em todos os viewports
+    - Verificar sincronização header/body
+    - Verificar que não há "buraco" no header
+    - _Requirements: 2.1, 2.2, 2.3_

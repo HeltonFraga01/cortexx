@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Test files
+tests/
+**/*.test.js
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+logs/
+
+# Configuration
+*.config.js

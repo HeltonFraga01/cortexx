@@ -1,0 +1,94 @@
+# Implementation Plan
+
+- [x] 1. Create backend Link Preview Service
+  - [x] 1.1 Create Link Preview Cache utility
+    - Create `server/utils/linkPreviewCache.js` with LRU cache implementation
+    - Implement `get(url)`, `set(url, data)`, `has(url)` methods
+    - Configure 24-hour TTL and 1000 entry limit
+    - _Requirements: 3.1, 3.2, 3.3_
+  - [ ]* 1.2 Write property test for LRU cache eviction
+    - **Property 5: LRU cache eviction**
+    - **Validates: Requirements 3.3**
+  - [x] 1.3 Create Link Preview Service
+    - Create `server/services/LinkPreviewService.js`
+    - Implement `fetchMetadata(url)` function with 5s timeout
+    - Parse HTML to extract og:title, og:description, og:image
+    - Fallback to `<title>` and `<meta name="description">` tags
+    - Resolve relative image URLs to absolute
+    - Handle non-HTML content with domain-only response
+    - Follow up to 3 redirects
+    - _Requirements: 1.1, 4.1, 4.2, 4.4, 4.5_
+  - [ ]* 1.4 Write property test for OpenGraph extraction
+    - **Property 1: OpenGraph metadata extraction**
+    - **Validates: Requirements 1.2, 1.3, 4.4**
+  - [ ]* 1.5 Write property test for relative URL resolution
+    - **Property 3: Relative URL resolution**
+    - **Validates: Requirements 4.5**
+  - [ ]* 1.6 Write property test for non-HTML handling
+    - **Property 7: Non-HTML content handling**
+    - **Validates: Requirements 4.2**
+
+- [x] 2. Create backend Link Preview Route
+  - [x] 2.1 Create Link Preview Route
+    - Create `server/routes/linkPreviewRoutes.js`
+    - Implement `GET /api/link-preview?url=<encoded_url>`
+    - Validate URL parameter
+    - Check cache before fetching
+    - Store result in cache after fetch
+    - Return consistent response format `{ success: true, data: LinkPreviewData }`
+    - _Requirements: 1.1, 3.1, 3.2_
+  - [x] 2.2 Register route in server
+    - Add route to `server/routes/index.js`
+    - _Requirements: 1.1_
+  - [ ]* 2.3 Write property test for cache consistency
+    - **Property 4: Cache consistency**
+    - **Validates: Requirements 3.1, 3.2**
+  - [ ]* 2.4 Write property test for error fallback
+    - **Property 8: Error fallback**
+    - **Validates: Requirements 2.3**
+
+- [x] 3. Checkpoint - Ensure all backend tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 4. Create frontend Link Preview Service
+  - [x] 4.1 Create frontend link preview service
+    - Create `src/services/link-preview.ts`
+    - Implement `fetchLinkPreview(url)` function
+    - Call backend `/api/link-preview` endpoint
+    - Handle errors gracefully with fallback response
+    - _Requirements: 1.1, 2.3_
+  - [x] 4.2 Add description truncation utility
+    - Create `truncateDescription(text, maxLength)` function in `src/lib/utils.ts`
+    - Truncate to 100 characters with ellipsis
+    - _Requirements: 1.4_
+  - [ ]* 4.3 Write property test for description truncation
+    - **Property 2: Description truncation**
+    - **Validates: Requirements 1.4**
+
+- [x] 5. Update LinkPreviewCard component
+  - [x] 5.1 Update LinkPreviewCard to fetch real metadata
+    - Modify `fetchLinkPreview` in `MessageBubble.tsx` to call backend API
+    - Update `LinkPreviewData` interface to include image and description
+    - Show loading skeleton while fetching
+    - _Requirements: 1.1, 2.1, 2.2_
+  - [x] 5.2 Update LinkPreviewCard UI to display image
+    - Add image thumbnail to preview card (max height 120px)
+    - Show image above title/description
+    - Handle image load errors gracefully
+    - _Requirements: 1.2, 1.5_
+  - [x] 5.3 Update LinkPreviewCard UI to display description
+    - Add description text below title
+    - Truncate to 100 characters
+    - Style with muted text color
+    - _Requirements: 1.3, 1.4_
+  - [x] 5.4 Ensure platform branding is preserved
+    - Keep existing platform icon and color logic
+    - Show platform icon alongside image when available
+    - _Requirements: 5.1-5.7_
+  - [ ]* 5.5 Write property test for platform detection
+    - **Property 6: Platform detection consistency**
+    - **Validates: Requirements 5.1-5.7**
+
+- [x] 6. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+

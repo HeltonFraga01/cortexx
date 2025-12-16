@@ -1,0 +1,194 @@
+# Implementation Plan: Bot Usage Quota System
+
+## Overview
+This plan implements a bot usage quota system following the existing QuotaService architecture. The system adds 6 new quota types for controlling bot webhook calls, bot messages, and AI tokens (daily and monthly limits).
+
+---
+
+- [x] 1. Database Schema Extension
+  - [x] 1.1 Create migration to add bot quota columns to plans table
+    - Add columns: `max_bot_calls_per_day`, `max_bot_calls_per_month`, `max_bot_messages_per_day`, `max_bot_messages_per_month`, `max_bot_tokens_per_day`, `max_bot_tokens_per_month`
+    - Set default values as specified in requirements (100, 3000, 50, 1500, 10000, 300000)
+    - Update existing plans (Free, Basic, Pro, Enterprise) with appropriate values
+    - _Requirements: 1.1, 1.2, 2.1, 2.2, 3.1, 3.2, 8.1-8.7_
+  - [ ]* 1.2 Write property test for plan quota fields completeness
+    - **Property 1: Plan quota fields completeness**
+    - **Validates: Requirements 1.1, 1.2, 2.1, 2.2, 3.1, 3.2**
+
+- [x] 2. QuotaService Extension
+  - [x] 2.1 Add new bot quota types to QUOTA_TYPES constant
+    - Add: `MAX_BOT_CALLS_PER_DAY`, `MAX_BOT_CALLS_PER_MONTH`, `MAX_BOT_MESSAGES_PER_DAY`, `MAX_BOT_MESSAGES_PER_MONTH`, `MAX_BOT_TOKENS_PER_DAY`, `MAX_BOT_TOKENS_PER_MONTH`
+    - _Requirements: 1.1, 1.2, 2.1, 2.2, 3.1, 3.2_
+  - [x] 2.2 Add new bot quotas to CYCLE_QUOTAS array
+    - Include all 6 new bot quota types for period-based tracking
+    - _Requirements: 6.1, 6.2, 6.3_
+  - [x] 2.3 Update getPlanQuotas method to include bot quota fields
+    - Fetch bot quota columns from plans table
+    - Return default values when no subscription exists
+    - _Requirements: 1.1, 1.2, 2.1, 2.2, 3.1, 3.2, 8.1-8.7_
+  - [x] 2.4 Update getPeriodStart/getPeriodEnd for daily bot quotas
+    - Ensure daily quotas reset at midnight Brazil timezone
+    - Monthly quotas reset on first day of month
+    - _Requirements: 6.1, 6.2_
+  - [ ]* 2.5 Write property test for period boundary reset
+    - **Property 11: Period boundary reset**
+    - **Validates: Requirements 6.3**
+
+- [x] 3. BotService Quota Methods
+  - [x] 3.1 Add checkBotCallQuota method
+    - Check daily limit first, then monthly
+    - Return { allowed, quotaType, usage, limit }
+    - _Requirements: 1.4, 1.5_
+  - [x] 3.2 Add checkBotMessageQuota method
+    - Check daily limit first, then monthly
+    - Return { allowed, quotaType, usage, limit }
+    - _Requirements: 2.4, 2.5_
+  - [x] 3.3 Add checkBotTokenQuota method
+    - Check daily limit first, then monthly
+    - Accept optional tokensNeeded parameter for pre-check
+    - Return { allowed, quotaType, usage, limit }
+    - _Requirements: 3.4, 3.5_
+  - [x] 3.4 Add trackBotTokenUsage method
+    - Increment both daily and monthly token counters
+    - Accept tokensUsed from webhook response
+    - _Requirements: 3.3, 3.6_
+  - [ ]* 3.5 Write property tests for bot quota enforcement
+    - **Property 3: Bot call quota enforcement**
+    - **Property 6: Bot message quota enforcement**
+    - **Property 8: Token quota enforcement**
+    - **Validates: Requirements 1.4, 1.5, 2.4, 2.5, 3.4, 3.5**
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 5. ChatMessageHandler Integration
+  - [x] 5.1 Add bot call quota check before forwarding to bot
+    - Check quota before calling botService.forwardToBot
+    - Skip bot processing if quota exceeded
+    - Log quota exceeded event with details
+    - _Requirements: 1.3, 1.4, 1.5_
+  - [x] 5.2 Increment bot call counter after successful forward
+    - Call quotaService.incrementUsage for bot calls
+    - Increment both daily and monthly counters
+    - _Requirements: 1.3_
+  - [x] 5.3 Add bot message quota check before sending reply
+    - Check quota before calling handleBotReply
+    - Skip reply if quota exceeded
+    - _Requirements: 2.3, 2.4, 2.5_
+  - [x] 5.4 Increment bot message counter after successful reply
+    - Call quotaService.incrementUsage for bot messages
+    - _Requirements: 2.6_
+  - [x] 5.5 Track token usage from bot webhook response
+    - Parse tokensUsed field from bot response
+    - Call trackBotTokenUsage if tokens reported
+    - _Requirements: 3.3, 3.6_
+  - [x] 5.6 Return quota exceeded info in response
+    - Include quotaExceeded flag, quotaType, usage, limit
+    - Continue normal message storage without bot interaction
+    - _Requirements: 1.6, 7.1, 7.2, 7.3_
+  - [ ]* 5.7 Write property tests for message handler integration
+    - **Property 2: Bot call counter increment**
+    - **Property 4: Message storage independence**
+    - **Property 5: Bot message counter increment**
+    - **Property 7: Token counter increment**
+    - **Validates: Requirements 1.3, 1.6, 2.6, 3.3**
+
+- [x] 6. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 7. Admin Interface Updates
+  - [x] 7.1 Update plan form to include bot quota fields
+    - Add input fields for all 6 bot quota types
+    - Include validation for numeric values
+    - _Requirements: 5.1, 5.2_
+  - [x] 7.2 Update plan display to show bot quota limits
+    - Display all bot quota values in plan details
+    - _Requirements: 5.2_
+  - [x] 7.3 Update user quota override interface
+    - Allow setting overrides for all bot quota types
+    - _Requirements: 5.3, 5.4_
+  - [ ]* 7.4 Write property test for override precedence
+    - **Property 10: Override precedence**
+    - **Validates: Requirements 5.4**
+
+- [x] 8. User Dashboard Updates
+  - [x] 8.1 Add bot quota types to QuotaUsageCard
+    - Display bot calls, bot messages, bot tokens quotas
+    - Show daily and monthly values
+    - _Requirements: 4.1, 4.2, 4.3_
+  - [x] 8.2 Add warning indicators at 80% threshold
+    - Apply warning styling when usage >= 80%
+    - _Requirements: 4.4_
+  - [x] 8.3 Add exceeded indicators at 100% threshold
+    - Apply error styling when usage >= 100%
+    - _Requirements: 4.5_
+  - [ ]* 8.4 Write property test for quota percentage calculation
+    - **Property 9: Quota percentage calculation**
+    - **Validates: Requirements 4.4, 4.5**
+
+- [x] 9. Logging and Debugging
+  - [x] 9.1 Add structured logging for quota events
+    - Log quota checks, increments, and exceeded events
+    - Include userId, quotaType, usage, limit in logs
+    - _Requirements: 7.4_
+  - [ ]* 9.2 Write property test for quota exceeded response structure
+    - **Property 12: Quota exceeded response structure**
+    - **Validates: Requirements 7.1, 7.2, 7.3**
+
+- [ ] 10. Default Values Verification
+  - [ ]* 10.1 Write property test for default values consistency
+    - **Property 13: Default values consistency**
+    - **Validates: Requirements 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7**
+
+- [x] 11. Admin-Assigned Bots Backend
+  - [x] 11.1 Add getBotTemplatesForInboxes method to AutomationService
+    - Query bot_templates table filtering by inbox_assignments
+    - Return bot templates with inbox info for user's inboxes only
+    - _Requirements: 9.1, 9.2_
+  - [x] 11.2 Add getBotQuotaUsage method to QuotaService
+    - Return current usage for all bot quota types (calls, messages, tokens)
+    - Include both daily and monthly values with limits
+    - _Requirements: 9.3, 10.1, 10.2_
+  - [x] 11.3 Create GET /api/user/assigned-bots endpoint
+    - Fetch user's inboxes
+    - Get bot templates assigned to those inboxes
+    - Combine with quota usage data
+    - Return complete bot info with quotas
+    - _Requirements: 9.1, 9.2, 9.3_
+  - [ ]* 11.4 Write property test for admin-assigned bots visibility
+    - **Property 14: Admin-assigned bots visibility**
+    - **Validates: Requirements 9.1, 9.2**
+
+- [x] 12. Admin-Assigned Bots Frontend
+  - [x] 12.1 Add getAssignedBots function to chat service
+    - Call /api/user/assigned-bots endpoint
+    - Define AssignedBot, BotQuotaUsage, QuotaMetric types
+    - _Requirements: 9.1, 9.2, 9.3_
+  - [x] 12.2 Create QuotaProgressBar component
+    - Display progress bar for daily and monthly quotas
+    - Show current usage and limit values
+    - Apply warning color at 80%, error color at 100%
+    - _Requirements: 9.6, 9.7, 10.1, 10.2_
+  - [x] 12.3 Create AdminBotCard component
+    - Display bot name, description, inbox assignments
+    - Show quota progress bars for calls, messages, tokens
+    - Include Admin badge to distinguish from user bots
+    - Do NOT include edit/delete buttons
+    - _Requirements: 9.2, 9.3, 9.4, 9.5, 10.1, 10.2_
+  - [x] 12.4 Create AdminAssignedBots component
+    - Fetch assigned bots using useQuery
+    - Display empty state when no bots assigned
+    - Render AdminBotCard for each bot
+    - _Requirements: 9.1, 9.8_
+  - [x] 12.5 Integrate AdminAssignedBots into BotSettings
+    - Add AdminAssignedBots section at top
+    - Add visual divider between admin bots and user bots
+    - _Requirements: 9.1, 9.4_
+  - [ ]* 12.6 Write property tests for bot card content and immutability
+    - **Property 15: Bot card content completeness**
+    - **Property 16: Admin bot immutability**
+    - **Property 17: Quota threshold indicators**
+    - **Validates: Requirements 9.2, 9.3, 9.5, 9.6, 9.7, 10.1, 10.2**
+
+- [x] 13. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.

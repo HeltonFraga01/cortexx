@@ -1,0 +1,1642 @@
+openapi: 3.0.3
+info:
+  title: WUZAPI Manager API
+  description: |
+    API completa do WUZAPI Manager para gerenciamento de usuários WhatsApp, sessões, branding e conexões de banco de dados.
+    
+    ## Autenticação
+    
+    A API utiliza dois tipos de autenticação:
+    - **Token Administrativo**: Para endpoints `/api/admin/*` - Header `Authorization`
+    - **Token de Usuário**: Para endpoints `/api/user/*` e `/api/session/*` - Header `token` ou `Authorization: Bearer {token}`
+    
+    ## Códigos de Status
+    
+    - `200` - Sucesso
+    - `201` - Criado com sucesso
+    - `400` - Dados inválidos
+    - `401` - Token inválido ou expirado
+    - `403` - Sem permissões
+    - `404` - Recurso não encontrado
+    - `409` - Conflito (recurso já existe)
+    - `500` - Erro interno do servidor
+    - `502` - Erro na comunicação com WuzAPI
+    - `503` - Serviço indisponível
+    - `504` - Timeout na WuzAPI
+    
+  version: 1.0.0
+  contact:
+    name: WUZAPI Manager Support
+    email: support@wuzapi.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:3001
+    description: Servidor de desenvolvimento
+  - url: https://api.wuzapi.com
+    description: Servidor de produção
+
+tags:
+  - name: Health
+    description: Verificação de saúde do sistema
+  - name: Admin
+    description: Endpoints administrativos
+  - name: Session
+    description: Gerenciamento de sessões de usuário
+  - name: Branding
+    description: Configurações de marca/branding
+  - name: Database
+    description: Conexões de banco de dados
+  - name: User
+    description: Endpoints específicos do usuário
+  - name: Webhook
+    description: Configurações de webhook
+  - name: Chat
+    description: Envio de mensagens
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Verificar saúde do sistema
+      description: Endpoint para verificar se o sistema está funcionando corretamente
+      responses:
+        '200':
+          description: Sistema funcionando normalmente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Sistema com problemas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/admin/users:
+    get:
+      tags:
+        - Admin
+      summary: Listar usuários
+      description: Obter lista de todos os usuários com filtros opcionais
+      security:
+        - AdminToken: []
+      parameters:
+        - name: connected_only
+          in: query
+          description: Filtrar apenas usuários conectados
+          schema:
+            type: boolean
+        - name: logged_in_only
+          in: query
+          description: Filtrar apenas usuários logados
+          schema:
+            type: boolean
+        - name: include_stats
+          in: query
+          description: Incluir estatísticas dos usuários
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Lista de usuários obtida com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsersListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '504':
+          $ref: '#/components/responses/Timeout'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags:
+        - Admin
+      summary: Criar novo usuário
+      description: Criar uma nova instância de usuário no sistema
+      security:
+        - AdminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: Usuário criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateUserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+
+  /api/admin/users/{userId}:
+    get:
+      tags:
+        - Admin
+      summary: Obter usuário específico
+      description: Buscar informações de um usuário específico por ID
+      security:
+        - AdminToken: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID do usuário
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Usuário encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    delete:
+      tags:
+        - Admin
+      summary: Remover usuário do banco
+      description: Remove usuário do banco de dados (mantém sessão ativa)
+      security:
+        - AdminToken: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID do usuário
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Usuário removido com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteUserResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/admin/users/{userId}/full:
+    delete:
+      tags:
+        - Admin
+      summary: Remover usuário completamente
+      description: Remove usuário completamente incluindo sessões ativas
+      security:
+        - AdminToken: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID do usuário
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Usuário removido completamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteUserResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/admin/stats:
+    get:
+      tags:
+        - Admin
+      summary: Obter estatísticas administrativas
+      description: Retorna estatísticas agregadas dos usuários
+      security:
+        - AdminToken: []
+      responses:
+        '200':
+          description: Estatísticas obtidas com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStatsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/admin/health:
+    get:
+      tags:
+        - Admin
+      summary: Verificar saúde do serviço administrativo
+      description: Verifica se o serviço administrativo está funcionando
+      responses:
+        '200':
+          description: Serviço funcionando
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceHealthResponse'
+
+  /api/admin/dashboard-stats:
+    get:
+      tags:
+        - Admin
+      summary: Estatísticas do dashboard administrativo
+      description: Obter estatísticas completas para o dashboard administrativo
+      security:
+        - AdminToken: []
+      responses:
+        '200':
+          description: Estatísticas do dashboard
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardStatsResponse'
+
+  /api/admin/branding:
+    get:
+      tags:
+        - Branding
+      summary: Obter configuração de branding
+      description: Recuperar configurações atuais de marca/branding
+      security:
+        - AdminToken: []
+      responses:
+        '200':
+          description: Configuração de branding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrandingResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    put:
+      tags:
+        - Branding
+      summary: Atualizar configuração de branding
+      description: Atualizar configurações de marca/branding
+      security:
+        - AdminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrandingUpdateRequest'
+      responses:
+        '200':
+          description: Branding atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrandingResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/session/status:
+    get:
+      tags:
+        - Session
+      summary: Verificar status da sessão
+      description: Validar token do usuário e obter status da sessão
+      security:
+        - UserToken: []
+      responses:
+        '200':
+          description: Status da sessão
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '504':
+          $ref: '#/components/responses/Timeout'
+
+  /api/session/health:
+    get:
+      tags:
+        - Session
+      summary: Verificar saúde do serviço de sessão
+      description: Verifica se o serviço de validação de sessão está funcionando
+      responses:
+        '200':
+          description: Serviço funcionando
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceHealthResponse'
+
+  /api/session/token-info:
+    get:
+      tags:
+        - Session
+      summary: Informações do token
+      description: Obter informações básicas sobre o formato do token
+      security:
+        - UserToken: []
+      responses:
+        '200':
+          description: Informações do token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenInfoResponse'
+
+  /api/session/connect:
+    post:
+      tags:
+        - Session
+      summary: Conectar sessão WhatsApp
+      description: Iniciar conexão com WhatsApp
+      security:
+        - UserToken: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectSessionRequest'
+      responses:
+        '200':
+          description: Sessão conectada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionActionResponse'
+
+  /api/session/disconnect:
+    post:
+      tags:
+        - Session
+      summary: Desconectar sessão WhatsApp
+      description: Desconectar da sessão WhatsApp
+      security:
+        - UserToken: []
+      responses:
+        '200':
+          description: Sessão desconectada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionActionResponse'
+
+  /api/session/logout:
+    post:
+      tags:
+        - Session
+      summary: Logout da sessão WhatsApp
+      description: Fazer logout da sessão WhatsApp
+      security:
+        - UserToken: []
+      responses:
+        '200':
+          description: Logout realizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionActionResponse'
+
+  /api/session/qr:
+    get:
+      tags:
+        - Session
+      summary: Obter QR Code
+      description: Obter QR Code para login no WhatsApp
+      security:
+        - UserToken: []
+      responses:
+        '200':
+          description: QR Code obtido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QRCodeResponse'
+
+  /api/database-connections:
+    get:
+      tags:
+        - Database
+      summary: Listar conexões de banco
+      description: Obter todas as conexões de banco de dados
+      responses:
+        '200':
+          description: Lista de conexões
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseConnectionsResponse'
+
+    post:
+      tags:
+        - Database
+      summary: Criar conexão de banco
+      description: Criar nova conexão de banco de dados
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDatabaseConnectionRequest'
+      responses:
+        '201':
+          description: Conexão criada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseConnectionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/database-connections/{id}:
+    get:
+      tags:
+        - Database
+      summary: Obter conexão específica
+      description: Buscar conexão de banco por ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Conexão encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseConnectionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Database
+      summary: Atualizar conexão
+      description: Atualizar conexão de banco de dados
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDatabaseConnectionRequest'
+      responses:
+        '200':
+          description: Conexão atualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseConnectionResponse'
+
+    delete:
+      tags:
+        - Database
+      summary: Deletar conexão
+      description: Remover conexão de banco de dados
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Conexão deletada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+
+  /api/database-connections/{id}/status:
+    patch:
+      tags:
+        - Database
+      summary: Atualizar status da conexão
+      description: Atualizar apenas o status de uma conexão
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [connected, disconnected, error, testing]
+      responses:
+        '200':
+          description: Status atualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseConnectionResponse'
+
+  /api/user/messages:
+    get:
+      tags:
+        - User
+      summary: Histórico de mensagens
+      description: Obter histórico de mensagens do usuário
+      security:
+        - UserToken: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Histórico de mensagens
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagesResponse'
+
+  /api/user/dashboard-stats:
+    get:
+      tags:
+        - User
+      summary: Estatísticas do dashboard do usuário
+      description: Obter estatísticas para o dashboard do usuário
+      security:
+        - UserToken: []
+      responses:
+        '200':
+          description: Estatísticas do usuário
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDashboardStatsResponse'
+
+  /api/user/database-connections:
+    get:
+      tags:
+        - User
+      summary: Conexões do usuário
+      description: Obter conexões de banco atribuídas ao usuário
+      security:
+        - UserToken: []
+      responses:
+        '200':
+          description: Conexões do usuário
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseConnectionsResponse'
+
+  /api/user/database-connections/{id}/record:
+    get:
+      tags:
+        - User
+      summary: Buscar registro único do usuário
+      description: |
+        Busca o registro único do usuário para uma conexão específica.
+        O registro é identificado através do campo de vínculo (user_link_field)
+        configurado na conexão, que geralmente é o token do usuário.
+        
+        Este endpoint é usado pela navegação dinâmica da sidebar para acesso
+        direto ao formulário de edição do registro do usuário.
+      security:
+        - UserToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID da conexão de banco de dados
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Registro do usuário encontrado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: Dados do registro do usuário
+                    additionalProperties: true
+                    example:
+                      id: 1
+                      created_at: "2025-10-30T11:30:40+00:00"
+                      updated_at: "2025-11-04T20:51:09+00:00"
+                      companyName: "Minha Empresa"
+                      websiteUrl: "https://minhaempresa.com"
+                      apiToken: "01K7MXQ1..."
+                  metadata:
+                    type: object
+                    properties:
+                      connectionId:
+                        type: integer
+                        example: 1
+                      connectionName:
+                        type: string
+                        example: "Teste Final"
+                      tableName:
+                        type: string
+                        example: "my7kpxstrt02976"
+                      userLinkField:
+                        type: string
+                        example: "apiToken"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Acesso negado à conexão
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  error:
+                    type: string
+                    example: "Access denied to this connection"
+                  code:
+                    type: string
+                    example: "FORBIDDEN"
+                  timestamp:
+                    type: string
+                    format: date-time
+        '404':
+          description: Conexão ou registro não encontrado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  error:
+                    type: string
+                    example: "No record found for this user"
+                  code:
+                    type: string
+                    enum: [CONNECTION_NOT_FOUND, RECORD_NOT_FOUND]
+                    example: "RECORD_NOT_FOUND"
+                  suggestion:
+                    type: string
+                    example: "Contact administrator to create a record for your account"
+                  timestamp:
+                    type: string
+                    format: date-time
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/user/database-connections/{id}/data:
+    get:
+      tags:
+        - User
+      summary: Dados da tabela
+      description: Obter dados da tabela para o usuário
+      security:
+        - UserToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dados da tabela
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TableDataResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags:
+        - User
+      summary: Criar registro
+      description: Criar novo registro na tabela do usuário
+      security:
+        - UserToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '201':
+          description: Registro criado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordResponse'
+
+  /api/user/database-connections/{id}/data/{recordId}:
+    put:
+      tags:
+        - User
+      summary: Atualizar registro
+      description: Atualizar registro na tabela do usuário
+      security:
+        - UserToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: recordId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Registro atualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordResponse'
+
+    delete:
+      tags:
+        - User
+      summary: Deletar registro
+      description: Deletar registro da tabela do usuário
+      security:
+        - UserToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: recordId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Registro deletado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+
+  /api/webhook:
+    get:
+      tags:
+        - Webhook
+      summary: Obter configuração de webhook
+      description: Buscar configuração atual de webhook do usuário
+      security:
+        - UserToken: []
+      responses:
+        '200':
+          description: Configuração de webhook
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookConfigResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags:
+        - Webhook
+      summary: Atualizar webhook
+      description: Atualizar configuração de webhook do usuário
+      security:
+        - UserToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookUpdateRequest'
+      responses:
+        '200':
+          description: Webhook atualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookConfigResponse'
+
+  /api/chat/send/text:
+    post:
+      tags:
+        - Chat
+      summary: Enviar mensagem de texto
+      description: Enviar mensagem de texto via WhatsApp
+      security:
+        - UserToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendTextMessageRequest'
+      responses:
+        '200':
+          description: Mensagem enviada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendMessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    AdminToken:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Token administrativo para endpoints admin
+    UserToken:
+      type: apiKey
+      in: header
+      name: token
+      description: Token de usuário para endpoints específicos
+
+  responses:
+    BadRequest:
+      description: Dados inválidos ou formato incorreto
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Token inválido ou expirado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Sem permissões para acessar o recurso
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Recurso não encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Recurso já existe
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Erro interno do servidor
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BadGateway:
+      description: Erro na comunicação com WuzAPI
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Timeout:
+      description: Timeout na comunicação com WuzAPI
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: "Erro na validação dos dados"
+        code:
+          type: integer
+          example: 400
+        message:
+          type: string
+          example: "Detalhes específicos do erro"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00.000Z"
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, error]
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        environment:
+          type: string
+        version:
+          type: string
+        cors_config:
+          type: object
+        database:
+          type: object
+          properties:
+            type:
+              type: string
+            status:
+              type: string
+            path:
+              type: string
+            file_exists:
+              type: boolean
+            file_size_bytes:
+              type: integer
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        connected:
+          type: boolean
+        loggedIn:
+          type: boolean
+        jid:
+          type: string
+        token:
+          type: string
+
+    UsersListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        code:
+          type: integer
+        data:
+          type: object
+          properties:
+            users:
+              type: array
+              items:
+                $ref: '#/components/schemas/User'
+            filtered_data:
+              type: array
+              items:
+                $ref: '#/components/schemas/User'
+            stats:
+              $ref: '#/components/schemas/UserStats'
+        timestamp:
+          type: string
+          format: date-time
+
+    UserStats:
+      type: object
+      properties:
+        total:
+          type: integer
+        connected:
+          type: integer
+        logged_in:
+          type: integer
+        disconnected:
+          type: integer
+
+    CreateUserRequest:
+      type: object
+      required:
+        - name
+        - token
+      properties:
+        name:
+          type: string
+          description: Nome da instância
+          example: "Minha Instância"
+        token:
+          type: string
+          description: Token único do usuário
+          example: "abc123def456"
+        webhook:
+          type: string
+          description: URL do webhook
+          example: "https://meusite.com/webhook"
+        events:
+          type: string
+          description: Eventos separados por vírgula ou "All"
+          example: "Message,ReadReceipt"
+        proxyConfig:
+          type: object
+          description: Configurações de proxy
+        s3Config:
+          type: object
+          description: Configurações de S3
+
+    CreateUserResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        code:
+          type: integer
+        data:
+          $ref: '#/components/schemas/User'
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    UserResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        code:
+          type: integer
+        data:
+          $ref: '#/components/schemas/User'
+        timestamp:
+          type: string
+          format: date-time
+
+    DeleteUserResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        code:
+          type: integer
+        data:
+          type: object
+          properties:
+            message:
+              type: string
+            userId:
+              type: string
+            deletionType:
+              type: string
+              enum: [database_only, full]
+        timestamp:
+          type: string
+          format: date-time
+
+    AdminStatsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        code:
+          type: integer
+        data:
+          $ref: '#/components/schemas/UserStats'
+        timestamp:
+          type: string
+          format: date-time
+
+    ServiceHealthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        code:
+          type: integer
+        data:
+          type: object
+          properties:
+            service:
+              type: string
+            status:
+              type: string
+            wuzapi_connection:
+              type: string
+            wuzapi_base_url:
+              type: string
+            timeout_ms:
+              type: integer
+        timestamp:
+          type: string
+          format: date-time
+
+    DashboardStatsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            systemStatus:
+              type: string
+            uptime:
+              type: string
+            version:
+              type: string
+            totalUsers:
+              type: integer
+            connectedUsers:
+              type: integer
+            loggedInUsers:
+              type: integer
+            activeConnections:
+              type: integer
+            memoryStats:
+              type: object
+            goroutines:
+              type: integer
+            users:
+              type: array
+              items:
+                $ref: '#/components/schemas/User'
+
+    BrandingConfig:
+      type: object
+      properties:
+        id:
+          type: integer
+        appName:
+          type: string
+        logoUrl:
+          type: string
+        primaryColor:
+          type: string
+        secondaryColor:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    BrandingResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        code:
+          type: integer
+        data:
+          $ref: '#/components/schemas/BrandingConfig'
+        timestamp:
+          type: string
+          format: date-time
+
+    BrandingUpdateRequest:
+      type: object
+      required:
+        - appName
+      properties:
+        appName:
+          type: string
+          minLength: 1
+          maxLength: 50
+          example: "Minha Empresa"
+        logoUrl:
+          type: string
+          format: uri
+          example: "https://exemplo.com/logo.png"
+        primaryColor:
+          type: string
+          pattern: "^#[0-9A-Fa-f]{6}$"
+          example: "#007bff"
+        secondaryColor:
+          type: string
+          pattern: "^#[0-9A-Fa-f]{6}$"
+          example: "#6c757d"
+
+    SessionStatusResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        code:
+          type: integer
+        data:
+          type: object
+          properties:
+            Connected:
+              type: boolean
+            LoggedIn:
+              type: boolean
+            JID:
+              type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    TokenInfoResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        code:
+          type: integer
+        data:
+          type: object
+          properties:
+            token_provided:
+              type: boolean
+            token_length:
+              type: integer
+            valid_format:
+              type: boolean
+            token_prefix:
+              type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    ConnectSessionRequest:
+      type: object
+      properties:
+        Subscribe:
+          type: array
+          items:
+            type: string
+          example: ["Message", "ReadReceipt"]
+        Immediate:
+          type: boolean
+          example: false
+
+    SessionActionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: object
+
+    QRCodeResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            QRCode:
+              type: string
+              description: Base64 encoded QR code image
+
+    DatabaseConnection:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+          enum: [MYSQL, POSTGRESQL, SQLITE, NOCODB]
+        host:
+          type: string
+        port:
+          type: integer
+        database:
+          type: string
+        username:
+          type: string
+        status:
+          type: string
+          enum: [connected, disconnected, error, testing]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    DatabaseConnectionsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DatabaseConnection'
+        count:
+          type: integer
+
+    CreateDatabaseConnectionRequest:
+      type: object
+      required:
+        - name
+        - type
+        - host
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [MYSQL, POSTGRESQL, SQLITE, NOCODB]
+        host:
+          type: string
+        port:
+          type: integer
+        database:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        nocodbToken:
+          type: string
+        nocodbProjectId:
+          type: string
+        nocodbTableId:
+          type: string
+
+    UpdateDatabaseConnectionRequest:
+      type: object
+      required:
+        - name
+        - type
+        - host
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [MYSQL, POSTGRESQL, SQLITE, NOCODB]
+        host:
+          type: string
+        port:
+          type: integer
+        database:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+
+    DatabaseConnectionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/DatabaseConnection'
+        message:
+          type: string
+
+    DeleteResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: object
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+        phone:
+          type: string
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [sent, delivered, read, failed]
+        type:
+          type: string
+          enum: [text, image, audio, video, document]
+
+    MessagesResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            messages:
+              type: array
+              items:
+                $ref: '#/components/schemas/Message'
+            total:
+              type: integer
+            limit:
+              type: integer
+            offset:
+              type: integer
+
+    UserDashboardStatsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            messagesCount:
+              type: integer
+            connectionsCount:
+              type: integer
+            sessionStatus:
+              type: object
+              properties:
+                connected:
+                  type: boolean
+                loggedIn:
+                  type: boolean
+                jid:
+                  type: string
+
+    TableDataResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        metadata:
+          type: object
+          properties:
+            totalRecords:
+              type: integer
+            connectionId:
+              type: integer
+            timestamp:
+              type: string
+              format: date-time
+
+    RecordResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+
+    WebhookConfig:
+      type: object
+      properties:
+        webhook:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+        subscribe:
+          type: array
+          items:
+            type: string
+
+    WebhookConfigResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        webhook:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+        subscribe:
+          type: array
+          items:
+            type: string
+        data:
+          $ref: '#/components/schemas/WebhookConfig'
+
+    WebhookUpdateRequest:
+      type: object
+      properties:
+        webhook:
+          type: string
+          format: uri
+          example: "https://meusite.com/webhook"
+        events:
+          type: array
+          items:
+            type: string
+          example: ["Message", "ReadReceipt", "MessageStatus"]
+        subscribe:
+          type: array
+          items:
+            type: string
+          example: ["Message"]
+
+    SendTextMessageRequest:
+      type: object
+      required:
+        - Phone
+        - Body
+      properties:
+        Phone:
+          type: string
+          example: "5511999999999"
+        Body:
+          type: string
+          example: "Olá! Como posso ajudá-lo?"
+
+    SendMessageResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            messageId:
+              type: string
+            status:
+              type: string

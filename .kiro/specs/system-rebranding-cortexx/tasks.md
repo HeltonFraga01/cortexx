@@ -1,0 +1,85 @@
+# Implementation Plan
+
+- [x] 1. Update Docker Swarm production configuration
+  - [x] 1.1 Update docker-compose-swarm.yaml service and image names
+    - Replace service name `wuzapi-manager` with `cortexx`
+    - Replace image `heltonfraga/wuzapi-manager:v1.5.47` with `heltonfraga/cortexx:v1.5.47`
+    - Replace `SQLITE_DB_PATH=/app/data/wuzapi-manager.db` with `SQLITE_DB_PATH=/app/data/cortexx.db`
+    - _Requirements: 1.1, 1.4, 1.5_
+  - [x] 1.2 Update docker-compose-swarm.yaml Traefik labels
+    - Replace all `traefik.http.routers.wuzapi-manager` with `traefik.http.routers.cortexx`
+    - Replace all `traefik.http.services.wuzapi-manager` with `traefik.http.services.cortexx`
+    - Replace cookie name `wuzapi-manager_session` with `cortexx_session`
+    - _Requirements: 1.3_
+  - [x] 1.3 Update docker-compose-swarm.yaml volumes
+    - Replace `wuzapi-manager-data` with `cortexx-data`
+    - Replace `wuzapi-manager-logs` with `cortexx-logs`
+    - _Requirements: 1.2_
+
+- [x] 2. Update development Docker configurations
+  - [x] 2.1 Update docker-compose.yml for development
+    - Replace service name `wuzapi-manager-dev` with `cortexx-dev`
+    - Replace container name `wuzapi-manager-dev` with `cortexx-dev`
+    - _Requirements: 2.1_
+  - [x] 2.2 Update docker-compose.local.yml for local testing
+    - Replace service name `wuzapi-manager` with `cortexx`
+    - Replace container name `wuzapi-manager-local` with `cortexx-local`
+    - Replace network name `wuzapi-local` with `cortexx-local`
+    - _Requirements: 2.2, 2.3_
+
+- [x] 3. Update monitoring configuration
+  - [x] 3.1 Update monitoring/prometheus.yml
+    - Replace job_name `wuzapi-manager` with `cortexx`
+    - Replace target `wuzapi-manager-dev:3001` with `cortexx-dev:3001`
+    - _Requirements: 2.3_
+
+- [x] 4. Update GitHub Actions workflows
+  - [x] 4.1 Update .github/workflows/docker-multiarch.yml
+    - Replace `IMAGE_NAME: wuzapi-manager` with `IMAGE_NAME: cortexx`
+    - _Requirements: 4.1_
+  - [x] 4.2 Update .github/workflows/docker-multi-arch.yml
+    - Replace `IMAGE_NAME: heltonfraga/wuzapi-manager` with `IMAGE_NAME: heltonfraga/cortexx`
+    - _Requirements: 4.2_
+  - [x] 4.3 Update .github/workflows/deploy.yml
+    - Replace `IMAGE_NAME: heltonfraga/wuzapi-manager` with `IMAGE_NAME: heltonfraga/cortexx`
+    - _Requirements: 4.2_
+  - [x] 4.4 Update .github/workflows/release.yml
+    - Replace `IMAGE_NAME: heltonfraga/wuzapi-manager` with `IMAGE_NAME: heltonfraga/cortexx`
+    - _Requirements: 4.2_
+
+- [x] 5. Update documentation files
+  - [x] 5.1 Update QUICK_REFERENCE.md
+    - Replace all `wuzapi-manager_wuzapi-manager` with `cortexx_cortexx`
+    - Replace all `name=wuzapi-manager` with `name=cortexx`
+    - _Requirements: 5.1, 5.2, 5.3_
+  - [x] 5.2 Update IMPLEMENTATION_SUMMARY.md
+    - Replace all `wuzapi-manager_wuzapi-manager` with `cortexx_cortexx`
+    - _Requirements: 5.1_
+  - [x] 5.3 Update VERIFICACOES_ADICIONAIS.md
+    - Replace all `wuzapi-manager_wuzapi-manager` with `cortexx_cortexx`
+    - Replace all `name=wuzapi-manager` with `name=cortexx`
+    - Replace all `heltonfraga/wuzapi-manager` with `heltonfraga/cortexx`
+    - _Requirements: 5.1, 5.2, 5.3_
+  - [x] 5.4 Update CHANGELOG.md
+    - Replace repository URLs from `wuzapi-manager` to `cortexx`
+    - _Requirements: 3.3_
+
+- [x] 6. Update steering documentation
+  - [x] 6.1 Update .kiro/steering/docker-deployment.md
+    - Replace all `wuzapi-manager` references with `cortexx`
+    - Replace all `heltonfraga/wuzapi-manager` with `heltonfraga/cortexx`
+    - _Requirements: 3.1, 3.2_
+  - [x] 6.2 Update .kiro/steering/stack_docker_Swarm.yaml.md if exists
+    - Replace all `wuzapi-manager` references with `cortexx`
+    - _Requirements: 3.1_
+
+- [x] 7. Final verification
+  - [x] 7.1 Verify no old references remain
+    - Run `grep -r "wuzapi-manager" --include="*.yaml" --include="*.yml" --include="*.md" .`
+    - Ensure zero results (excluding archived/historical files if any)
+    - _Requirements: 1.1-1.5, 2.1-2.3, 3.1-3.3, 4.1-4.2, 5.1-5.3_
+  - [x] 7.2 Validate Docker compose syntax
+    - Run `docker-compose -f docker-compose-swarm.yaml config`
+    - Run `docker-compose -f docker-compose.yml config`
+    - Run `docker-compose -f docker-compose.local.yml config`
+    - _Requirements: 1.1, 2.1, 2.2_

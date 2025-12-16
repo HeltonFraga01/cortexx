@@ -1,0 +1,397 @@
+/**
+ * User Bot Routes
+ * 
+ * Handles bot management for users (CRUD, pause/resume)
+ * 
+ * Requirements: 17.1-17.6, 18.1-18.4
+ */
+
+const express = require('express')
+const router = express.Router()
+const { logger } = require('../utils/logger')
+const BotService = require('../services/BotService')
+const { quotaMiddleware, resolveUserId } = require('../middleware/quotaEnforcement')
+const { featureMiddleware } = require('../middleware/featureEnforcement')
+
+// Use the global verifyUserToken middleware for consistent user identification
+const verifyUserToken = require('../middleware/verifyUserToken')
+
+/**
+ * Helper to get consistent userId for bot operations
+ * Uses the same logic as quota enforcement to ensure consistency
+ * @param {Object} req - Express request
+ * @returns {string} User ID (token as fallback)
+ */
+function getBotUserId(req) {
+  // Use resolveUserId for consistency with quota enforcement
+  const resolvedId = resolveUserId(req);
+  // Fallback to token if no resolved ID (for backwards compatibility)
+  return resolvedId || req.userToken || req.userId;
+}
+
+/**
+ * GET /api/user/bots
+ * List all bots for the user
+ */
+router.get('/', verifyUserToken, async (req, res) => {
+  try {
+    const db = req.app.locals.db
+    const botService = new BotService(db)
+    const userId = getBotUserId(req)
+    
+    const bots = await botService.getBots(userId)
+
+    res.json({ success: true, data: bots })
+  } catch (error) {
+    logger.error('Error fetching bots', { error: error.message, userId: getBotUserId(req) })
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * GET /api/user/bots/assigned
+ * Get admin-assigned bots for the user with quota usage
+ * Returns bot templates assigned to user's inboxes with current quota information
+ * 
+ * IMPORTANT: This route MUST be defined BEFORE /:id to avoid "assigned" being treated as an ID
+ * 
+ * Requirements: 9.1, 9.2, 9.3
+ */
+router.get('/assigned', verifyUserToken, async (req, res) => {
+  try {
+    const db = req.app.locals.db
+    const userId = getBotUserId(req)
+    const AutomationService = require('../services/AutomationService')
+    const QuotaService = require('../services/QuotaService')
+    const automationService = new AutomationService(db)
+    const quotaService = new QuotaService(db)
+
+    // Get user's inboxes via accounts table
+    // Users own accounts, accounts have inboxes
+    const { rows: inboxes } = await db.query(
+      `SELECT i.id, i.name 
+       FROM inboxes i
+       JOIN accounts a ON i.account_id = a.id
+       WHERE a.owner_user_id = ?`,
+      [userId]
+    )
+
+    if (!inboxes || inboxes.length === 0) {
+      return res.json({ success: true, data: [] })
+    }
+
+    const inboxIds = inboxes.map(i => i.id)
+    const inboxMap = new Map(inboxes.map(i => [i.id, i.name]))
+
+    // Get bot templates assigned to these inboxes
+    const assignedBots = await automationService.getBotTemplatesForInboxes(inboxIds)
+
+    // Get quota usage for the user
+    const quotaUsage = await quotaService.getBotQuotaUsage(userId)
+
+    // Combine bot info with quota usage and inbox names
+    const botsWithQuota = assignedBots.map(bot => ({
+      ...bot,
+      inboxAssignments: bot.inboxAssignments.map(a => ({
+        inboxId: a.inboxId,
+        inboxName: inboxMap.get(a.inboxId) || `Inbox ${a.inboxId}`
+      })),
+      quotaUsage: {
+        calls: {
+          daily: quotaUsage.botCallsDaily,
+          monthly: quotaUsage.botCallsMonthly,
+          dailyLimit: quotaUsage.maxBotCallsPerDay,
+          monthlyLimit: quotaUsage.maxBotCallsPerMonth
+        },
+        messages: {
+          daily: quotaUsage.botMessagesDaily,
+          monthly: quotaUsage.botMessagesMonthly,
+          dailyLimit: quotaUsage.maxBotMessagesPerDay,
+          monthlyLimit: quotaUsage.maxBotMessagesPerMonth
+        },
+        tokens: {
+          daily: quotaUsage.botTokensDaily,
+          monthly: quotaUsage.botTokensMonthly,
+          dailyLimit: quotaUsage.maxBotTokensPerDay,
+          monthlyLimit: quotaUsage.maxBotTokensPerMonth
+        },
+        dailyResetAt: quotaUsage.dailyResetAt,
+        monthlyResetAt: quotaUsage.monthlyResetAt
+      }
+    }))
+
+    logger.info('Fetched assigned bots for user', { 
+      userId, 
+      inboxCount: inboxIds.length, 
+      botCount: botsWithQuota.length 
+    })
+
+    res.json({ success: true, data: botsWithQuota })
+  } catch (error) {
+    logger.error('Error fetching assigned bots', { error: error.message, userId: getBotUserId(req) })
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * GET /api/user/bots/:id
+ * Get a specific bot
+ */
+router.get('/:id', verifyUserToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const db = req.app.locals.db
+    const botService = new BotService(db)
+    const userId = getBotUserId(req)
+    
+    const bot = await botService.getBotById(parseInt(id, 10), userId)
+    
+    if (!bot) {
+      return res.status(404).json({ success: false, error: 'Bot not found' })
+    }
+
+    res.json({ success: true, data: bot })
+  } catch (error) {
+    logger.error('Error fetching bot', { error: error.message, botId: req.params.id })
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * POST /api/user/bots
+ * Create a new bot
+ */
+router.post('/', verifyUserToken, featureMiddleware.botAutomation, quotaMiddleware.bots, async (req, res) => {
+  try {
+    const { name, description, avatarUrl, outgoingUrl, includeHistory } = req.body
+    
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'Name is required' })
+    }
+    if (!outgoingUrl) {
+      return res.status(400).json({ success: false, error: 'Outgoing webhook URL is required' })
+    }
+
+    const db = req.app.locals.db
+    const botService = new BotService(db)
+    const userId = getBotUserId(req)
+    
+    const bot = await botService.createBot(userId, {
+      name,
+      description,
+      avatarUrl,
+      outgoingUrl,
+      includeHistory: includeHistory || false
+    })
+
+    res.status(201).json({ success: true, data: bot })
+  } catch (error) {
+    // Handle quota exceeded error from BotService
+    if (error.code === 'QUOTA_EXCEEDED') {
+      return res.status(429).json({
+        success: false,
+        error: 'Quota exceeded',
+        code: 'QUOTA_EXCEEDED',
+        details: error.details,
+        message: 'Você atingiu o limite de bots. Faça upgrade do seu plano para continuar.'
+      })
+    }
+    logger.error('Error creating bot', { error: error.message, userId: getBotUserId(req) })
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * PUT /api/user/bots/:id
+ * Update a bot
+ */
+router.put('/:id', verifyUserToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { name, description, avatarUrl, outgoingUrl, includeHistory } = req.body
+
+    const db = req.app.locals.db
+    const botService = new BotService(db)
+    const userId = getBotUserId(req)
+    
+    const bot = await botService.updateBot(parseInt(id, 10), userId, {
+      name,
+      description,
+      avatarUrl,
+      outgoingUrl,
+      includeHistory
+    })
+
+    res.json({ success: true, data: bot })
+  } catch (error) {
+    logger.error('Error updating bot', { error: error.message, botId: req.params.id })
+    
+    if (error.message.includes('not found')) {
+      return res.status(404).json({ success: false, error: error.message })
+    }
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * DELETE /api/user/bots/:id
+ * Delete a bot
+ */
+router.delete('/:id', verifyUserToken, async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const db = req.app.locals.db
+    const botService = new BotService(db)
+    const userId = getBotUserId(req)
+    
+    await botService.deleteBot(parseInt(id, 10), userId)
+
+    res.json({ success: true, message: 'Bot deleted' })
+  } catch (error) {
+    logger.error('Error deleting bot', { error: error.message, botId: req.params.id })
+    
+    if (error.message.includes('not found')) {
+      return res.status(404).json({ success: false, error: error.message })
+    }
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * POST /api/user/bots/:id/pause
+ * Pause a bot
+ */
+router.post('/:id/pause', verifyUserToken, async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const db = req.app.locals.db
+    const botService = new BotService(db)
+    const userId = getBotUserId(req)
+    
+    const bot = await botService.pauseBot(parseInt(id, 10), userId)
+
+    res.json({ success: true, data: bot })
+  } catch (error) {
+    logger.error('Error pausing bot', { error: error.message, botId: req.params.id })
+    
+    if (error.message.includes('not found')) {
+      return res.status(404).json({ success: false, error: error.message })
+    }
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * POST /api/user/bots/:id/resume
+ * Resume a bot
+ */
+router.post('/:id/resume', verifyUserToken, async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const db = req.app.locals.db
+    const botService = new BotService(db)
+    const userId = getBotUserId(req)
+    
+    const bot = await botService.resumeBot(parseInt(id, 10), userId)
+
+    res.json({ success: true, data: bot })
+  } catch (error) {
+    logger.error('Error resuming bot', { error: error.message, botId: req.params.id })
+    
+    if (error.message.includes('not found')) {
+      return res.status(404).json({ success: false, error: error.message })
+    }
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * POST /api/user/bots/:id/regenerate-token
+ * Regenerate bot access token
+ */
+router.post('/:id/regenerate-token', verifyUserToken, async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const db = req.app.locals.db
+    const botService = new BotService(db)
+    const userId = getBotUserId(req)
+    
+    const bot = await botService.regenerateAccessToken(parseInt(id, 10), userId)
+
+    res.json({ success: true, data: bot })
+  } catch (error) {
+    logger.error('Error regenerating bot token', { error: error.message, botId: req.params.id })
+    
+    if (error.message.includes('not found')) {
+      return res.status(404).json({ success: false, error: error.message })
+    }
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * POST /api/user/bots/:id/set-default
+ * Set a bot as the default bot for auto-assignment
+ * 
+ * Requirements: 3.1
+ */
+router.post('/:id/set-default', verifyUserToken, async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const db = req.app.locals.db
+    const botService = new BotService(db)
+    const userId = getBotUserId(req)
+    
+    const bot = await botService.setDefaultBot(parseInt(id, 10), userId)
+
+    res.json({ success: true, data: bot })
+  } catch (error) {
+    logger.error('Error setting default bot', { error: error.message, botId: req.params.id })
+    
+    if (error.message.includes('not found')) {
+      return res.status(404).json({ success: false, error: error.message })
+    }
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * PUT /api/user/bots/priorities
+ * Update priorities for multiple bots (for drag-and-drop reordering)
+ * 
+ * Requirements: 4.1, 4.2, 4.3
+ */
+router.put('/priorities', verifyUserToken, async (req, res) => {
+  try {
+    const { priorities } = req.body
+
+    if (!Array.isArray(priorities) || priorities.length === 0) {
+      return res.status(400).json({ success: false, error: 'Priorities array is required' })
+    }
+
+    const db = req.app.locals.db
+    const botService = new BotService(db)
+    const userId = getBotUserId(req)
+    
+    await botService.updatePriorities(userId, priorities)
+
+    // Return updated bots list
+    const bots = await botService.getBots(userId)
+
+    res.json({ success: true, data: bots })
+  } catch (error) {
+    logger.error('Error updating bot priorities', { error: error.message, userId: getBotUserId(req) })
+    
+    if (error.message.includes('not found')) {
+      return res.status(404).json({ success: false, error: error.message })
+    }
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+module.exports = router

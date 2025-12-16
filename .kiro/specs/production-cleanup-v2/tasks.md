@@ -1,0 +1,96 @@
+# Implementation Plan
+
+- [x] 1. Phase 1: Remove unused directories and files
+  - [x] 1.1 Remove cleanup-analyzer directory
+    - Delete entire `cleanup-analyzer/` directory (not actively used)
+    - _Requirements: 8.1, 8.2_
+  - [x] 1.2 Remove testsprite_tests directory and related files
+    - Delete `testsprite_tests/` directory
+    - Delete `src/utils/calculator.ts` (only used for TestSprite)
+    - _Requirements: 5.1, 5.2_
+  - [x] 1.3 Remove duplicate shell scripts from root
+    - Delete `build-arm64-only.sh` (duplicate of deploy-multiarch.sh)
+    - Delete `build-local-only.sh` (duplicate of scripts/docker-build-local.sh)
+    - Delete `push-image.sh` (duplicate functionality)
+    - Delete `push-now.sh` (duplicate functionality)
+    - Delete `test-and-push.sh` (not used)
+    - Move `diagnose-docker.sh` to `scripts/`
+    - _Requirements: 3.1, 3.2, 6.3_
+  - [x] 1.4 Remove duplicate docker-compose file
+    - Delete `docker-swarm-servidor.yml` (duplicate of docker-compose.swarm.yml)
+    - _Requirements: 6.2_
+
+- [x] 2. Checkpoint - Verify build and tests
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 3. Phase 2: Clean up documentation
+  - [x] 3.1 Remove empty directories and archive historical docs
+    - Remove empty `docs/deployment/` directory
+    - Move `CLEANUP_SUMMARY.md` to `docs/development/`
+    - _Requirements: 2.1, 2.2_
+  - [x] 3.2 Consolidate accessibility documentation
+    - Merge `docs/ACCESSIBILITY.md` into `docs/ACCESSIBILITY_GUIDE.md`
+    - Delete `docs/ACCESSIBILITY.md`
+    - _Requirements: 2.3_
+  - [x] 3.3 Archive historical Docker fix documentation
+    - Move to `docs/development/archived/`:
+      - `docs/DOCKER_AUTHENTICATION_FIX_SUMMARY.md`
+      - `docs/DOCKER_AUTHENTICATION_TROUBLESHOOTING.md`
+      - `docs/DOCKER_COOKIE_FIX.md`
+    - _Requirements: 2.2_
+  - [x] 3.4 Clean up root documentation files
+    - Review and update or remove `PRODUCTION_STATUS.md`
+    - Consolidate `PUSH_INSTRUCTIONS.md` into `CONTRIBUTING.md` and delete
+    - _Requirements: 6.1, 6.4_
+
+- [x] 4. Checkpoint - Verify documentation links
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 5. Phase 3: Archive completed specs
+  - [x] 5.1 Archive inactive specs
+    - Move to `.kiro/specs/_archived/`:
+      - `admin-settings-comprehensive-fix/`
+      - `avatar-display-fix/`
+      - `branding-persistence-docker-fix/`
+      - `custom-html-rendering-fix/`
+      - `database-security-fixes/`
+      - `design-system-refactor/`
+      - `disparador-review-cleanup/`
+      - `messaging-system-modularization/`
+      - `mobile-responsiveness-fix/`
+      - `phone-validation-fix/`
+      - `whatsapp-support-button/`
+    - _Requirements: 4.1, 4.2, 4.3_
+  - [x] 5.2 Update specs documentation
+    - Update `.kiro/specs/README.md` with current status
+    - Update `.kiro/specs/SPEC_STATUS_REPORT.md`
+    - _Requirements: 4.4_
+
+- [x] 6. Phase 4: Update main documentation
+  - [x] 6.1 Update docs/INDEX.md
+    - Remove references to deleted files
+    - Add references to new/moved files
+    - Ensure all links are valid
+    - _Requirements: 2.4, 7.2_
+  - [x] 6.2 Update README.md
+    - Ensure project structure is accurate
+    - Update feature list if needed
+    - Verify all links work
+    - _Requirements: 7.1, 7.4_
+
+- [x] 7. Phase 5: Final verification
+  - [x] 7.1 Run all tests
+    - Run `npm run test:run`
+    - Run `cd server && npm test`
+    - _Requirements: 9.1_
+  - [x] 7.2 Verify builds
+    - Run `npm run build`
+    - Run `npm run lint`
+    - _Requirements: 9.2_
+  - [x] 7.3 Verify Docker build
+    - Run `docker build -t wuzapi-manager-test .`
+    - _Requirements: 9.3_
+  - [x] 7.4 Final cleanup summary
+    - Document all changes made
+    - Update CHANGELOG.md if needed
+    - _Requirements: 9.4_

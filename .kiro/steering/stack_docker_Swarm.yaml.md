@@ -1,0 +1,134 @@
+---
+inclusion: 
+
+# este modelo a baixo e a stack que funciona não inventar nada diferente a menos que seja necessario. 
+- não mudar nada do docker-Sarm.yaml
+- não mudar nada do docker-compose.yaml
+- não mudar nada do docker-compose.override.yaml
+- não mudar nada do docker-compose.prod.yaml
+- não mudar nada do docker-compose.prod.override.yaml
+- não mudar nada do docker-compose.prod.override.yaml
+- não mudar nada do docker-compose.prod.override.yaml
+
+
+---
+version: "3.8"
+
+services:
+  cortexx:
+    image: heltonfraga/cortexx:v1.5.47
+    
+    # Environment variables
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - WUZAPI_BASE_URL=https://wzapi.wasend.com.br
+      - WUZAPI_ADMIN_TOKEN=UeH7cZ2c1K3zVUBFi7SginSC
+      - SESSION_SECRET=XD6mESFW5itqQRurV81IQMMnr+bQuAlGs8xzPvr68Ts=
+      - CORS_ORIGINS=https://cloudapi.wasend.com.br
+      - WEBHOOK_BASE_URL=https://cloudapi.wasend.com.br
+      - REQUEST_TIMEOUT=10000
+      - TZ=America/Sao_Paulo
+      # SQLite Configuration
+      - SQLITE_DB_PATH=/app/data/cortexx.db
+      - SQLITE_WAL_MODE=true
+      - SQLITE_TIMEOUT=10000
+      - SQLITE_CACHE_SIZE=8000
+      - SQLITE_SYNCHRONOUS=NORMAL
+      - SQLITE_JOURNAL_MODE=WAL
+      # Node.js Optimizations
+      - NODE_OPTIONS=--max-old-space-size=1024
+      - UV_THREADPOOL_SIZE=4
+      # S3 Storage Configuration
+      - S3_ENABLED=true
+      - S3_ENDPOINT=https://s3.wasend.com.br
+      - S3_REGION=nyc3
+      - S3_BUCKET=typebot
+      - S3_ACCESS_KEY_ID=9rn0futJO6Vpc3bJcvE6
+      - S3_SECRET_ACCESS_KEY=CH9ASlWy0PsK3ozFQyDessRpcWACC6NcBq5CW9P5
+      - S3_FORCE_PATH_STYLE=true
+      # S3 Upload Settings
+      - S3_UPLOAD_MAX_SIZE=52428800
+      - S3_PRESIGNED_URL_EXPIRY=3600
+    
+    # Deployment configuration
+    deploy:
+      replicas: 1  # CRITICAL: Only 1 replica for SQLite
+      placement:
+        constraints:
+          - node.role == manager  # Run on manager node only
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.cortexx.rule=Host(`cloudapi.wasend.com.br`)
+        - traefik.http.routers.cortexx.entrypoints=websecure
+        - traefik.http.routers.cortexx.tls.certresolver=leresolver
+        - traefik.http.routers.cortexx-http.rule=Host(`cloudapi.wasend.com.br`)
+        - traefik.http.routers.cortexx-http.entrypoints=web
+        - traefik.http.routers.cortexx-http.middlewares=redirect-to-https
+        - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
+        - traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true
+        - traefik.http.services.cortexx.loadbalancer.server.port=3001
+        - traefik.http.services.cortexx.loadbalancer.healthcheck.path=/health
+        - traefik.http.services.cortexx.loadbalancer.healthcheck.interval=30s
+        - traefik.http.services.cortexx.loadbalancer.healthcheck.timeout=10s
+        - traefik.http.services.cortexx.loadbalancer.sticky.cookie=true
+        - traefik.http.services.cortexx.loadbalancer.sticky.cookie.name=cortexx_session
+    
+    # Ports (optional - Traefik handles routing)
+    ports:
+      - "3004:3001"
+    
+    # Volumes
+    volumes:
+      - cortexx-data:/app/data
+      - cortexx-logs:/app/logs
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "node", "server/healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    
+    # Networks
+    networks:
+      - network_public
+
+networks:
+
+  network_public:
+    external: true
+
+volumes:
+  cortexx-data:
+    external: true
+    name: cortexx-data
+  cortexx-logs:
+    external: true
+    name: cortexx-logs
+---
+<!------------------------------------------------------------------------------------
+   Add rules to this file or a short description and have Kiro refine them for you.
+   
+   Learn about inclusion modes: https://kiro.dev/docs/steering/#inclusion-modes
+------------------------------------------------------------------------------------>

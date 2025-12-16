@@ -1,0 +1,200 @@
+# Docker Compose para desenvolvimento local com Traefik
+# Uso: docker-compose up -d
+
+version: "3.8"
+
+services:
+  # Traefik - Reverse Proxy para desenvolvimento
+  traefik-dev:
+    image: traefik:v3.0
+    container_name: cortexx-traefik-dev
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.leresolver.acme.tlschallenge=true
+      - --certificatesresolvers.leresolver.acme.email=admin@localhost
+      - --certificatesresolvers.leresolver.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.leresolver.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory
+      - --log.level=INFO
+      - --accesslog=true
+      - --metrics.prometheus=true
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Traefik Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-letsencrypt:/letsencrypt
+    networks:
+      - cortexx-network
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.localhost`)"
+      - "traefik.http.routers.traefik-dashboard.entrypoints=web"
+      - "traefik.http.services.traefik-dashboard.loadbalancer.server.port=8080"
+
+  # Cortexx - Desenvolvimento
+  cortexx-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - NODE_ENV=development
+    container_name: cortexx-dev
+    # Carregar variáveis de ambiente do arquivo
+    env_file:
+      - .env.docker
+    # Sobrescrever variáveis específicas para desenvolvimento
+    environment:
+      - NODE_ENV=development
+      - LOG_LEVEL=debug
+      - DEBUG=cortexx:*
+    volumes:
+      # Persistir dados e logs
+      - ./data:/app/data
+      - ./logs:/app/logs
+      # Para desenvolvimento - hot reload (opcional)
+      # - ./server:/app/server
+      # - ./dist:/app/dist
+    networks:
+      - cortexx-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "server/healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    depends_on:
+      - traefik-dev
+      - cortexx-db-backup
+    labels:
+      - "traefik.enable=true"
+      
+      # HTTP Router
+      - "traefik.http.routers.cortexx-dev.rule=Host(`cortexx.localhost`)"
+      - "traefik.http.routers.cortexx-dev.entrypoints=web"
+      - "traefik.http.routers.cortexx-dev.service=cortexx-dev"
+      
+      # HTTPS Router
+      - "traefik.http.routers.cortexx-dev-secure.rule=Host(`cortexx.localhost`)"
+      - "traefik.http.routers.cortexx-dev-secure.entrypoints=websecure"
+      - "traefik.http.routers.cortexx-dev-secure.tls=true"
+      - "traefik.http.routers.cortexx-dev-secure.service=cortexx-dev"
+      
+      # Service
+      - "traefik.http.services.cortexx-dev.loadbalancer.server.port=3001"
+      
+      # Health check
+      - "traefik.http.services.cortexx-dev.loadbalancer.healthcheck.path=/health"
+      - "traefik.http.services.cortexx-dev.loadbalancer.healthcheck.interval=30s"
+      - "traefik.http.services.cortexx-dev.loadbalancer.healthcheck.timeout=10s"
+      
+      # Middlewares para desenvolvimento
+      - "traefik.http.middlewares.dev-headers.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.middlewares.dev-cors.headers.accesscontrolallowmethods=GET,OPTIONS,PUT,POST,DELETE,PATCH"
+      - "traefik.http.middlewares.dev-cors.headers.accesscontrolallowheaders=*"
+      - "traefik.http.middlewares.dev-cors.headers.accesscontrolalloworiginlist=http://localhost:3000,http://localhost:3001"
+      - "traefik.http.middlewares.dev-cors.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.dev-cors.headers.addvaryheader=true"
+      
+      # Aplicar middlewares
+      - "traefik.http.routers.cortexx-dev.middlewares=dev-headers,dev-cors"
+      - "traefik.http.routers.cortexx-dev-secure.middlewares=dev-headers,dev-cors"
+
+  # Backup automático do banco de dados
+  cortexx-db-backup:
+    image: alpine:3.18
+    container_name: cortexx-db-backup
+    volumes:
+      - ./data:/data
+      - ./backups:/backups
+    environment:
+      - TZ=America/Sao_Paulo
+    command: >
+      sh -c "
+        apk add --no-cache sqlite &&
+        mkdir -p /backups &&
+        while true; do
+          if [ -f /data/cortexx.db ]; then
+            echo \"Creating backup at $$(date)\" &&
+            sqlite3 /data/cortexx.db \".backup /backups/cortexx-$$(date +%Y%m%d-%H%M%S).db\" &&
+            find /backups -name 'cortexx-*.db' -mtime +7 -delete &&
+            echo \"Backup completed\"
+          fi
+          sleep 3600
+        done
+      "
+    restart: unless-stopped
+    networks:
+      - cortexx-network
+
+  # Monitoring com Prometheus (opcional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: cortexx-prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - cortexx-network
+    restart: unless-stopped
+    profiles:
+      - monitoring  # Usar: docker-compose --profile monitoring up
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus-dev.rule=Host(`prometheus.localhost`)"
+      - "traefik.http.routers.prometheus-dev.entrypoints=web"
+      - "traefik.http.services.prometheus-dev.loadbalancer.server.port=9090"
+
+  # Grafana para visualização (opcional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: cortexx-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://grafana.localhost
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    networks:
+      - cortexx-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana-dev.rule=Host(`grafana.localhost`)"
+      - "traefik.http.routers.grafana-dev.entrypoints=web"
+      - "traefik.http.services.grafana-dev.loadbalancer.server.port=3000"
+
+networks:
+  cortexx-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  traefik-letsencrypt:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local

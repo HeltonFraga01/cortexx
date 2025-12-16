@@ -1,0 +1,98 @@
+# Implementation Plan
+
+- [x] 1. Database Migration
+  - [x] 1.1 Create migration to add `priority` and `is_default` columns to `agent_bots` table
+    - Add `priority INTEGER DEFAULT 999` column
+    - Add `is_default BOOLEAN DEFAULT 0` column
+    - Create index on `priority` for performance
+    - Set initial priorities based on creation order
+    - _Requirements: 2.1, 2.3_
+
+- [x] 2. Backend - BotService Updates
+  - [x] 2.1 Add `getHighestPriorityActiveBot` method to BotService
+    - Query bots ordered by priority ASC where status = 'active'
+    - Return first bot or null if none active
+    - _Requirements: 1.1, 1.3_
+  - [ ]* 2.2 Write property test for auto-assignment bot selection
+    - **Property 1: Auto-assignment selects highest priority active bot**
+    - **Validates: Requirements 1.1, 1.3**
+  - [x] 2.3 Add `setDefaultBot` method to BotService
+    - Set `is_default = 0` for all user's bots
+    - Set `is_default = 1` and `priority = 1` for selected bot
+    - Reorder other bots' priorities accordingly
+    - _Requirements: 3.1, 3.2_
+  - [ ]* 2.4 Write property test for default bot uniqueness
+    - **Property 4: Default bot uniqueness**
+    - **Validates: Requirements 3.1, 3.2**
+  - [x] 2.5 Add `updatePriorities` method to BotService
+    - Accept array of {id, priority} pairs
+    - Update all priorities in a transaction
+    - Auto-set isDefault for priority 1 bot
+    - _Requirements: 4.1, 4.2, 4.3_
+  - [ ]* 2.6 Write property test for priority persistence
+    - **Property 2: Priority persistence round-trip**
+    - **Validates: Requirements 2.2**
+  - [x] 2.7 Update `createBot` to assign lowest priority
+    - Query max priority for user
+    - Set new bot priority = max + 1
+    - _Requirements: 2.3_
+  - [ ]* 2.8 Write property test for new bot priority
+    - **Property 3: New bots get lowest priority**
+    - **Validates: Requirements 2.3**
+  - [x] 2.9 Update `deleteBot` to promote next bot as default
+    - If deleted bot was default, set next priority bot as default
+    - _Requirements: 3.4_
+  - [x] 2.10 Update `transformBot` to include priority and isDefault fields
+    - _Requirements: 2.1_
+
+- [x] 3. Backend - ChatService Updates
+  - [x] 3.1 Modify `getOrCreateConversation` to auto-assign bot
+    - After creating new conversation, call `getHighestPriorityActiveBot`
+    - If bot found, update conversation with `assigned_bot_id`
+    - _Requirements: 1.1, 1.2, 1.3, 1.4_
+
+- [x] 4. Backend - API Routes
+  - [x] 4.1 Add `POST /api/user/bots/:id/set-default` endpoint
+    - Call `setDefaultBot` method
+    - Return updated bot
+    - _Requirements: 3.1_
+  - [x] 4.2 Add `PUT /api/user/bots/priorities` endpoint
+    - Accept array of {id, priority} pairs
+    - Call `updatePriorities` method
+    - _Requirements: 4.1, 4.2, 4.3_
+
+- [x] 5. Checkpoint - Ensure all backend tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 6. Frontend - Types and Services
+  - [x] 6.1 Update `AgentBot` type to include `priority` and `isDefault`
+    - _Requirements: 2.1_
+  - [x] 6.2 Add `setDefaultBot` function to chat service
+    - _Requirements: 3.1_
+  - [x] 6.3 Add `updateBotPriorities` function to chat service
+    - _Requirements: 4.1_
+
+- [x] 7. Frontend - BotSettings Component
+  - [x] 7.1 Display priority indicator for each bot
+    - Show priority number or "Padrão" badge for default bot
+    - _Requirements: 2.1, 3.3_
+  - [x] 7.2 Add "Definir como Padrão" button to bot card
+    - Call `setDefaultBot` on click
+    - Refresh bot list after success
+    - _Requirements: 3.1_
+  - [x] 7.3 Implement drag-and-drop reordering
+    - Use @dnd-kit/core for drag-and-drop
+    - Update priorities on drop
+    - Call `updateBotPriorities` API
+    - _Requirements: 4.1, 4.2, 4.3_
+  - [x] 7.4 Add visual feedback for drag-and-drop
+    - Highlight drop zones
+    - Show drag preview
+    - _Requirements: 4.1_
+  - [x] 7.5 Handle reorder errors with rollback
+    - Revert UI state on API error
+    - Show error toast
+    - _Requirements: 4.4_
+
+- [x] 8. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.

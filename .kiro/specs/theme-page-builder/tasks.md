@@ -1,0 +1,168 @@
+# Implementation Plan
+
+- [x] 1. Create type definitions and database schema
+  - [x] 1.1 Create Page Builder types and interfaces
+    - Create `src/types/page-builder.ts` with ThemeBlock, BlockType, ThemeSchema, BlockDefinition interfaces
+    - _Requirements: 2.3, 5.2_
+  - [x] 1.2 Create database migration for custom_themes table
+    - Create `server/migrations/XXX_add_custom_themes.js`
+    - Add custom_themes table with id, name, description, connection_id, schema, preview_image, timestamps
+    - _Requirements: 5.2_
+  - [ ]* 1.3 Write property test for Theme Schema Round-Trip
+    - **Property 2: Theme Schema Round-Trip**
+    - **Validates: Requirements 5.2, 6.2**
+
+- [x] 2. Implement BlockRegistry and base blocks
+  - [x] 2.1 Create BlockRegistry class
+    - Create `src/components/features/page-builder/BlockRegistry.ts`
+    - Implement register, get, list, listByCategory methods
+    - _Requirements: 7.1, 7.3_
+  - [x] 2.2 Create HeaderBlock component
+    - Create `src/components/features/page-builder/blocks/HeaderBlock.tsx`
+    - Props: titleField, subtitleField, showBackButton
+    - _Requirements: 7.3_
+  - [x] 2.3 Create FormGridBlock component
+    - Create `src/components/features/page-builder/blocks/FormGridBlock.tsx`
+    - Props: columns, fields array, spacing
+    - _Requirements: 7.3_
+  - [x] 2.4 Create SingleFieldBlock component
+    - Create `src/components/features/page-builder/blocks/SingleFieldBlock.tsx`
+    - Props: fieldName, label, fullWidth
+    - _Requirements: 7.3_
+  - [x] 2.5 Create AvatarBlock component
+    - Create `src/components/features/page-builder/blocks/AvatarBlock.tsx`
+    - Props: imageField, nameField, size
+    - _Requirements: 7.3_
+  - [x] 2.6 Create SectionBlock component
+    - Create `src/components/features/page-builder/blocks/SectionBlock.tsx`
+    - Props: title, collapsible, defaultOpen, children
+    - _Requirements: 7.3_
+  - [x] 2.7 Create DividerBlock and SaveButtonBlock components
+    - Create `src/components/features/page-builder/blocks/DividerBlock.tsx`
+    - Create `src/components/features/page-builder/blocks/SaveButtonBlock.tsx`
+    - _Requirements: 7.3_
+  - [x] 2.8 Create blocks index and register all blocks
+    - Create `src/components/features/page-builder/blocks/index.ts`
+    - Register all blocks with BlockRegistry
+    - _Requirements: 7.1, 7.3_
+  - [ ]* 2.9 Write property test for Block Registry Consistency
+    - **Property 1: Block Registry Consistency**
+    - **Validates: Requirements 7.1, 7.3**
+
+- [x] 3. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 4. Implement Page Builder UI components
+  - [x] 4.1 Create ConnectionSelector component
+    - Create `src/components/features/page-builder/ConnectionSelector.tsx`
+    - Fetch and display available database connections
+    - Load fields when connection is selected
+    - _Requirements: 1.2, 1.3, 1.4_
+  - [x] 4.2 Create BlockLibrary component
+    - Create `src/components/features/page-builder/BlockLibrary.tsx`
+    - Display blocks organized by category
+    - Make blocks draggable using @dnd-kit
+    - _Requirements: 2.1, 7.1_
+  - [x] 4.3 Create BuilderCanvas component
+    - Create `src/components/features/page-builder/BuilderCanvas.tsx`
+    - Implement drop zone for blocks
+    - Handle block reordering
+    - Show selected block indicator
+    - _Requirements: 2.3, 2.4, 2.5_
+  - [ ]* 4.4 Write property test for Canvas State Integrity
+    - **Property 3: Canvas State Integrity**
+    - **Validates: Requirements 2.3, 2.4**
+  - [x] 4.5 Create PropertiesPanel component
+    - Create `src/components/features/page-builder/PropertiesPanel.tsx`
+    - Display properties for selected block
+    - Handle field binding selection
+    - Update block props in real-time
+    - _Requirements: 3.1, 3.2, 3.3, 3.4_
+  - [ ]* 4.6 Write property test for Field Binding Validity
+    - **Property 5: Field Binding Validity**
+    - **Validates: Requirements 3.2**
+
+- [x] 5. Implement main PageBuilder component
+  - [x] 5.1 Create PageBuilder main component
+    - Create `src/components/features/page-builder/PageBuilder.tsx`
+    - Integrate ConnectionSelector, BlockLibrary, BuilderCanvas, PropertiesPanel
+    - Manage builder state (blocks, selectedBlock, connection)
+    - _Requirements: 1.1, 1.2_
+  - [x] 5.2 Create ThemePreview component
+    - Create `src/components/features/page-builder/ThemePreview.tsx`
+    - Render theme with sample data
+    - Display in modal
+    - _Requirements: 4.1, 4.2, 4.3_
+  - [x] 5.3 Implement save theme functionality
+    - Add save dialog with name/description inputs
+    - Save ThemeSchema to database via API
+    - _Requirements: 5.1, 5.2_
+
+- [x] 6. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 7. Create backend API for custom themes
+  - [x] 7.1 Create customThemesRoutes.js
+    - Create `server/routes/adminCustomThemesRoutes.js`
+    - Implement CRUD endpoints: GET /list, GET /:id, POST /create, PUT /:id, DELETE /:id
+    - _Requirements: 5.2, 5.3, 6.2, 6.3_
+  - [x] 7.2 Create CustomThemeService.js
+    - Create `server/services/CustomThemeService.js`
+    - Implement create, update, delete, getById, list methods
+    - _Requirements: 5.2, 6.3_
+  - [x] 7.3 Add database methods for custom_themes
+    - Update `server/database.js` with custom_themes CRUD methods
+    - _Requirements: 5.2_
+  - [ ]* 7.4 Write unit tests for CustomThemeService
+    - Test CRUD operations
+    - _Requirements: 5.2, 6.3_
+
+- [x] 8. Integrate custom themes with EditThemeSelector
+  - [x] 8.1 Create frontend service for custom themes
+    - Create `src/services/custom-themes.ts`
+    - Implement API client for custom themes
+    - _Requirements: 5.3, 5.4_
+  - [x] 8.2 Update EditThemeSelector to include custom themes
+    - Fetch custom themes from API
+    - Display alongside built-in themes
+    - Show edit button for custom themes
+    - _Requirements: 5.3, 5.4, 6.1_
+  - [ ]* 8.3 Write property test for Custom Theme Availability
+    - **Property 4: Custom Theme Availability**
+    - **Validates: Requirements 5.3, 5.4**
+
+- [x] 9. Create CustomThemeRenderer component
+  - [x] 9.1 Implement CustomThemeRenderer
+    - Create `src/components/features/edit-themes/themes/CustomThemeRenderer.tsx`
+    - Parse ThemeSchema and render blocks dynamically
+    - Pass EditThemeProps to blocks
+    - _Requirements: 5.3_
+  - [x] 9.2 Register custom theme type in ThemeRegistry
+    - Add 'custom' theme type that uses CustomThemeRenderer
+    - Load schema from database when rendering
+    - _Requirements: 5.3_
+
+- [x] 10. Add Page Builder to admin sidebar
+  - [x] 10.1 Create PageBuilderPage component
+    - Create `src/pages/admin/PageBuilderPage.tsx`
+    - Wrap PageBuilder component
+    - _Requirements: 1.1_
+  - [x] 10.2 Add route and sidebar menu item
+    - Add route `/admin/page-builder` in App.tsx
+    - Add "Page Builder" menu item in admin sidebar
+    - _Requirements: 1.1_
+
+- [x] 11. Implement edit existing theme functionality
+  - [x] 11.1 Add edit mode to PageBuilder
+    - Accept themeId prop for editing existing themes
+    - Load existing schema into builder
+    - Update instead of create on save
+    - _Requirements: 6.1, 6.2, 6.3_
+  - [x] 11.2 Add edit route and navigation
+    - Add route `/admin/page-builder/:themeId`
+    - Navigate to edit from EditThemeSelector
+    - _Requirements: 6.1_
+
+- [x] 12. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+

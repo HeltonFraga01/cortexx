@@ -1,0 +1,298 @@
+name: 🚀 Automated Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Type of release'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+      dry_run:
+        description: 'Dry run (no actual release)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: '18'
+  REGISTRY: docker.io
+  IMAGE_NAME: heltonfraga/cortexx
+
+jobs:
+  # Job para validar commits
+  validate-commits:
+    name: 🔍 Validate Commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate commit messages
+        run: |
+          # Validar commits desde a última tag ou todos se for o primeiro release
+          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
+            ./scripts/validate-commit.sh --since $(git describe --tags --abbrev=0)
+          else
+            ./scripts/validate-commit.sh --all
+          fi
+
+  # Job para executar testes
+  test:
+    name: 🧪 Run Tests
+    runs-on: ubuntu-latest
+    needs: validate-commits
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm run server:install
+
+      - name: Run linting
+        run: npm run lint
+
+      - name: Run unit tests
+        run: npm run test:run
+
+      - name: Run build test
+        run: npm run build:production
+
+  # Job para determinar se deve fazer release
+  check-release:
+    name: 🔍 Check Release Needed
+    runs-on: ubuntu-latest
+    needs: [validate-commits, test]
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      next_version: ${{ steps.check.outputs.next_version }}
+      release_notes: ${{ steps.check.outputs.release_notes }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if release is needed
+        id: check
+        run: |
+          # Se for workflow_dispatch, sempre fazer release
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "Manual release triggered"
+            exit 0
+          fi
+          
+          # Verificar se há commits desde a última tag
+          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
+            LAST_TAG=$(git describe --tags --abbrev=0)
+            COMMITS_SINCE_TAG=$(git rev-list ${LAST_TAG}..HEAD --count)
+            
+            if [ "$COMMITS_SINCE_TAG" -eq 0 ]; then
+              echo "should_release=false" >> $GITHUB_OUTPUT
+              echo "No new commits since last tag"
+              exit 0
+            fi
+            
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "Found $COMMITS_SINCE_TAG commits since $LAST_TAG"
+          else
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "No previous tags found, first release"
+          fi
+
+  # Job principal de release
+  release:
+    name: 🚀 Create Release
+    runs-on: ubuntu-latest
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'true'
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      changelog: ${{ steps.release.outputs.changelog }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine release type
+        id: release_type
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RELEASE_TYPE="${{ github.event.inputs.release_type }}"
+          else
+            RELEASE_TYPE="auto"
+          fi
+          echo "release_type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
+
+      - name: Generate release
+        id: release
+        run: |
+          # Executar script de release
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            echo "🔍 Dry run mode - não será feito commit/tag"
+            # Simular release sem commit
+            ./scripts/release.sh --dry-run || true
+          else
+            ./scripts/release.sh
+          fi
+          
+          # Capturar versão gerada
+          VERSION=$(grep '"version"' package.json | cut -d'"' -f4)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Capturar changelog da nova versão
+          CHANGELOG=$(sed -n "/## \[$VERSION\]/,/^---$/p" CHANGELOG.md | head -n -1)
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Push changes
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          git push origin main --tags
+
+      - name: Create GitHub Release
+        if: github.event.inputs.dry_run != 'true'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.release.outputs.version }}
+          release_name: Release v${{ steps.release.outputs.version }}
+          body: |
+            ${{ steps.release.outputs.changelog }}
+            
+            ## 🐳 Docker Image
+            
+            ```bash
+            docker pull ${{ env.IMAGE_NAME }}:v${{ steps.release.outputs.version }}
+            ```
+            
+            ## 📦 Installation
+            
+            1. Update your `docker-swarm-stack.yml`:
+               ```yaml
+               image: ${{ env.IMAGE_NAME }}:v${{ steps.release.outputs.version }}
+               ```
+            
+            2. Deploy:
+               ```bash
+               ./deploy-swarm.sh deploy
+               ```
+          draft: false
+          prerelease: false
+
+  # Job para build e push da imagem Docker
+  docker-build:
+    name: 🐳 Build Docker Image
+    runs-on: ubuntu-latest
+    needs: release
+    if: github.event.inputs.dry_run != 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.release.outputs.version }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}},value=v${{ needs.release.outputs.version }}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          repository: ${{ env.IMAGE_NAME }}
+          readme-filepath: ./README.md
+
+  # Job para notificar sucesso
+  notify-success:
+    name: 📢 Notify Success
+    runs-on: ubuntu-latest
+    needs: [release, docker-build]
+    if: always() && needs.release.result == 'success'
+    steps:
+      - name: Summary
+        run: |
+          echo "## 🎉 Release Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** v${{ needs.release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker Image:** ${{ env.IMAGE_NAME }}:v${{ needs.release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Next Steps:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Update your deployment configuration" >> $GITHUB_STEP_SUMMARY
+          echo "2. Deploy the new version" >> $GITHUB_STEP_SUMMARY
+          echo "3. Verify the deployment" >> $GITHUB_STEP_SUMMARY

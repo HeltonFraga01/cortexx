@@ -1,0 +1,531 @@
+# Implementation Plan
+
+## Phase 1: Database and Core Backend
+
+- [x] 1. Create database migrations for chat tables
+  - [x] 1.1 Create migration for conversations table
+    - Add columns: id, user_id, contact_jid, contact_name, contact_avatar_url, last_message_at, last_message_preview, unread_count, assigned_bot_id, status, created_at, updated_at
+    - Add indexes for user_id and last_message_at
+    - _Requirements: 1.1, 1.3_
+  - [x] 1.2 Create migration for chat_messages table
+    - Add columns: id, conversation_id, message_id, direction, message_type, content, media_url, media_mime_type, media_filename, reply_to_message_id, status, is_private_note, sender_type, sender_bot_id, timestamp, created_at
+    - Add indexes for conversation_id, timestamp, status
+    - _Requirements: 2.1, 3.1-3.6, 13.1_
+  - [x] 1.3 Create migration for agent_bots table
+    - Add columns: id, user_id, name, description, avatar_url, outgoing_url, access_token, status, created_at, updated_at
+    - _Requirements: 17.1-17.6_
+  - [x] 1.4 Create migration for labels and conversation_labels tables
+    - Add labels table with id, user_id, name, color, created_at
+    - Add conversation_labels junction table
+    - _Requirements: 20.1-20.5_
+  - [x] 1.5 Create migration for canned_responses table
+    - Add columns: id, user_id, shortcut, content, created_at, updated_at
+    - _Requirements: 21.1-21.5_
+  - [x] 1.6 Create migration for outgoing_webhooks and webhook_deliveries tables
+    - Add outgoing_webhooks with url, events, is_active, stats
+    - Add webhook_deliveries for delivery logging
+    - _Requirements: 16.1-16.6_
+  - [x] 1.7 Create migration for message_reactions table
+    - Add columns: id, message_id, emoji, reactor_jid, created_at
+    - _Requirements: 5.1-5.4_
+
+- [x] 2. Implement ChatService
+  - [x] 2.1 Implement getConversations with ordering and pagination
+    - Query conversations ordered by last_message_at DESC
+    - Include unread count and last message preview
+    - Support pagination with limit/offset
+    - _Requirements: 1.1, 1.5_
+  - [ ]* 2.2 Write property test for conversation ordering
+    - **Property 1: Conversation ordering by activity**
+    - **Validates: Requirements 1.1, 1.2**
+  - [x] 2.3 Implement getMessages for a conversation
+    - Query messages by conversation_id ordered by timestamp
+    - Include reply_to_message data
+    - Support pagination
+    - _Requirements: 1.4, 12.4_
+  - [x] 2.4 Implement sendMessage via WUZAPI
+    - Create message record with pending status
+    - Call WUZAPI /chat/send/text endpoint
+    - Update status on success/failure
+    - _Requirements: 2.1, 2.2, 2.3_
+  - [ ]* 2.5 Write property test for message status lifecycle
+    - **Property 3: Message status lifecycle**
+    - **Validates: Requirements 2.2, 2.3, 4.1, 4.2**
+  - [x] 2.6 Implement message validation
+    - Reject empty or whitespace-only messages
+    - Validate phone number format
+    - _Requirements: 2.4_
+  - [ ]* 2.7 Write property test for empty message rejection
+    - **Property 4: Empty message rejection**
+    - **Validates: Requirements 2.4**
+  - [x] 2.8 Implement markAsRead
+    - Update message status to 'read'
+    - Call WUZAPI /chat/markread endpoint
+    - Update conversation unread_count
+    - _Requirements: 8.1, 8.2, 8.3_
+  - [ ]* 2.9 Write property test for unread count consistency
+    - **Property 8: Unread count consistency**
+    - **Validates: Requirements 8.1, 8.2, 8.3**
+  - [x] 2.10 Implement searchConversations
+    - Filter by contact name or phone number (case-insensitive)
+    - _Requirements: 7.1_
+  - [ ]* 2.11 Write property test for conversation search filtering
+    - **Property 6: Conversation search filtering**
+    - **Validates: Requirements 7.1**
+  - [x] 2.12 Implement searchMessages within conversation
+    - Filter messages by content (case-insensitive)
+    - Return matching message IDs for navigation
+    - _Requirements: 7.2_
+  - [ ]* 2.13 Write property test for message search
+    - **Property 7: Message search within conversation**
+    - **Validates: Requirements 7.2**
+  - [x] 2.14 Implement label management methods
+    - getLabels, createLabel, updateLabel, deleteLabel
+    - assignLabel, removeLabel for conversations
+    - _Requirements: 20.1-20.5_
+  - [x] 2.15 Implement canned response methods
+    - getCannedResponses with search
+    - createCannedResponse, updateCannedResponse, deleteCannedResponse
+    - _Requirements: 21.1-21.5_
+  - [x] 2.16 Implement conversation management methods
+    - getConversation (single with labels)
+    - updateConversation (status, assignedBotId)
+    - markConversationAsRead
+    - createMessage
+    - _Requirements: 1.3, 8.1-8.3_
+
+- [x] 3. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 4. Implement media message handling
+  - [x] 4.1 Implement sendImageMessage
+    - Accept base64 image data
+    - Call WUZAPI /chat/send/image endpoint
+    - Store message with media_url and media_mime_type
+    - _Requirements: 3.1_
+  - [x] 4.2 Implement sendVideoMessage
+    - Accept base64 video data
+    - Call WUZAPI /chat/send/video endpoint
+    - _Requirements: 3.2_
+  - [x] 4.3 Implement sendAudioMessage
+    - Accept base64 audio data in Opus format
+    - Call WUZAPI /chat/send/audio endpoint
+    - _Requirements: 3.3_
+  - [x] 4.4 Implement sendDocumentMessage
+    - Accept base64 document data with filename
+    - Call WUZAPI /chat/send/document endpoint
+    - _Requirements: 3.4_
+  - [x] 4.5 Implement downloadMedia
+    - Call WUZAPI /chat/downloadimage, /chat/downloadvideo, etc.
+    - Store downloaded media locally or return base64
+    - _Requirements: 3.5_
+  - [x] 4.6 Implement sendLocationMessage
+    - Accept latitude, longitude, and optional name
+    - Call WUZAPI /chat/send/location endpoint
+    - _Requirements: 9.1, 9.3_
+  - [x] 4.7 Implement sendContactMessage
+    - Accept vCard data
+    - Call WUZAPI /chat/send/contact endpoint
+    - _Requirements: 9.2, 9.4_
+
+- [x] 5. Implement reply functionality
+  - [x] 5.1 Implement sendReplyMessage
+    - Include ContextInfo with StanzaId and Participant
+    - Store reply_to_message_id reference
+    - _Requirements: 12.1, 12.2, 12.3_
+  - [ ]* 5.2 Write property test for reply context preservation
+    - **Property 10: Reply context preservation**
+    - **Validates: Requirements 12.1, 12.3**
+
+## Phase 2: Webhook Processing and Bot System
+
+- [x] 6. Implement incoming webhook handler
+  - [x] 6.1 Create webhook endpoint for WUZAPI events
+    - Parse incoming webhook payload
+    - Route to appropriate handler based on event type
+    - Created chatWebhookRoutes.js with /api/chat/webhook endpoint
+    - _Requirements: 11.1, 11.2, 11.3_
+  - [x] 6.2 Implement Message event handler
+    - Create or update conversation
+    - Store incoming message
+    - Update conversation last_message_at and unread_count
+    - Broadcast via WebSocket
+    - _Requirements: 11.1, 1.2_
+  - [ ]* 6.3 Write property test for webhook message processing
+    - **Property 9: Webhook message processing**
+    - **Validates: Requirements 11.1**
+  - [x] 6.4 Implement ReadReceipt event handler
+    - Update message status to 'read'
+    - Broadcast status update via WebSocket
+    - _Requirements: 11.2, 4.2_
+  - [x] 6.5 Implement ChatPresence event handler
+    - Store presence state (composing, paused, recording)
+    - Broadcast presence via WebSocket
+    - _Requirements: 11.3, 4.4, 4.5, 15.1, 15.2_
+
+- [x] 7. Implement BotService
+  - [x] 7.1 Implement createBot
+    - Generate unique access token
+    - Store bot configuration
+    - _Requirements: 17.2, 17.3_
+  - [x] 7.2 Implement updateBot
+    - Update bot name, description, avatar, webhook URL
+    - _Requirements: 17.2_
+  - [x] 7.3 Implement pauseBot and resumeBot
+    - Update bot status to 'paused' or 'active'
+    - _Requirements: 18.1, 18.3_
+  - [ ]* 7.4 Write property test for bot status enforcement
+    - **Property 13: Bot status enforcement**
+    - **Validates: Requirements 18.1, 18.4**
+  - [x] 7.5 Implement forwardToBot
+    - Send message to bot's outgoing webhook URL
+    - Handle bot response (reply, ignore, handoff)
+    - _Requirements: 17.4, 17.5_
+  - [x] 7.6 Implement assignBotToConversation
+    - Update conversation assigned_bot_id
+    - _Requirements: 19.1, 19.2_
+  - [ ]* 7.7 Write property test for bot assignment scope
+    - **Property 14: Bot assignment scope**
+    - **Validates: Requirements 19.2, 19.3**
+  - [x] 7.8 Implement removeBotFromConversation
+    - Clear conversation assigned_bot_id
+    - _Requirements: 19.3_
+
+- [x] 8. Implement OutgoingWebhookService
+  - [x] 8.1 Implement configureWebhook
+    - Validate URL format
+    - Store webhook configuration
+    - _Requirements: 16.1, 16.2_
+  - [x] 8.2 Implement sendWebhookEvent
+    - Format payload based on event type
+    - Send POST request to configured URL
+    - _Requirements: 16.3, 16.4_
+  - [x] 8.3 Implement retry logic with exponential backoff
+    - Retry up to 3 times with 1s, 2s, 4s delays
+    - Log delivery attempts
+    - _Requirements: 16.5_
+  - [ ]* 8.4 Write property test for webhook delivery retry
+    - **Property 12: Webhook delivery retry**
+    - **Validates: Requirements 16.5**
+  - [x] 8.5 Implement getWebhookStats
+    - Return success/failure counts and last delivery time
+    - _Requirements: 16.6_
+
+- [x] 9. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+## Phase 3: Labels, Canned Responses, and Notes
+
+- [x] 10. Implement LabelService (implemented in ChatService)
+  - [x] 10.1 Implement createLabel
+    - Validate unique name per user
+    - Store label with color
+    - _Requirements: 20.4_
+  - [ ]* 10.2 Write property test for label uniqueness
+    - **Property 15: Label uniqueness per user**
+    - **Validates: Requirements 20.4**
+  - [x] 10.3 Implement assignLabel and removeLabel
+    - Add/remove entries in conversation_labels
+    - _Requirements: 20.1, 20.2_
+  - [x] 10.4 Implement filterByLabel
+    - Query conversations with specific label
+    - _Requirements: 20.3_
+  - [ ]* 10.5 Write property test for label filtering accuracy
+    - **Property 16: Label filtering accuracy**
+    - **Validates: Requirements 20.3**
+
+- [x] 11. Implement CannedResponseService (implemented in ChatService)
+  - [x] 11.1 Implement createCannedResponse
+    - Validate unique shortcut per user
+    - Store shortcut and content
+    - _Requirements: 21.3, 21.4_
+  - [ ]* 11.2 Write property test for shortcut uniqueness
+    - **Property 17: Canned response shortcut uniqueness**
+    - **Validates: Requirements 21.4**
+  - [x] 11.3 Implement searchByShortcut
+    - Return responses where shortcut starts with prefix
+    - _Requirements: 21.1, 21.5_
+  - [ ]* 11.4 Write property test for canned response search
+    - **Property 18: Canned response search**
+    - **Validates: Requirements 21.5**
+
+- [x] 12. Implement private notes
+  - [x] 12.1 Implement addPrivateNote
+    - Store message with is_private_note = true
+    - _Requirements: 22.1, 22.2_
+  - [ ]* 12.2 Write property test for private note isolation
+    - **Property 19: Private note isolation**
+    - **Validates: Requirements 22.2, 22.3**
+
+- [x] 13. Implement reactions
+  - [x] 13.1 Implement addReaction
+    - Call WUZAPI /chat/react endpoint
+    - Store reaction in message_reactions table
+    - Toggle behavior (add/remove)
+    - _Requirements: 5.2, 5.3_
+  - [x] 13.2 Implement handleReactionWebhook
+    - Store incoming reactions via storeIncomingReaction
+    - _Requirements: 5.4_
+
+## Phase 4: Backend Routes
+
+- [x] 14. Create userChatRoutes (implemented in chatInboxRoutes.js)
+  - [x] 14.1 Implement GET /conversations
+    - List conversations with pagination
+    - Include labels and unread counts
+    - _Requirements: 1.1, 1.3, 1.5_
+  - [x] 14.2 Implement GET /conversations/:id
+    - Return conversation details with assigned bot
+    - _Requirements: 1.4_
+  - [x] 14.3 Implement GET /conversations/:id/messages
+    - Return messages with pagination
+    - Include reactions and reply references
+    - _Requirements: 1.4, 5.4, 12.4_
+  - [x] 14.4 Implement POST /conversations/:id/messages
+    - Send text, media, location, or contact message
+    - Support reply mode with context info
+    - _Requirements: 2.1, 3.1-3.6, 9.1, 9.2, 12.1_
+  - [x] 14.5 Implement POST /conversations/:id/read
+    - Mark messages as read
+    - _Requirements: 8.1_
+  - [x] 14.6 Implement POST /conversations/:id/labels
+    - Add or remove labels
+    - _Requirements: 20.1, 20.2_
+  - [x] 14.7 Implement POST /conversations/:id/notes
+    - Add private note
+    - _Requirements: 22.1_
+  - [x] 14.8 Implement POST /conversations/:id/assign-bot
+    - Assign or remove bot
+    - _Requirements: 19.1, 19.3_
+  - [x] 14.9 Implement POST /messages/:messageId/react
+    - Add reaction to message
+    - _Requirements: 5.2, 5.3_
+  - [x] 14.10 Implement GET /conversations/search
+    - Search conversations by name or phone
+    - _Requirements: 7.1_
+  - [x] 14.11 Implement GET /conversations/:id/messages/search
+    - Search messages within conversation
+    - _Requirements: 7.2_
+
+- [x] 15. Create userBotRoutes
+  - [x] 15.1 Implement GET /bots
+    - List all bots for user
+    - _Requirements: 17.1_
+  - [x] 15.2 Implement POST /bots
+    - Create new bot
+    - _Requirements: 17.2, 17.3_
+  - [x] 15.3 Implement PUT /bots/:id
+    - Update bot configuration
+    - _Requirements: 17.2_
+  - [x] 15.4 Implement DELETE /bots/:id
+    - Delete bot
+    - _Requirements: 17.1_
+  - [x] 15.5 Implement POST /bots/:id/pause
+    - Pause bot
+    - _Requirements: 18.1_
+  - [x] 15.6 Implement POST /bots/:id/resume
+    - Resume bot
+    - _Requirements: 18.3_
+
+- [x] 16. Create userWebhookRoutes
+  - [x] 16.1 Implement GET /outgoing-webhooks
+    - Get current webhook configuration
+    - _Requirements: 16.1_
+  - [x] 16.2 Implement POST /outgoing-webhooks
+    - Configure outgoing webhook
+    - _Requirements: 16.2_
+  - [x] 16.3 Implement GET /outgoing-webhooks/:id/stats
+    - Get delivery statistics
+    - _Requirements: 16.6_
+
+- [x] 17. Create userLabelRoutes (implemented in chatInboxRoutes.js)
+  - [x] 17.1 Implement CRUD for labels
+    - GET, POST, PUT, DELETE /labels
+    - _Requirements: 20.1-20.5_
+
+- [x] 18. Create userCannedRoutes (implemented in chatInboxRoutes.js)
+  - [x] 18.1 Implement CRUD for canned responses
+    - GET, POST, PUT, DELETE /canned-responses
+    - _Requirements: 21.1-21.5_
+
+- [x] 19. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+## Phase 5: Frontend Components
+
+- [x] 20. Create TypeScript types
+  - [x] 20.1 Create src/types/chat.ts
+    - Define Conversation, ChatMessage, AgentBot, Label, CannedResponse interfaces
+    - Define MessageType, MessageStatus, PresenceState types
+    - _Requirements: All_
+
+- [x] 21. Create chat service
+  - [x] 21.1 Create src/services/chat.ts
+    - Implement API client functions for all chat endpoints
+    - Use React Query for caching and state management
+    - _Requirements: All_
+
+- [x] 22. Create ChatLayout component
+  - [x] 22.1 Implement 3-column layout
+    - Inbox sidebar (left), conversation view (center), contact panel (right)
+    - Responsive design with collapsible panels
+    - _Requirements: 10.1, 10.2, 10.3_
+
+- [x] 23. Create InboxSidebar component
+  - [x] 23.1 Implement conversation list
+    - Display contact name, avatar, last message preview, timestamp, unread count
+    - Show label badges
+    - _Requirements: 1.1, 1.3, 20.5_
+  - [x] 23.2 Implement search bar
+    - Filter conversations by name or phone
+    - _Requirements: 7.1_
+  - [x] 23.3 Implement infinite scroll or pagination
+    - Load more conversations on scroll
+    - _Requirements: 1.5_
+
+- [x] 24. Create ConversationView component
+  - [x] 24.1 Implement message list
+    - Display messages with MessageBubble components
+    - Group messages by date
+    - _Requirements: 1.4_
+  - [x] 24.2 Implement MessageBubble component
+    - Display text, media, location, contact messages
+    - Show status indicators (ticks)
+    - Show reactions
+    - Support reply preview
+    - _Requirements: 2.1, 3.5, 4.1, 4.2, 5.4, 12.4_
+  - [x] 24.3 Implement MessageInput component
+    - Text input with emoji picker
+    - Media attachment buttons
+    - Reply mode with quoted message preview
+    - Canned response picker (triggered by /)
+    - _Requirements: 2.1, 3.1-3.4, 5.2, 12.2, 21.1, 21.2_
+  - [x] 24.4 Implement presence indicator
+    - Show "typing..." or "recording audio..." in header
+    - _Requirements: 4.4, 4.5, 15.1, 15.2_
+  - [x] 24.5 Implement message search within conversation
+    - Search input with navigation between results
+    - Highlight matching messages
+    - _Requirements: 7.2_
+
+- [x] 25. Create ContactPanel component
+  - [x] 25.1 Implement contact details
+    - Display avatar, name, phone number, status
+    - Copy phone number to clipboard
+    - _Requirements: 6.1, 6.2, 6.3, 6.4_
+  - [x] 25.2 Implement label management
+    - Add/remove labels from conversation
+    - _Requirements: 20.1, 20.2_
+  - [x] 25.3 Implement bot assignment
+    - Select bot to assign or remove
+    - _Requirements: 19.1, 19.3, 19.4_
+
+- [x] 26. Create PrivateNote component
+  - [x] 26.1 Implement note input and display
+    - Yellow background for visual distinction
+    - _Requirements: 22.1, 22.2, 22.4_
+
+- [x] 27. Create MediaPreview component
+  - [x] 27.1 Implement lightbox for images and videos
+    - Full-screen viewing
+    - _Requirements: 3.6_
+
+- [x] 28. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+## Phase 6: Settings Pages
+
+- [x] 29. Create BotSettings page
+  - [x] 29.1 Implement bot list
+    - Display all bots with status indicators
+    - _Requirements: 17.1, 17.6_
+  - [x] 29.2 Implement bot creation modal
+    - Form for name, description, avatar, webhook URL
+    - _Requirements: 17.2_
+  - [x] 29.3 Implement pause/resume buttons
+    - Toggle bot status
+    - _Requirements: 18.1, 18.2, 18.3_
+
+- [x] 30. Create WebhookSettings page
+  - [x] 30.1 Implement webhook configuration form
+    - URL input with validation
+    - Event type selection
+    - _Requirements: 16.1, 16.2_
+  - [x] 30.2 Implement delivery statistics display
+    - Success/failure counts, last delivery time
+    - _Requirements: 16.6_
+
+- [x] 31. Create LabelManager page
+  - [x] 31.1 Implement label CRUD
+    - Create, edit, delete labels with color picker
+    - _Requirements: 20.4_
+
+- [x] 32. Create CannedResponseManager page
+  - [x] 32.1 Implement canned response CRUD
+    - Create, edit, delete responses with shortcut
+    - _Requirements: 21.3, 21.4_
+
+## Phase 7: Real-time Updates and Polish
+
+- [x] 33. Implement real-time updates
+  - [x] 33.1 Set up WebSocket for new messages
+    - Created ChatWebSocketHandler with Socket.IO
+    - Implemented room management for conversations
+    - Implemented typing indicators with 5s auto-expire
+    - Implemented presence tracking for online agents
+    - Implemented broadcast methods for messages, status updates, reactions
+    - Created 26 unit tests (all passing)
+    - _Requirements: 11.1, 11.2, 11.3_
+  - [x] 33.2 Implement presence sending
+    - Integrated useChatSocket hook with ChatLayout
+    - MessageInput sends composing/paused presence when typing
+    - Auto-expires typing indicator after 3 seconds of inactivity
+    - _Requirements: 2.5, 15.3, 15.4_
+
+- [x] 34. Implement keyboard shortcuts
+  - [x] 34.1 Add Ctrl+K for search
+    - Created useChatKeyboardShortcuts hook
+    - Integrated with ChatLayout to focus search input
+    - _Requirements: 14.1_
+  - [x] 34.2 Add Escape to close modals
+    - Closes search panel and contact panel on Escape
+    - _Requirements: 14.2_
+  - [x] 34.3 Add Ctrl+Enter to send
+    - MessageInput handles Ctrl+Enter to send messages
+    - _Requirements: 14.3_
+
+- [x] 35. Implement offline support
+  - [x] 35.1 Cache messages in local storage
+    - Created useChatOffline hook with localStorage caching
+    - 24-hour cache expiry with automatic cleanup
+    - _Requirements: 13.1, 13.2_
+  - [x] 35.2 Queue outgoing messages when offline
+    - Messages queued with unique IDs and retry counts
+    - _Requirements: 13.3_
+  - [x] 35.3 Sync on reconnection
+    - Auto-sync when back online with retry logic (max 3 retries)
+    - _Requirements: 13.4_
+  - [ ]* 35.4 Write property test for message persistence round-trip
+    - **Property 11: Message persistence round-trip**
+    - **Validates: Requirements 13.1, 13.2**
+
+- [x] 36. Final Checkpoint - Ensure all tests pass
+  - ✅ Chat interface loads correctly at /user/chat
+  - ✅ WebSocket connection established and stable
+  - ✅ Conversation list displays with filters (Todas, Não lidas, Abertas, Resolvidas)
+  - ✅ Search functionality with Ctrl+K shortcut
+  - ✅ Empty state displays correctly when no conversations
+  - ✅ Connection indicator shows green when connected
+  - ✅ Chat settings page at /user/chat/settings with 4 tabs (Bots, Webhooks, Etiquetas, Respostas)
+  - ✅ Backend routes registered: /api/chat/inbox, /api/user/bots, /api/user/outgoing-webhooks
+  - ✅ ChatService updated with token-based methods for routes
+  - ✅ All settings components created (BotSettings, WebhookSettings, LabelManager, CannedResponseManager)
+
+- [x] 37. Fix users table dependency (CRITICAL)
+  - ✅ Fixed ChatService methods to use token directly as userId (no users table)
+  - ✅ Fixed userBotRoutes middleware to validate token via WUZAPI
+  - ✅ Fixed userWebhookRoutes middleware to validate token via WUZAPI
+  - ✅ Fixed chatInboxRoutes to use token directly as userId
+  - ✅ Fixed chatMessageHandler.getUserIdFromToken to return token directly
+  - ✅ Created migration 030_fix_user_id_columns.js to convert user_id columns from INTEGER to TEXT
+  - ✅ Added Chat submenu to UserLayout.tsx with Inbox and Configurações items

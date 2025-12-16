@@ -1,0 +1,14 @@
+# Configuração de dashboards para Grafana
+
+apiVersion: 1
+
+providers:
+  - name: 'WUZAPI Dashboards'
+    orgId: 1
+    folder: 'WUZAPI'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

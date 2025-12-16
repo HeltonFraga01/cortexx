@@ -1,0 +1,88 @@
+{
+  "mcpServers": {
+    "Docker": {
+      "command": "uvx",
+      "args": [
+        "docker-mcp"
+      ],
+      "env": {},
+      "disabled": false,
+      "autoApprove": [
+        "get-logs",
+        "list-containers"
+      ]
+    },
+    "nocodbDocs": {
+      "url": "https://gitmcp.io/nocodb/nocodb",
+      "disabled": false,
+      "autoApprove": [
+        "search_nocodb_documentation",
+        "search_nocodb_code",
+        "fetch_generic_url_content"
+      ]
+    },
+    "shadcn-ui": {
+      "command": "npx",
+      "args": [
+        "@jpisnice/shadcn-ui-mcp-server"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": ""
+      },
+      "disabled": false,
+      "autoApprove": [
+        "get_component"
+      ]
+    },
+    "TestSprite": {
+      "command": "npx",
+      "args": [
+        "@testsprite/testsprite-mcp@latest"
+      ],
+      "env": {
+        "API_KEY": ""
+      },
+      "disabled": false,
+      "autoApprove": [
+        "testsprite_bootstrap_tests",
+        "testsprite_generate_code_summary",
+        "testsprite_generate_code_summary",
+        "testsprite_generate_standardized_prd",
+        "testsprite_generate_frontend_test_plan",
+        "testsprite_generate_code_and_execute"
+      ]
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "chrome-devtools-mcp@latest"
+      ],
+      "disabled": false,
+      "autoApprove": [
+        "new_page",
+        "take_snapshot",
+        "navigate_page",
+        "evaluate_script",
+        "list_console_messages",
+        "click",
+        "list_pages",
+        "get_console_message",
+        "fill",
+        "take_screenshot",
+        "wait_for",
+        "list_network_requests",
+        "get_network_request",
+        "select_page",
+        "press_key",
+        "close_page",
+        "handle_dialog",
+        "drag",
+        "fill_form",
+        "fill_form",
+        "resize_page",
+        "emulate",
+        "hover"
+      ]
+    }
+  }
+}

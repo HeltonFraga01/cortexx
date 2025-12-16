@@ -1,0 +1,81 @@
+# Implementation Plan
+
+- [x] 1. Create WhatsApp text formatter utility
+  - [x] 1.1 Create `src/lib/whatsapp-formatter.ts` with format patterns and core functions
+    - Define regex patterns for bold, italic, strikethrough, and monospace
+    - Implement `formatWhatsAppText()` function that returns React nodes
+    - Implement `stripWhatsAppFormatting()` for plain text extraction
+    - Implement `hasWhatsAppFormatting()` detection function
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 5.1, 5.2_
+  - [ ]* 1.2 Write property test for formatting markers
+    - **Property 1: Formatting markers produce styled output**
+    - **Validates: Requirements 1.1, 1.2, 1.3, 1.4**
+  - [x] 1.3 Implement nested formatting support
+    - Handle combinations like `*_bold italic_*`
+    - Process formatting in correct order (outer to inner)
+    - _Requirements: 1.5_
+  - [ ]* 1.4 Write property test for nested formatting
+    - **Property 2: Nested formatting applies all styles**
+    - **Validates: Requirements 1.5**
+  - [x] 1.5 Implement line break preservation
+    - Convert `\n` to `<br />` elements
+    - Preserve multiple consecutive line breaks
+    - _Requirements: 2.1_
+  - [ ]* 1.6 Write property test for line break preservation
+    - **Property 3: Line breaks are preserved**
+    - **Validates: Requirements 2.1**
+  - [x] 1.7 Implement HTML sanitization
+    - Use DOMPurify to sanitize output
+    - Strip script tags and event handlers
+    - _Requirements: 5.4_
+  - [ ]* 1.8 Write property test for XSS sanitization
+    - **Property 6: HTML is sanitized**
+    - **Validates: Requirements 5.4**
+  - [ ]* 1.9 Write property test for parser determinism
+    - **Property 5: Parser is deterministic**
+    - **Validates: Requirements 5.2**
+
+- [x] 2. Checkpoint - Ensure all formatter tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 3. Enhance platform detection for link previews
+  - [x] 3.1 Create `src/lib/platform-detector.ts` with platform patterns
+    - Define platform patterns for Instagram, YouTube, TikTok, Twitter/X, Facebook, LinkedIn
+    - Implement `detectPlatform()` function
+    - Return platform info including icon, color, and title generator
+    - _Requirements: 3.1_
+  - [ ]* 3.2 Write property test for platform detection
+    - **Property 4: Platform detection is accurate**
+    - **Validates: Requirements 3.1**
+  - [x] 3.3 Update `LinkPreviewCard` component with platform branding
+    - Add platform-specific icons and colors
+    - Display branded preview cards for social media
+    - _Requirements: 3.1, 3.2_
+
+- [x] 4. Integrate formatter into MessageBubble component
+  - [x] 4.1 Update `TextMessageContent` to use WhatsApp formatter
+    - Replace current text rendering with formatted output
+    - Maintain search query highlighting compatibility
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
+  - [x] 4.2 Update media components to format captions
+    - Apply formatter to `MediaImage` caption
+    - Apply formatter to `MediaVideo` caption
+    - Ensure line breaks are preserved in captions
+    - _Requirements: 2.1, 2.2_
+  - [x] 4.3 Ensure emoji rendering works with formatting
+    - Verify emojis pass through formatter unchanged
+    - Test emoji + formatting combinations
+    - _Requirements: 4.1, 4.2_
+
+- [x] 5. Handle edge cases and error scenarios
+  - [x] 5.1 Implement graceful handling of unmatched markers
+    - Display unmatched markers as plain text
+    - Handle empty content between markers
+    - _Requirements: 1.6, 5.3_
+  - [x] 5.2 Implement fallback for link preview errors
+    - Show URL as clickable link when preview fails
+    - Handle network timeouts gracefully
+    - _Requirements: 3.4_
+
+- [x] 6. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.

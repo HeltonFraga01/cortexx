@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+server/node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Test files (scanned separately)
+**/*.test.ts
+**/*.test.tsx
+**/*.test.js
+cypress/
+
+# Configuration files
+*.config.js
+*.config.ts
+vite.config.ts
+vitest.config.ts
+tailwind.config.ts
+postcss.config.js
+
+# Generated files
+coverage/
+.vite/
+
+# Logs and reports
+logs/
+security-reports/
+
+# Git
+.git/

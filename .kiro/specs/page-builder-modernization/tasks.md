@@ -1,0 +1,230 @@
+# Implementation Plan
+
+- [x] 1. Fix Avatar block image rendering
+  - [x] 1.1 Update AvatarBlockComponent to properly render images from URL fields
+    - Modify `src/components/features/page-builder/blocks/AvatarBlock.tsx`
+    - Ensure AvatarImage receives the URL from record data correctly
+    - Add onError handler for graceful fallback
+    - _Requirements: 1.1, 1.2, 1.3_
+  - [ ]* 1.2 Write property test for Avatar URL rendering
+    - **Property 1: Avatar image URL rendering**
+    - **Validates: Requirements 1.1, 1.4**
+  - [ ]* 1.3 Write property test for Avatar fallback
+    - **Property 2: Avatar fallback for invalid URLs**
+    - **Validates: Requirements 1.2**
+
+- [x] 2. Extend type definitions for new blocks and features
+  - [x] 2.1 Update BlockType union with new block types
+    - Add 'text', 'image', 'badge', 'stats', 'link-button', 'tabs', 'list', 'row' to BlockType
+    - Update `src/types/page-builder.ts`
+    - _Requirements: 2.1-2.7, 3.1_
+  - [x] 2.2 Add interfaces for new features
+    - Add RowBlockProps, HistoryState, HistoryManager, BlockTemplate, TemplateStorage
+    - Add VisibilityCondition, ComparisonOperator, SpacingConfig interfaces
+    - Update ThemeBlock to support children and columnIndex
+    - _Requirements: 3.1, 3.2, 6.1-6.4, 8.1, 9.1, 10.1_
+
+- [x] 3. Implement HistoryManager for undo/redo
+  - [x] 3.1 Create HistoryManager class
+    - Create `src/components/features/page-builder/utils/HistoryManager.ts`
+    - Implement push, undo, redo, canUndo, canRedo, clear methods
+    - Enforce 50 state maximum capacity
+    - _Requirements: 8.1, 8.2, 8.3, 8.4_
+  - [ ]* 3.2 Write property test for history capacity
+    - **Property 8: History manager capacity**
+    - **Validates: Requirements 8.1**
+  - [ ]* 3.3 Write property test for undo
+    - **Property 9: Undo returns previous state**
+    - **Validates: Requirements 8.2**
+  - [ ]* 3.4 Write property test for redo
+    - **Property 10: Redo restores undone state**
+    - **Validates: Requirements 8.3**
+  - [ ]* 3.5 Write property test for undo/redo round trip
+    - **Property 11: Undo/Redo round trip**
+    - **Validates: Requirements 8.2, 8.3**
+  - [ ]* 3.6 Write property test for canUndo
+    - **Property 12: canUndo reflects history state**
+    - **Validates: Requirements 8.4**
+
+- [x] 4. Implement VisibilityEvaluator
+  - [x] 4.1 Create VisibilityEvaluator utility
+    - Create `src/components/features/page-builder/utils/VisibilityEvaluator.ts`
+    - Implement evaluateVisibility function with operators: equals, not_equals, contains, is_empty, is_not_empty
+    - _Requirements: 10.2, 10.3_
+  - [ ]* 4.2 Write property test for visibility evaluation
+    - **Property 14: Visibility condition evaluation**
+    - **Validates: Requirements 10.3**
+
+- [x] 5. Implement TemplateStorage
+  - [x] 5.1 Create TemplateStorage utility
+    - Create `src/components/features/page-builder/utils/TemplateStorage.ts`
+    - Implement save, load, list, delete methods using localStorage
+    - Handle storage quota errors gracefully
+    - _Requirements: 9.1, 9.2, 9.3, 9.4_
+  - [ ]* 5.2 Write property test for template round trip
+    - **Property 13: Template save/load round trip**
+    - **Validates: Requirements 9.1, 9.2, 9.3**
+
+- [x] 6. Implement block duplication utility
+  - [x] 6.1 Create duplicateBlock utility function
+    - Create `src/components/features/page-builder/utils/blockUtils.ts`
+    - Implement duplicateBlock that creates deep copy with new IDs
+    - Handle nested children for container blocks
+    - _Requirements: 5.2, 5.3_
+  - [ ]* 6.2 Write property test for block duplication
+    - **Property 6: Block duplication preserves props**
+    - **Validates: Requirements 5.2**
+  - [ ]* 6.3 Write property test for container deep copy
+    - **Property 7: Container duplication is deep**
+    - **Validates: Requirements 5.3**
+
+- [x] 7. Checkpoint - Ensure all utility tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 8. Implement new display blocks
+  - [x] 8.1 Create TextBlock component
+    - Create `src/components/features/page-builder/blocks/TextBlock.tsx`
+    - Support field binding for dynamic text
+    - Support static text with markdown-like formatting
+    - _Requirements: 2.1_
+  - [x] 8.2 Create ImageBlock component
+    - Create `src/components/features/page-builder/blocks/ImageBlock.tsx`
+    - Support imageField binding to URL fields
+    - Add alt text, sizing, and alignment options
+    - _Requirements: 2.2_
+  - [x] 8.3 Create BadgeBlock component
+    - Create `src/components/features/page-builder/blocks/BadgeBlock.tsx`
+    - Support field binding for dynamic badge text
+    - Add variant options (default, secondary, destructive, outline)
+    - _Requirements: 2.3_
+  - [x] 8.4 Create StatsBlock component
+    - Create `src/components/features/page-builder/blocks/StatsBlock.tsx`
+    - Support valueField and labelField bindings
+    - Add formatting options (number, currency, percentage)
+    - _Requirements: 2.4_
+  - [x] 8.5 Create LinkButtonBlock component
+    - Create `src/components/features/page-builder/blocks/LinkButtonBlock.tsx`
+    - Support static URL or field binding
+    - Add variant and size options
+    - _Requirements: 2.5_
+  - [x] 8.6 Create ListBlock component
+    - Create `src/components/features/page-builder/blocks/ListBlock.tsx`
+    - Support array field binding
+    - Add list style options (bullet, numbered, none)
+    - _Requirements: 2.7_
+
+- [x] 9. Implement TabsBlock
+  - [x] 9.1 Create TabsBlock component
+    - Create `src/components/features/page-builder/blocks/TabsBlock.tsx`
+    - Support multiple tabs with configurable labels
+    - Allow child blocks within each tab
+    - _Requirements: 2.6_
+
+- [x] 10. Implement RowBlock (container with columns)
+  - [x] 10.1 Create RowBlock component
+    - Create `src/components/features/page-builder/blocks/RowBlock.tsx`
+    - Support 1-4 columns with configurable widths
+    - Implement responsive stacking on mobile
+    - Render child blocks in respective columns
+    - _Requirements: 3.1, 3.2, 3.4, 3.5_
+  - [ ]* 10.2 Write property test for column constraint
+    - **Property 3: Row column count constraint**
+    - **Validates: Requirements 3.1**
+  - [ ]* 10.3 Write property test for column widths
+    - **Property 4: Row column widths validation**
+    - **Validates: Requirements 3.2**
+  - [ ]* 10.4 Write property test for children rendering
+    - **Property 5: Row children rendering**
+    - **Validates: Requirements 3.4**
+
+- [x] 11. Register all new blocks
+  - [x] 11.1 Update blocks index to register new blocks
+    - Update `src/components/features/page-builder/blocks/index.ts`
+    - Register TextBlock, ImageBlock, BadgeBlock, StatsBlock, LinkButtonBlock, ListBlock, TabsBlock, RowBlock
+    - Define defaultProps and propsSchema for each
+    - _Requirements: 2.1-2.7, 3.1_
+
+- [x] 12. Checkpoint - Ensure all block tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 13. Update BuilderCanvas with enhanced features
+  - [x] 13.1 Integrate HistoryManager into PageBuilder
+    - Update `src/components/features/page-builder/PageBuilder.tsx`
+    - Add undo/redo buttons to header
+    - Connect keyboard shortcuts (Ctrl+Z, Ctrl+Shift+Z)
+    - _Requirements: 8.1, 8.2, 8.3, 8.4_
+  - [x] 13.2 Add block duplication to canvas
+    - Update `src/components/features/page-builder/BuilderCanvas.tsx`
+    - Add duplicate button to block toolbar
+    - Implement duplication using duplicateBlock utility
+    - _Requirements: 5.1, 5.2, 5.3_
+  - [x] 13.3 Add up/down reorder buttons
+    - Add arrow buttons for keyboard-based reordering
+    - Implement moveBlockUp and moveBlockDown functions
+    - _Requirements: 4.4_
+  - [x] 13.4 Enhance drag-drop visual feedback
+    - Improve drop zone highlighting
+    - Add smooth transition animations
+    - _Requirements: 4.1, 4.2, 4.3_
+
+- [x] 14. Update PropertiesPanel with new options
+  - [x] 14.1 Add spacing configuration section
+    - Update `src/components/features/page-builder/PropertiesPanel.tsx`
+    - Add margin and padding controls
+    - Add horizontal alignment selector
+    - _Requirements: 6.1, 6.2, 6.3_
+  - [x] 14.2 Add visibility condition configuration
+    - Add visibility section with field selector
+    - Add operator dropdown and value input
+    - Show visibility indicator on blocks with conditions
+    - _Requirements: 10.1, 10.2, 10.4_
+  - [x] 14.3 Add "Save as Template" option
+    - Add template save button when block is selected
+    - Implement template name prompt dialog
+    - _Requirements: 9.1, 9.2_
+
+- [x] 15. Update BlockLibrary with templates section
+  - [x] 15.1 Add Templates category to BlockLibrary
+    - Update `src/components/features/page-builder/BlockLibrary.tsx`
+    - Load and display saved templates
+    - Allow dragging templates to canvas
+    - _Requirements: 9.3, 9.4_
+
+- [x] 16. Enhance ThemePreview with real data
+  - [x] 16.1 Create PreviewDataFetcher service
+    - Create `src/components/features/page-builder/utils/PreviewDataFetcher.ts`
+    - Implement fetchRecords and fetchRecord using user token
+    - _Requirements: 7.4_
+  - [x] 16.2 Update ThemePreview with record selector
+    - Update `src/components/features/page-builder/ThemePreview.tsx`
+    - Add record selector dropdown
+    - Fetch and display real data from connected database
+    - _Requirements: 7.1, 7.4, 7.5_
+  - [x] 16.3 Add viewport size switcher
+    - Add desktop/tablet/mobile viewport buttons
+    - Apply responsive container sizing
+    - _Requirements: 7.2_
+  - [x] 16.4 Implement real-time preview updates
+    - Update preview when builder state changes
+    - Debounce updates for performance
+    - _Requirements: 7.3_
+
+- [x] 17. Update block rendering with visibility and spacing
+  - [x] 17.1 Create BlockWrapper component
+    - Create `src/components/features/page-builder/BlockWrapper.tsx`
+    - Apply spacing classes based on block props
+    - Evaluate and apply visibility conditions
+    - _Requirements: 6.1-6.4, 10.3_
+
+- [x] 18. Support nested blocks in canvas
+  - [x] 18.1 Update BuilderCanvas for container blocks
+    - Handle dropping blocks into Row columns
+    - Support nested drag-drop operations
+    - _Requirements: 3.3_
+  - [x] 18.2 Update block rendering for children
+    - Render child blocks within container blocks
+    - Pass correct context to nested blocks
+    - _Requirements: 3.4_
+
+- [x] 19. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.

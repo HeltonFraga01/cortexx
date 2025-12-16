@@ -1,0 +1,42 @@
+{
+  "recommendations": [
+    // TypeScript & JavaScript
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    
+    // React
+    "dsznajder.es7-react-js-snippets",
+    "burkeholland.simple-react-snippets",
+    
+    // Tailwind CSS
+    "bradlc.vscode-tailwindcss",
+    
+    // SQLite
+    "alexcvzz.vscode-sqlite",
+    "qwtel.sqlite-viewer",
+    
+    // Docker
+    "ms-azuretools.vscode-docker",
+    
+    // Git
+    "eamodio.gitlens",
+    "mhutchie.git-graph",
+    
+    // Testing
+    "vitest.explorer",
+    
+    // Productivity
+    "christian-kohler.path-intellisense",
+    "formulahendry.auto-rename-tag",
+    "streetsidesoftware.code-spell-checker",
+    "streetsidesoftware.code-spell-checker-portuguese-brazilian",
+    
+    // API Development
+    "humao.rest-client",
+    
+    // Markdown
+    "yzhang.markdown-all-in-one",
+    "bierner.markdown-mermaid"
+  ],
+  "unwantedRecommendations": []
+}

@@ -1,0 +1,290 @@
+# Configuração de Deploy para WUZAPI Manager
+
+# Configurações globais
+global:
+  image_name: "heltonfraga/wuzapi-manager"
+  stack_name: "wuzapi"
+  registry: "docker.io"
+  
+  # Timeouts (em segundos)
+  timeouts:
+    health_check: 300      # 5 minutos
+    deploy: 600           # 10 minutos
+    rollback: 300         # 5 minutos
+    
+  # Configurações de retry
+  retry:
+    max_attempts: 3
+    delay: 10
+    
+  # Notificações
+  notifications:
+    enabled: true
+    channels:
+      - slack
+      - email
+    webhook_url: ""  # Configurar se necessário
+
+# Configurações por ambiente
+environments:
+  development:
+    domain: "wuzapi.localhost"
+    compose_file: "docker-compose.yml"
+    ssl_enabled: false
+    auto_rollback: false
+    skip_tests: false
+    
+    # Recursos
+    resources:
+      cpu_limit: "0.5"
+      memory_limit: "256M"
+      
+    # Variáveis de ambiente específicas
+    env_vars:
+      NODE_ENV: "development"
+      LOG_LEVEL: "debug"
+      DEBUG: "wuzapi:*"
+      
+    # Health checks
+    health_check:
+      interval: 30
+      timeout: 10
+      retries: 3
+      
+  staging:
+    domain: "staging.wuzapi.com"
+    compose_file: "docker-compose.staging.yml"
+    ssl_enabled: true
+    auto_rollback: true
+    skip_tests: false
+    
+    # Recursos
+    resources:
+      cpu_limit: "1.0"
+      memory_limit: "512M"
+      
+    # Variáveis de ambiente específicas
+    env_vars:
+      NODE_ENV: "staging"
+      LOG_LEVEL: "info"
+      
+    # Health checks
+    health_check:
+      interval: 30
+      timeout: 15
+      retries: 3
+      
+    # Verificações pós-deploy
+    post_deploy_checks:
+      - connectivity
+      - services
+      - application
+      - database
+      - performance
+      
+  production:
+    domain: "cloudapi.wasend.com.br"
+    compose_file: "docker-swarm-stack.yml"
+    ssl_enabled: true
+    auto_rollback: true
+    skip_tests: false
+    
+    # Recursos
+    resources:
+      cpu_limit: "1.0"
+      memory_limit: "512M"
+      cpu_reservation: "0.5"
+      memory_reservation: "256M"
+      
+    # Variáveis de ambiente específicas
+    env_vars:
+      NODE_ENV: "production"
+      LOG_LEVEL: "warn"
+      
+    # Health checks
+    health_check:
+      interval: 30
+      timeout: 10
+      retries: 3
+      start_period: 60
+      
+    # Verificações pós-deploy
+    post_deploy_checks:
+      - connectivity
+      - services
+      - application
+      - database
+      - performance
+      - security
+      - logs
+      - monitoring
+      
+    # Configurações de backup
+    backup:
+      enabled: true
+      retention_days: 30
+      schedule: "0 2 * * *"  # Todo dia às 2h
+      
+    # Configurações de monitoramento
+    monitoring:
+      prometheus_enabled: true
+      grafana_enabled: true
+      alerts_enabled: true
+
+# Configurações de testes
+testing:
+  unit_tests:
+    command: "npm test -- --run"
+    timeout: 300
+    
+  integration_tests:
+    command: "npm run test:integration"
+    timeout: 600
+    
+  e2e_tests:
+    command: "npm run test:e2e"
+    timeout: 900
+    enabled_environments: ["staging", "production"]
+
+# Configurações de segurança
+security:
+  # Verificações de segurança obrigatórias
+  required_checks:
+    - ssl_certificate
+    - security_headers
+    - no_sensitive_info
+    
+  # Headers de segurança obrigatórios
+  required_headers:
+    - "X-Frame-Options"
+    - "X-Content-Type-Options"
+    - "X-XSS-Protection"
+    
+  # Verificações de vulnerabilidades
+  vulnerability_scan:
+    enabled: true
+    tools:
+      - "docker scan"
+      - "npm audit"
+
+# Configurações de rollback
+rollback:
+  # Condições para rollback automático
+  auto_rollback_conditions:
+    - health_check_failed
+    - high_error_rate
+    - performance_degradation
+    
+  # Configurações de backup
+  backup_before_deploy: true
+  keep_previous_versions: 5
+  
+  # Verificações pós-rollback
+  post_rollback_checks:
+    - connectivity
+    - services
+    - application
+
+# Configurações de logging
+logging:
+  level: "info"
+  format: "json"
+  
+  # Logs de deploy
+  deploy_logs:
+    enabled: true
+    retention_days: 90
+    path: "./logs/deploy"
+    
+  # Logs de aplicação
+  app_logs:
+    enabled: true
+    retention_days: 30
+    path: "./logs/app"
+
+# Configurações de métricas
+metrics:
+  enabled: true
+  
+  # Métricas de deploy
+  deploy_metrics:
+    - deploy_duration
+    - deploy_success_rate
+    - rollback_frequency
+    
+  # Métricas de aplicação
+  app_metrics:
+    - response_time
+    - error_rate
+    - throughput
+    - memory_usage
+    - cpu_usage
+
+# Configurações de alertas
+alerts:
+  enabled: true
+  
+  # Canais de alerta
+  channels:
+    slack:
+      enabled: false
+      webhook_url: ""
+      channel: "#deployments"
+      
+    email:
+      enabled: false
+      smtp_server: ""
+      recipients: []
+      
+    discord:
+      enabled: false
+      webhook_url: ""
+      
+  # Condições de alerta
+  conditions:
+    deploy_failed:
+      severity: "critical"
+      message: "Deploy falhou para {environment} - versão {version}"
+      
+    rollback_executed:
+      severity: "warning"
+      message: "Rollback executado em {environment} - {old_version} -> {new_version}"
+      
+    health_check_failed:
+      severity: "critical"
+      message: "Health check falhou em {environment} após deploy"
+      
+    performance_degraded:
+      severity: "warning"
+      message: "Performance degradada detectada em {environment}"
+
+# Configurações de integração
+integrations:
+  # Git
+  git:
+    enabled: true
+    tag_releases: true
+    create_release_notes: true
+    
+  # Docker Registry
+  docker_registry:
+    enabled: true
+    scan_images: true
+    
+  # Monitoring
+  prometheus:
+    enabled: true
+    scrape_interval: "15s"
+    
+  grafana:
+    enabled: true
+    create_dashboards: true
+    
+  # CI/CD
+  github_actions:
+    enabled: false
+    workflow_file: ".github/workflows/deploy.yml"
+    
+  gitlab_ci:
+    enabled: false
+    config_file: ".gitlab-ci.yml"

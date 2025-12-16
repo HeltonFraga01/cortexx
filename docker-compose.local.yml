@@ -1,0 +1,80 @@
+# Docker Compose para testes locais
+# Uso: docker-compose -f docker-compose.local.yml up -d
+
+services:
+  # Cortexx - Local Testing
+  cortexx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - NODE_ENV=production
+    container_name: cortexx-local
+    
+    # Carregar variáveis de ambiente do arquivo
+    env_file:
+      - .env.docker
+    
+    # Sobrescrever variáveis específicas para testes locais
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - LOG_LEVEL=debug
+    
+    # Portas
+    ports:
+      - "3001:3001"
+    
+    # Volumes para persistência
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "node", "server/healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Networks
+    networks:
+      - cortexx-local
+
+  # Frontend (opcional - para testes full-stack)
+  # Descomente se quiser testar com frontend separado
+  # cortexx-frontend:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #     target: frontend-builder
+  #   container_name: cortexx-frontend-local
+  #   ports:
+  #     - "5173:5173"
+  #   environment:
+  #     - VITE_API_BASE_URL=http://localhost:3001
+  #     - VITE_WUZAPI_BASE_URL=https://wzapi.wasend.com.br
+  #   volumes:
+  #     - ./src:/app/src
+  #     - ./public:/app/public
+  #   command: npm run dev
+  #   networks:
+  #     - cortexx-local
+  #   depends_on:
+  #     - cortexx
+
+networks:
+  cortexx-local:
+    driver: bridge
+
+# Volumes nomeados (opcional - use se quiser persistência entre recreações)
+# volumes:
+#   cortexx-data:
+#     driver: local
+#   cortexx-logs:
+#     driver: local

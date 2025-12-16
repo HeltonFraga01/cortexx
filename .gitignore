@@ -1,0 +1,77 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Environment variables
+.env
+.env.production
+.env.local
+.env.*.local
+server/.env
+server/.env.production
+
+# Database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+server/wuzapi.db
+server/wuzapi.db-*
+data/
+backups/
+test*.db
+debug*.db
+*backup*.db
+
+# Deploy configuration
+deploy-config.yml
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Build and deployment artifacts
+build-*.sh
+deploy-*.sh
+fix-*.sh
+update-*.sh
+diagnose-*.sh
+*-report.json
+performance-*.json
+
+# Test and migration files (temporary)
+test-*.js
+validate-*.js
+migrate-*.js
+import-*.js
+export-*.js
+transform-*.js
+final-*.js
+
+# Documentation (temporary/migration)
+*_CORREÇÕES.md
+*_MIGRATION*.md
+*_UPDATE_REPORT.md
+*_LOGS_FIX.md
+
+# Security reports
+security-reports/
+.env.docker
+docker-compose.swarm.yml

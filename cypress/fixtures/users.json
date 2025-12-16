@@ -1,0 +1,56 @@
+[
+  {
+    "id": "test-user-1",
+    "name": "Test User 1",
+    "token": "test-token-123",
+    "webhook": "https://example.com/webhook1",
+    "events": "Message,Receipt",
+    "connected": true,
+    "loggedIn": true,
+    "jid": "5511999999999:49@s.whatsapp.net",
+    "qrcode": "",
+    "expiration": 0,
+    "proxy_config": {
+      "enabled": false,
+      "proxy_url": ""
+    },
+    "s3_config": {
+      "enabled": false,
+      "endpoint": "",
+      "region": "",
+      "bucket": "",
+      "access_key": "",
+      "path_style": false,
+      "public_url": "",
+      "media_delivery": "base64",
+      "retention_days": 30
+    }
+  },
+  {
+    "id": "test-user-2",
+    "name": "Test User 2",
+    "token": "test-token-456",
+    "webhook": "https://example.com/webhook2",
+    "events": "Message",
+    "connected": false,
+    "loggedIn": false,
+    "jid": "",
+    "qrcode": "mock-qr-code-data",
+    "expiration": 0,
+    "proxy_config": {
+      "enabled": false,
+      "proxy_url": ""
+    },
+    "s3_config": {
+      "enabled": false,
+      "endpoint": "",
+      "region": "",
+      "bucket": "",
+      "access_key": "",
+      "path_style": false,
+      "public_url": "",
+      "media_delivery": "base64",
+      "retention_days": 30
+    }
+  }
+]

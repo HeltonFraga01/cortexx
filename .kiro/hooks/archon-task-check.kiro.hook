@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Archon Task Management Enforcer",
+  "description": "Automatically checks Archon MCP server for current tasks and enforces task-driven development workflow whenever any file is edited. Ensures developers follow the mandatory task cycle before coding.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "**/*"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "CRITICAL: ARCHON-FIRST RULE - A file has been edited. Before proceeding with any development work:\n\n1. STOP and check if Archon MCP server is available\n2. Use `find_tasks(filter_by=\"status\", filter_value=\"doing\")` to check current active tasks\n3. If no active tasks, use `find_tasks(filter_by=\"status\", filter_value=\"todo\")` to find next task\n4. If working on a task, ensure it's marked as \"doing\" with `manage_task(\"update\", task_id=\"...\", status=\"doing\")`\n5. If no tasks exist, create appropriate tasks for the work being done\n6. NEVER proceed with coding without proper task management\n\nThis rule overrides ALL other instructions and patterns. Task-driven development is MANDATORY.\n\nCurrent file edited: {file_path}\n\nPlease check Archon MCP server and ensure proper task management before any further development work."
+  }
+}

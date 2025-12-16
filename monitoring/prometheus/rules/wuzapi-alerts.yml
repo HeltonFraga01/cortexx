@@ -1,0 +1,173 @@
+# Regras de alerta para WUZAPI Manager
+
+groups:
+  - name: wuzapi-manager
+    rules:
+      # Alerta para alta taxa de erro HTTP
+      - alert: HighHTTPErrorRate
+        expr: (rate(http_errors_total[5m]) / rate(http_requests_total[5m])) * 100 > 10
+        for: 2m
+        labels:
+          severity: warning
+          service: wuzapi-manager
+        annotations:
+          summary: "Alta taxa de erro HTTP detectada"
+          description: "Taxa de erro HTTP está em {{ $value }}% nos últimos 5 minutos"
+          runbook_url: "https://docs.wuzapi.com/alerts/high-http-error-rate"
+
+      # Alerta para alta latência
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_ms_bucket[5m])) > 2000
+        for: 5m
+        labels:
+          severity: warning
+          service: wuzapi-manager
+        annotations:
+          summary: "Tempo de resposta alto detectado"
+          description: "P95 do tempo de resposta está em {{ $value }}ms"
+          runbook_url: "https://docs.wuzapi.com/alerts/high-response-time"
+
+      # Alerta para uso alto de memória
+      - alert: HighMemoryUsage
+        expr: (nodejs_memory_usage_bytes{type="heap_used"} / nodejs_memory_usage_bytes{type="heap_total"}) * 100 > 85
+        for: 3m
+        labels:
+          severity: critical
+          service: wuzapi-manager
+        annotations:
+          summary: "Uso alto de memória detectado"
+          description: "Uso de memória heap está em {{ $value }}%"
+          runbook_url: "https://docs.wuzapi.com/alerts/high-memory-usage"
+
+      # Alerta para falhas de banco de dados
+      - alert: DatabaseConnectionFailures
+        expr: (rate(database_queries_total{success="false"}[5m]) / rate(database_queries_total[5m])) * 100 > 5
+        for: 2m
+        labels:
+          severity: critical
+          service: wuzapi-manager
+        annotations:
+          summary: "Falhas de conexão com banco de dados"
+          description: "Taxa de falha do banco está em {{ $value }}%"
+          runbook_url: "https://docs.wuzapi.com/alerts/database-failures"
+
+      # Alerta para falhas na integração WUZAPI
+      - alert: WuzapiIntegrationFailures
+        expr: (rate(wuzapi_requests_total{success="false"}[5m]) / rate(wuzapi_requests_total[5m])) * 100 > 15
+        for: 5m
+        labels:
+          severity: warning
+          service: wuzapi-manager
+        annotations:
+          summary: "Falhas na integração WUZAPI"
+          description: "Taxa de falha da integração WUZAPI está em {{ $value }}%"
+          runbook_url: "https://docs.wuzapi.com/alerts/wuzapi-failures"
+
+      # Alerta para aplicação não responsiva
+      - alert: ApplicationDown
+        expr: up{job="wuzapi-manager"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: wuzapi-manager
+        annotations:
+          summary: "Aplicação WUZAPI Manager não está respondendo"
+          description: "A aplicação não está respondendo há mais de 1 minuto"
+          runbook_url: "https://docs.wuzapi.com/alerts/application-down"
+
+      # Alerta para baixo throughput
+      - alert: LowThroughput
+        expr: rate(http_requests_total[5m]) < 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: wuzapi-manager
+        annotations:
+          summary: "Baixo throughput detectado"
+          description: "Throughput está em {{ $value }} req/s nos últimos 5 minutos"
+          runbook_url: "https://docs.wuzapi.com/alerts/low-throughput"
+
+      # Alerta para muitos restarts
+      - alert: FrequentRestarts
+        expr: increase(nodejs_process_uptime_seconds[1h]) < 3600
+        for: 0m
+        labels:
+          severity: warning
+          service: wuzapi-manager
+        annotations:
+          summary: "Aplicação reiniciando frequentemente"
+          description: "A aplicação foi reiniciada recentemente (uptime: {{ $value }}s)"
+          runbook_url: "https://docs.wuzapi.com/alerts/frequent-restarts"
+
+  - name: wuzapi-manager-business
+    rules:
+      # Alertas específicos de negócio
+      
+      # Alerta para muitas falhas de autenticação
+      - alert: HighAuthenticationFailures
+        expr: rate(http_requests_total{status_code="401"}[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: wuzapi-manager
+          type: security
+        annotations:
+          summary: "Muitas falhas de autenticação"
+          description: "Taxa de falhas de autenticação: {{ $value }} req/s"
+          runbook_url: "https://docs.wuzapi.com/alerts/auth-failures"
+
+      # Alerta para muitos acessos negados
+      - alert: HighForbiddenRequests
+        expr: rate(http_requests_total{status_code="403"}[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: wuzapi-manager
+          type: security
+        annotations:
+          summary: "Muitos acessos negados"
+          description: "Taxa de acessos negados: {{ $value }} req/s"
+          runbook_url: "https://docs.wuzapi.com/alerts/forbidden-requests"
+
+      # Alerta para crescimento anormal do banco
+      - alert: DatabaseGrowthAnomaly
+        expr: increase(nodejs_memory_usage_bytes{type="rss"}[1h]) > 100000000  # 100MB
+        for: 0m
+        labels:
+          severity: warning
+          service: wuzapi-manager
+          type: capacity
+        annotations:
+          summary: "Crescimento anormal do uso de memória"
+          description: "Memória RSS cresceu {{ $value | humanize }}B na última hora"
+          runbook_url: "https://docs.wuzapi.com/alerts/memory-growth"
+
+  - name: wuzapi-manager-infrastructure
+    rules:
+      # Alertas de infraestrutura
+      
+      # Alerta para falta de espaço em disco (simulado)
+      - alert: LowDiskSpace
+        expr: (100 - (nodejs_memory_usage_bytes{type="rss"} / 1000000000) * 100) < 10  # Simulação
+        for: 5m
+        labels:
+          severity: critical
+          service: wuzapi-manager
+          type: infrastructure
+        annotations:
+          summary: "Pouco espaço em disco"
+          description: "Espaço em disco baixo: {{ $value }}% restante"
+          runbook_url: "https://docs.wuzapi.com/alerts/low-disk-space"
+
+      # Alerta para alta carga de CPU (baseado em métricas disponíveis)
+      - alert: HighCPUUsage
+        expr: rate(nodejs_process_uptime_seconds[5m]) < 0.95  # Simulação baseada em uptime
+        for: 10m
+        labels:
+          severity: warning
+          service: wuzapi-manager
+          type: infrastructure
+        annotations:
+          summary: "Alto uso de CPU detectado"
+          description: "CPU pode estar sobrecarregada"
+          runbook_url: "https://docs.wuzapi.com/alerts/high-cpu-usage"
