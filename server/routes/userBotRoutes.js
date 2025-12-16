@@ -63,18 +63,21 @@ router.get('/assigned', verifyUserToken, async (req, res) => {
     const userId = getBotUserId(req)
     const AutomationService = require('../services/AutomationService')
     const QuotaService = require('../services/QuotaService')
+    const SupabaseService = require('../services/SupabaseService')
     const automationService = new AutomationService(db)
     const quotaService = new QuotaService(db)
 
-    // Get user's inboxes via accounts table
+    // Get user's inboxes via accounts table using Supabase
     // Users own accounts, accounts have inboxes
-    const { rows: inboxes } = await db.query(
-      `SELECT i.id, i.name 
-       FROM inboxes i
-       JOIN accounts a ON i.account_id = a.id
-       WHERE a.owner_user_id = ?`,
-      [userId]
-    )
+    const { data: inboxes, error: inboxError } = await SupabaseService.adminClient
+      .from('inboxes')
+      .select('id, name, account_id, accounts!inner(owner_user_id)')
+      .eq('accounts.owner_user_id', userId)
+
+    if (inboxError) {
+      logger.error('Error fetching user inboxes', { error: inboxError.message, userId })
+      return res.json({ success: true, data: [] })
+    }
 
     if (!inboxes || inboxes.length === 0) {
       return res.json({ success: true, data: [] })

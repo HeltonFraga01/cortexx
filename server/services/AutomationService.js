@@ -224,9 +224,48 @@ class AutomationService {
     const template = await this.getBotTemplateById(id);
     if (!template) throw new Error('Bot template not found');
     try {
+      // 1. Save as default in global settings
       await this.updateGlobalSettings({ defaultBotTemplateId: id });
+      
+      // 2. Get all inboxes with their accounts to auto-assign
+      // The accounts table has owner_user_id and name directly (no separate users table)
+      const { data: allInboxes, error: inboxError } = await SupabaseService.adminClient
+        .from('inboxes')
+        .select('id, name, account_id, accounts(id, owner_user_id, name)')
+        .order('created_at', { ascending: false });
+      
+      if (inboxError) {
+        logger.warn('Failed to fetch inboxes for auto-assignment', { error: inboxError.message });
+      } else if (allInboxes && allInboxes.length > 0) {
+        // Build inbox assignments for all inboxes
+        // Use account name as userName since there's no separate users table
+        const inboxAssignments = allInboxes.map(inbox => ({
+          userId: inbox.accounts?.owner_user_id || inbox.account_id,
+          userName: inbox.accounts?.name || 'Unknown',
+          inboxId: inbox.id,
+          inboxName: inbox.name
+        })).filter(a => a.userId); // Filter out any without userId
+        
+        // Update the template with all inbox assignments
+        const { error: updateError } = await SupabaseService.update('bot_templates', id, {
+          inbox_assignments: inboxAssignments,
+          updated_at: new Date().toISOString()
+        });
+        
+        if (updateError) {
+          logger.warn('Failed to auto-assign inboxes to default template', { error: updateError.message });
+        } else {
+          logger.info('Auto-assigned template to all inboxes', { 
+            templateId: id, 
+            inboxCount: inboxAssignments.length 
+          });
+        }
+      }
+      
       logger.info('Bot template set as default', { id });
-      return template;
+      
+      // Return updated template
+      return await this.getBotTemplateById(id);
     } catch (error) {
       logger.error('Failed to set default bot template', { id, error: error.message });
       throw error;

@@ -2,12 +2,14 @@
  * AdminAuditService - Service for managing admin audit logs
  * 
  * Handles logging, querying, and exporting administrative actions.
+ * Migrated to use SupabaseService directly.
  * 
  * Requirements: 9.1, 9.2, 9.3
  */
 
 const { logger } = require('../utils/logger');
 const crypto = require('crypto');
+const SupabaseService = require('./SupabaseService');
 
 const ACTION_TYPES = {
   PLAN_CREATED: 'plan_created',
@@ -31,6 +33,7 @@ const ACTION_TYPES = {
 
 class AdminAuditService {
   constructor(db) {
+    // db parameter kept for backwards compatibility but not used
     this.db = db;
   }
 
@@ -43,11 +46,21 @@ class AdminAuditService {
       const id = this.generateId();
       const now = new Date().toISOString();
 
-      await this.db.query(
-        `INSERT INTO admin_audit_log (id, admin_id, action_type, target_user_id, target_resource_type, target_resource_id, details, ip_address, user_agent, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, adminId, actionType, targetUserId, details.resourceType || null, details.resourceId || null, JSON.stringify(details), ipAddress, userAgent, now]
-      );
+      // Map to actual database column names
+      const { error } = await SupabaseService.insert('admin_audit_log', {
+        id,
+        admin_user_id: adminId,
+        action: actionType,
+        resource_type: details.resourceType || 'user',
+        resource_id: targetUserId || details.resourceId || null,
+        details: { ...details, targetUserId },
+        ip_address: ipAddress,
+        created_at: now
+      });
+
+      if (error) {
+        throw error;
+      }
 
       logger.info('Admin action logged', { adminId, actionType, targetUserId });
 
@@ -58,62 +71,81 @@ class AdminAuditService {
     }
   }
 
-
   async listAuditLogs(filters = {}, pagination = {}) {
     try {
       const { adminId, targetUserId, actionType, startDate, endDate } = filters;
       const { page = 1, pageSize = 50 } = pagination;
       const offset = (page - 1) * pageSize;
 
-      let sql = 'SELECT * FROM admin_audit_log WHERE 1=1';
-      let countSql = 'SELECT COUNT(*) as total FROM admin_audit_log WHERE 1=1';
-      const params = [];
-      const countParams = [];
+      // Build query using Supabase query builder with correct column names
+      const queryFn = (query) => {
+        let q = query.select('*');
 
-      if (adminId) {
-        sql += ' AND admin_id = ?';
-        countSql += ' AND admin_id = ?';
-        params.push(adminId);
-        countParams.push(adminId);
+        if (adminId) {
+          q = q.eq('admin_user_id', adminId);
+        }
+
+        if (targetUserId) {
+          q = q.eq('resource_id', targetUserId);
+        }
+
+        if (actionType) {
+          q = q.eq('action', actionType);
+        }
+
+        if (startDate) {
+          q = q.gte('created_at', startDate);
+        }
+
+        if (endDate) {
+          q = q.lte('created_at', endDate);
+        }
+
+        q = q.order('created_at', { ascending: false });
+        q = q.range(offset, offset + pageSize - 1);
+
+        return q;
+      };
+
+      // Count query
+      const countQueryFn = (query) => {
+        let q = query.select('*', { count: 'exact', head: true });
+
+        if (adminId) {
+          q = q.eq('admin_user_id', adminId);
+        }
+
+        if (targetUserId) {
+          q = q.eq('resource_id', targetUserId);
+        }
+
+        if (actionType) {
+          q = q.eq('action', actionType);
+        }
+
+        if (startDate) {
+          q = q.gte('created_at', startDate);
+        }
+
+        if (endDate) {
+          q = q.lte('created_at', endDate);
+        }
+
+        return q;
+      };
+
+      const [logsResult, countResult] = await Promise.all([
+        SupabaseService.queryAsAdmin('admin_audit_log', queryFn),
+        SupabaseService.queryAsAdmin('admin_audit_log', countQueryFn)
+      ]);
+
+      if (logsResult.error) {
+        throw logsResult.error;
       }
-
-      if (targetUserId) {
-        sql += ' AND target_user_id = ?';
-        countSql += ' AND target_user_id = ?';
-        params.push(targetUserId);
-        countParams.push(targetUserId);
-      }
-
-      if (actionType) {
-        sql += ' AND action_type = ?';
-        countSql += ' AND action_type = ?';
-        params.push(actionType);
-        countParams.push(actionType);
-      }
-
-      if (startDate) {
-        sql += ' AND created_at >= ?';
-        countSql += ' AND created_at >= ?';
-        params.push(startDate);
-        countParams.push(startDate);
-      }
-
-      if (endDate) {
-        sql += ' AND created_at <= ?';
-        countSql += ' AND created_at <= ?';
-        params.push(endDate);
-        countParams.push(endDate);
-      }
-
-      sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-      params.push(pageSize, offset);
-
-      const { rows: logsRows } = await this.db.query(sql, params);
-      const { rows: countRows } = await this.db.query(countSql, countParams);
 
       return {
-        logs: (logsRows || []).map(this.formatLog),
-        total: countRows?.[0]?.total || 0,
+        logs: (logsResult.data || []).map(this.formatLog),
+        total: countResult.count || 0,
         page,
         pageSize
       };
@@ -167,16 +199,17 @@ class AdminAuditService {
   }
 
   formatLog(row) {
+    const details = typeof row.details === 'string' ? JSON.parse(row.details) : row.details || {};
     return {
       id: row.id,
-      adminId: row.admin_id,
-      actionType: row.action_type,
-      targetUserId: row.target_user_id,
-      targetResourceType: row.target_resource_type,
-      targetResourceId: row.target_resource_id,
-      details: typeof row.details === 'string' ? JSON.parse(row.details) : row.details || {},
+      adminId: row.admin_user_id,
+      actionType: row.action,
+      targetUserId: details.targetUserId || row.resource_id,
+      targetResourceType: row.resource_type,
+      targetResourceId: row.resource_id,
+      details: details,
       ipAddress: row.ip_address,
-      userAgent: row.user_agent,
+      userAgent: null, // Column doesn't exist in current schema
       createdAt: row.created_at
     };
   }

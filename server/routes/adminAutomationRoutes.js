@@ -69,12 +69,22 @@ router.put('/settings', async (req, res) => {
 
 /**
  * GET /api/admin/automation/bot-templates
- * Get all bot templates
+ * Get all bot templates with isDefault flag
  */
 router.get('/bot-templates', async (req, res) => {
   try {
-    const templates = await automationService.getBotTemplates();
-    res.json({ success: true, data: templates });
+    const [templates, settings] = await Promise.all([
+      automationService.getBotTemplates(),
+      automationService.getGlobalSettings()
+    ]);
+    
+    // Add isDefault flag to each template
+    const templatesWithDefault = templates.map(t => ({
+      ...t,
+      isDefault: settings.defaultBotTemplateId === t.id
+    }));
+    
+    res.json({ success: true, data: templatesWithDefault });
   } catch (error) {
     logger.error('Failed to get bot templates', { error: error.message });
     res.status(500).json({ success: false, error: error.message });

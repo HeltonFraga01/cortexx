@@ -4,11 +4,14 @@
  * Handles subscription assignment, status management, proration calculation,
  * and billing cycle processing.
  * 
+ * Migrated to use SupabaseService directly.
+ * 
  * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
  */
 
 const { logger } = require('../utils/logger');
 const crypto = require('crypto');
+const SupabaseService = require('./SupabaseService');
 
 const SUBSCRIPTION_STATUS = {
   TRIAL: 'trial',
@@ -24,6 +27,7 @@ const READ_ONLY_STATUSES = [SUBSCRIPTION_STATUS.EXPIRED, SUBSCRIPTION_STATUS.SUS
 
 class SubscriptionService {
   constructor(db) {
+    // db parameter kept for backwards compatibility but not used
     this.db = db;
   }
 
@@ -32,17 +36,75 @@ class SubscriptionService {
   }
 
   /**
+   * Create an account for a user who doesn't have one yet
+   * @param {string} userId - WUZAPI user ID (32-char hash)
+   * @returns {Promise<string|null>} Account ID or null if failed
+   */
+  async createAccountForUser(userId) {
+    try {
+      // Convert userId to UUID format
+      let uuidUserId = userId;
+      if (userId && userId.length === 32 && !userId.includes('-')) {
+        uuidUserId = `${userId.slice(0, 8)}-${userId.slice(8, 12)}-${userId.slice(12, 16)}-${userId.slice(16, 20)}-${userId.slice(20)}`;
+      }
+
+      const now = new Date().toISOString();
+      const accountId = this.generateId();
+
+      const { data: newAccount, error } = await SupabaseService.insert('accounts', {
+        id: accountId,
+        name: `Account - ${userId.substring(0, 8)}`,
+        owner_user_id: uuidUserId,
+        wuzapi_token: userId,
+        timezone: 'America/Sao_Paulo',
+        locale: 'pt-BR',
+        status: 'active',
+        settings: {
+          maxAgents: 10,
+          maxInboxes: 5,
+          maxTeams: 5,
+          features: ['messaging', 'webhooks', 'contacts']
+        },
+        created_at: now,
+        updated_at: now
+      });
+
+      if (error) {
+        logger.error('Failed to create account for user', { userId, error: error.message });
+        return null;
+      }
+
+      logger.info('Account created automatically for user', { accountId, userId });
+      return accountId;
+    } catch (error) {
+      logger.error('Error creating account for user', { userId, error: error.message });
+      return null;
+    }
+  }
+
+  /**
    * Get account_id from user_id (which is the WUZAPI user hash)
    * The user_id maps to accounts.owner_user_id
    */
   async getAccountIdFromUserId(userId) {
     try {
-      const { data: accounts, error } = await this.db.queryAsAdmin('accounts', (query) =>
-        query.select('id').eq('owner_user_id', userId).limit(1)
-      );
+      // Convert userId to UUID format if needed
+      let uuidUserId = userId;
+      if (userId && userId.length === 32 && !userId.includes('-')) {
+        uuidUserId = `${userId.slice(0, 8)}-${userId.slice(8, 12)}-${userId.slice(12, 16)}-${userId.slice(16, 20)}-${userId.slice(20)}`;
+      }
+
+      const { data: accounts, error } = await SupabaseService.getMany('accounts', { owner_user_id: uuidUserId });
       
       if (error) throw error;
-      if (!accounts || accounts.length === 0) return null;
+      if (!accounts || accounts.length === 0) {
+        // Try by wuzapi_token as fallback
+        const { data: accountsByToken } = await SupabaseService.getMany('accounts', { wuzapi_token: userId });
+        if (accountsByToken && accountsByToken.length > 0) {
+          return accountsByToken[0].id;
+        }
+        return null;
+      }
       
       return accounts[0].id;
     } catch (error) {
@@ -54,24 +116,27 @@ class SubscriptionService {
   async assignPlan(userId, planId, adminId) {
     try {
       const now = new Date();
-      const accountId = await this.getAccountIdFromUserId(userId);
+      let accountId = await this.getAccountIdFromUserId(userId);
       
+      // If no account exists, create one automatically
       if (!accountId) {
-        logger.warn('No account found for user, cannot assign plan', { userId });
-        return null;
+        logger.info('No account found for user, creating one automatically', { userId });
+        accountId = await this.createAccountForUser(userId);
+        
+        if (!accountId) {
+          throw new Error('Failed to create account for user.');
+        }
       }
       
       const existingSubscription = await this.getUserSubscription(userId);
 
       if (existingSubscription) {
         // Update existing subscription
-        const { error } = await this.db.queryAsAdmin('user_subscriptions', (query) =>
-          query.update({
-            plan_id: planId,
-            status: SUBSCRIPTION_STATUS.ACTIVE,
-            updated_at: now.toISOString()
-          }).eq('account_id', accountId)
-        );
+        const { error } = await SupabaseService.update('user_subscriptions', existingSubscription.id, {
+          plan_id: planId,
+          status: SUBSCRIPTION_STATUS.ACTIVE,
+          updated_at: now.toISOString()
+        });
         
         if (error) throw error;
         logger.info('Plan assigned to existing subscription', { userId, accountId, planId, adminId });
@@ -80,18 +145,16 @@ class SubscriptionService {
         const id = this.generateId();
         const periodEnd = this.calculatePeriodEnd(now, 'monthly');
         
-        const { error } = await this.db.queryAsAdmin('user_subscriptions', (query) =>
-          query.insert({
-            id,
-            account_id: accountId,
-            plan_id: planId,
-            status: SUBSCRIPTION_STATUS.ACTIVE,
-            current_period_start: now.toISOString(),
-            current_period_end: periodEnd.toISOString(),
-            created_at: now.toISOString(),
-            updated_at: now.toISOString()
-          })
-        );
+        const { error } = await SupabaseService.insert('user_subscriptions', {
+          id,
+          account_id: accountId,
+          plan_id: planId,
+          status: SUBSCRIPTION_STATUS.ACTIVE,
+          current_period_start: now.toISOString(),
+          current_period_end: periodEnd.toISOString(),
+          created_at: now.toISOString(),
+          updated_at: now.toISOString()
+        });
         
         if (error) throw error;
         logger.info('New subscription created', { userId, accountId, planId, adminId });
@@ -115,8 +178,9 @@ class SubscriptionService {
       }
       
       // Get subscription with plan data using Supabase query builder
-      const { data: subscriptions, error } = await this.db.queryAsAdmin('user_subscriptions', (query) =>
-        query.select(`
+      const { data: subscriptions, error } = await SupabaseService.adminClient
+        .from('user_subscriptions')
+        .select(`
           *,
           plans (
             id,
@@ -126,8 +190,9 @@ class SubscriptionService {
             quotas,
             features
           )
-        `).eq('account_id', accountId).limit(1)
-      );
+        `)
+        .eq('account_id', accountId)
+        .limit(1);
 
       if (error) {
         logger.error('Failed to get subscription', { error: error.message, userId, accountId });
@@ -152,9 +217,9 @@ class SubscriptionService {
         throw new Error(`Invalid status: ${status}`);
       }
 
-      const accountId = await this.getAccountIdFromUserId(userId);
-      if (!accountId) {
-        throw new Error('No account found for user');
+      const subscription = await this.getUserSubscription(userId);
+      if (!subscription) {
+        throw new Error('No subscription found for user');
       }
 
       const now = new Date().toISOString();
@@ -167,13 +232,11 @@ class SubscriptionService {
         updateData.cancelled_at = now;
       }
 
-      const { error } = await this.db.queryAsAdmin('user_subscriptions', (query) =>
-        query.update(updateData).eq('account_id', accountId)
-      );
+      const { error } = await SupabaseService.update('user_subscriptions', subscription.id, updateData);
 
       if (error) throw error;
 
-      logger.info('Subscription status updated', { userId, accountId, status, reason });
+      logger.info('Subscription status updated', { userId, subscriptionId: subscription.id, status, reason });
 
       return this.getUserSubscription(userId);
     } catch (error) {
@@ -190,16 +253,14 @@ class SubscriptionService {
       }
 
       // Get new plan price
-      const { data: plans, error } = await this.db.queryAsAdmin('plans', (query) =>
-        query.select('price_cents').eq('id', newPlanId).limit(1)
-      );
+      const { data: plan, error } = await SupabaseService.getById('plans', newPlanId);
 
       if (error) throw error;
-      if (!plans || plans.length === 0) {
+      if (!plan) {
         throw new Error('Plan not found');
       }
 
-      const newPlanPrice = plans[0].price_cents;
+      const newPlanPrice = plan.price_cents;
       const currentPlanPrice = subscription.plan?.priceCents || 0;
 
       const now = new Date();
@@ -244,21 +305,14 @@ class SubscriptionService {
         return subscription;
       }
 
-      const accountId = await this.getAccountIdFromUserId(userId);
-      if (!accountId) {
-        throw new Error('No account found for user');
-      }
-
       const newPeriodStart = periodEnd;
       const newPeriodEnd = this.calculatePeriodEnd(newPeriodStart, subscription.plan?.billingCycle || 'monthly');
 
-      const { error } = await this.db.queryAsAdmin('user_subscriptions', (query) =>
-        query.update({
-          current_period_start: newPeriodStart.toISOString(),
-          current_period_end: newPeriodEnd.toISOString(),
-          updated_at: now.toISOString()
-        }).eq('account_id', accountId)
-      );
+      const { error } = await SupabaseService.update('user_subscriptions', subscription.id, {
+        current_period_start: newPeriodStart.toISOString(),
+        current_period_end: newPeriodEnd.toISOString(),
+        updated_at: now.toISOString()
+      });
 
       if (error) throw error;
 
