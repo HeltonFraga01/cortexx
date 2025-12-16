@@ -232,6 +232,8 @@ async function initializeDatabase() {
 
     // Tornar o SupabaseService disponível para as rotas
     app.locals.supabase = SupabaseService;
+    // Tornar o db (compatibility layer) disponível para as rotas
+    app.locals.db = db;
 
     logger.info('✅ Conexão com Supabase estabelecida com sucesso');
 

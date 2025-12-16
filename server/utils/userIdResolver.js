@@ -98,11 +98,24 @@ function getUserIdentifiers(req) {
  * Ensure session has userId set
  * Call this after token validation to ensure consistency
  * 
+ * IMPORTANT: Never overwrite admin session data!
+ * Admin sessions must preserve their admin token for WuzAPI validation.
+ * 
  * @param {Object} req - Express request object
  * @param {string} userToken - WUZAPI token
  */
 function ensureSessionUserId(req, userToken) {
   if (req.session && userToken) {
+    // CRITICAL: Never overwrite admin session data
+    // Admin sessions need to preserve their admin token for WuzAPI validation
+    if (req.session.role === 'admin') {
+      logger.debug('Skipping session update for admin user', {
+        sessionUserId: req.session.userId,
+        sessionRole: req.session.role
+      });
+      return;
+    }
+    
     req.session.userToken = userToken;
     // Only set userId if not already set (preserve existing userId)
     if (!req.session.userId) {

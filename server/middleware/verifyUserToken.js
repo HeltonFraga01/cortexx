@@ -98,10 +98,12 @@ const verifyUserToken = async (req, res, next) => {
       
       // Set session.userId and session.userToken for consistency with quota enforcement
       // This ensures quotaMiddleware can resolve the same userId
+      // IMPORTANT: ensureSessionUserId now checks for admin role and skips if admin
       ensureSessionUserId(req, userToken);
       
       // Also set session.userId to the resolved userId (not just hash of token)
-      if (req.session && userId) {
+      // CRITICAL: Never overwrite admin session data - admin needs their token for WuzAPI validation
+      if (req.session && userId && req.session.role !== 'admin') {
         req.session.userId = userId;
       }
       

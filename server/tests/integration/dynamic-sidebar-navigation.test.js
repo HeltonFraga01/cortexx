@@ -1,23 +1,84 @@
 /**
  * Integration Tests for Dynamic Sidebar Navigation Feature
  * Tests database layer for user record fetching
+ * Updated to use Supabase mocks (SQLite removed)
  */
 
 const { test, describe, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert');
-const fs = require('fs');
-const path = require('path');
 
 // Test configuration
-const TEST_DB_PATH = path.join(__dirname, '../../test-dynamic-sidebar.db');
 const TEST_USER_TOKEN_1 = 'test-user-token-001';
 const TEST_USER_TOKEN_2 = 'test-user-token-002';
 const TEST_ADMIN_TOKEN = 'test-admin-token-123';
 
 // Mock environment
 process.env.NODE_ENV = 'test';
-process.env.SQLITE_DB_PATH = TEST_DB_PATH;
 process.env.LOG_LEVEL = 'error';
+
+// Mock data storage for tests
+let mockConnections = [];
+let connectionIdCounter = 1;
+
+// Mock database module
+const mockDb = {
+  isInitialized: true,
+  
+  async createConnection(data) {
+    const connection = {
+      id: connectionIdCounter++,
+      name: data.name,
+      type: data.type,
+      host: data.host,
+      database: data.database || null,
+      nocodb_project_id: data.nocodb_project_id || null,
+      nocodb_table_id: data.nocodb_table_id || null,
+      table_name: data.table_name,
+      user_link_field: data.user_link_field,
+      status: data.status || 'disconnected',
+      assignedUsers: data.assignedUsers || [],
+      fieldMappings: data.fieldMappings || [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    mockConnections.push(connection);
+    return connection;
+  },
+  
+  async getUserConnections(userToken) {
+    return mockConnections.filter(conn => 
+      conn.assignedUsers && conn.assignedUsers.includes(userToken)
+    );
+  },
+  
+  async getConnectionById(id) {
+    return mockConnections.find(conn => conn.id === id) || null;
+  },
+  
+  async updateConnection(id, data) {
+    const index = mockConnections.findIndex(conn => conn.id === id);
+    if (index === -1) return { changes: 0 };
+    
+    mockConnections[index] = {
+      ...mockConnections[index],
+      ...data,
+      updated_at: new Date().toISOString()
+    };
+    return { changes: 1 };
+  },
+  
+  async deleteConnection(id) {
+    const index = mockConnections.findIndex(conn => conn.id === id);
+    if (index === -1) return { changes: 0 };
+    
+    mockConnections.splice(index, 1);
+    return { changes: 1 };
+  },
+  
+  async close() {
+    // No-op for mock
+  }
+};
 
 describe('Dynamic Sidebar Navigation - Database Integration', () => {
   let db;
@@ -26,23 +87,12 @@ describe('Dynamic Sidebar Navigation - Database Integration', () => {
   let testConnectionId3;
 
   before(async () => {
-    // Clean up test database
-    const filesToClean = [
-      TEST_DB_PATH,
-      TEST_DB_PATH + '-wal',
-      TEST_DB_PATH + '-shm'
-    ];
+    // Reset mock data
+    mockConnections = [];
+    connectionIdCounter = 1;
     
-    filesToClean.forEach(file => {
-      if (fs.existsSync(file)) {
-        fs.unlinkSync(file);
-      }
-    });
-
-    // Initialize database
-    const Database = require('../../database');
-    db = new Database(TEST_DB_PATH);
-    await db.init();
+    // Use mock database
+    db = mockDb;
 
     // Create test connections
     const connection1 = await db.createConnection({
@@ -65,9 +115,9 @@ describe('Dynamic Sidebar Navigation - Database Integration', () => {
 
     const connection2 = await db.createConnection({
       name: 'MasterMegga',
-      type: 'SQLITE',
+      type: 'POSTGRES',
       host: 'localhost',
-      database: 'test.db',
+      database: 'test_db',
       table_name: 'users',
       user_link_field: 'user_token',
       status: 'connected',
@@ -97,23 +147,8 @@ describe('Dynamic Sidebar Navigation - Database Integration', () => {
     if (db) {
       await db.close();
     }
-    
-    // Clean up test database
-    const filesToClean = [
-      TEST_DB_PATH,
-      TEST_DB_PATH + '-wal',
-      TEST_DB_PATH + '-shm'
-    ];
-    
-    filesToClean.forEach(file => {
-      if (fs.existsSync(file)) {
-        try {
-          fs.unlinkSync(file);
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      }
-    });
+    // Reset mock data
+    mockConnections = [];
   });
 
   describe('getUserConnections - Database Layer', () => {
