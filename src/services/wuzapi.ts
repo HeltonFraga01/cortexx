@@ -150,8 +150,11 @@ export class WuzAPIService {
     const response = await fetch(`${this.baseUrl}/admin/users`, {
       credentials: 'include', // Usa sessão HTTP-only
       headers: {
-        'Content-Type': 'application/json'
-      }
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      },
+      cache: 'no-store'
     });
     
     if (!response.ok) {

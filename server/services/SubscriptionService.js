@@ -14,7 +14,7 @@ const SUBSCRIPTION_STATUS = {
   TRIAL: 'trial',
   ACTIVE: 'active',
   PAST_DUE: 'past_due',
-  CANCELED: 'canceled',
+  CANCELED: 'cancelled',
   EXPIRED: 'expired',
   SUSPENDED: 'suspended'
 };
@@ -31,34 +31,70 @@ class SubscriptionService {
     return crypto.randomUUID();
   }
 
+  /**
+   * Get account_id from user_id (which is the WUZAPI user hash)
+   * The user_id maps to accounts.owner_user_id
+   */
+  async getAccountIdFromUserId(userId) {
+    try {
+      const { data: accounts, error } = await this.db.queryAsAdmin('accounts', (query) =>
+        query.select('id').eq('owner_user_id', userId).limit(1)
+      );
+      
+      if (error) throw error;
+      if (!accounts || accounts.length === 0) return null;
+      
+      return accounts[0].id;
+    } catch (error) {
+      logger.debug('Could not find account for userId', { userId, error: error.message });
+      return null;
+    }
+  }
+
   async assignPlan(userId, planId, adminId) {
     try {
       const now = new Date();
+      const accountId = await this.getAccountIdFromUserId(userId);
+      
+      if (!accountId) {
+        logger.warn('No account found for user, cannot assign plan', { userId });
+        return null;
+      }
+      
       const existingSubscription = await this.getUserSubscription(userId);
 
       if (existingSubscription) {
-        await this.db.query(
-          'UPDATE user_subscriptions SET plan_id = ?, status = ?, updated_at = ? WHERE user_id = ?',
-          [planId, SUBSCRIPTION_STATUS.ACTIVE, now.toISOString(), userId]
+        // Update existing subscription
+        const { error } = await this.db.queryAsAdmin('user_subscriptions', (query) =>
+          query.update({
+            plan_id: planId,
+            status: SUBSCRIPTION_STATUS.ACTIVE,
+            updated_at: now.toISOString()
+          }).eq('account_id', accountId)
         );
         
-        logger.info('Plan assigned to existing subscription', { userId, planId, adminId });
+        if (error) throw error;
+        logger.info('Plan assigned to existing subscription', { userId, accountId, planId, adminId });
       } else {
+        // Create new subscription
         const id = this.generateId();
         const periodEnd = this.calculatePeriodEnd(now, 'monthly');
         
-        await this.db.query(`
-          INSERT INTO user_subscriptions (
-            id, user_id, plan_id, status, started_at, 
-            current_period_start, current_period_end, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [
-          id, userId, planId, SUBSCRIPTION_STATUS.ACTIVE,
-          now.toISOString(), now.toISOString(), periodEnd.toISOString(),
-          now.toISOString(), now.toISOString()
-        ]);
+        const { error } = await this.db.queryAsAdmin('user_subscriptions', (query) =>
+          query.insert({
+            id,
+            account_id: accountId,
+            plan_id: planId,
+            status: SUBSCRIPTION_STATUS.ACTIVE,
+            current_period_start: now.toISOString(),
+            current_period_end: periodEnd.toISOString(),
+            created_at: now.toISOString(),
+            updated_at: now.toISOString()
+          })
+        );
         
-        logger.info('New subscription created', { userId, planId, adminId });
+        if (error) throw error;
+        logger.info('New subscription created', { userId, accountId, planId, adminId });
       }
 
       return this.getUserSubscription(userId);
@@ -70,21 +106,39 @@ class SubscriptionService {
 
   async getUserSubscription(userId) {
     try {
-      const { rows } = await this.db.query(`
-        SELECT s.*, p.name as plan_name, p.price_cents, p.billing_cycle,
-               p.max_agents, p.max_connections, p.max_messages_per_day,
-               p.max_messages_per_month, p.max_inboxes, p.max_teams,
-               p.max_webhooks, p.max_campaigns, p.max_storage_mb, p.max_bots, p.features
-        FROM user_subscriptions s
-        LEFT JOIN plans p ON s.plan_id = p.id
-        WHERE s.user_id = ?
-      `, [userId]);
+      // First get account_id from userId
+      const accountId = await this.getAccountIdFromUserId(userId);
+      
+      if (!accountId) {
+        // No account found - return null (user may not have an account yet)
+        return null;
+      }
+      
+      // Get subscription with plan data using Supabase query builder
+      const { data: subscriptions, error } = await this.db.queryAsAdmin('user_subscriptions', (query) =>
+        query.select(`
+          *,
+          plans (
+            id,
+            name,
+            price_cents,
+            billing_cycle,
+            quotas,
+            features
+          )
+        `).eq('account_id', accountId).limit(1)
+      );
 
-      if (!rows || rows.length === 0) {
+      if (error) {
+        logger.error('Failed to get subscription', { error: error.message, userId, accountId });
+        throw error;
+      }
+
+      if (!subscriptions || subscriptions.length === 0) {
         return null;
       }
 
-      return this.formatSubscription(rows[0]);
+      return this.formatSubscription(subscriptions[0], userId);
     } catch (error) {
       logger.error('Failed to get subscription', { error: error.message, userId });
       throw error;
@@ -98,26 +152,28 @@ class SubscriptionService {
         throw new Error(`Invalid status: ${status}`);
       }
 
+      const accountId = await this.getAccountIdFromUserId(userId);
+      if (!accountId) {
+        throw new Error('No account found for user');
+      }
+
       const now = new Date().toISOString();
-      let sql = 'UPDATE user_subscriptions SET status = ?, updated_at = ?';
-      const params = [status, now];
+      const updateData = {
+        status,
+        updated_at: now
+      };
 
       if (status === SUBSCRIPTION_STATUS.CANCELED) {
-        sql += ', canceled_at = ?';
-        params.push(now);
+        updateData.cancelled_at = now;
       }
 
-      if (status === SUBSCRIPTION_STATUS.SUSPENDED && reason) {
-        sql += ', suspension_reason = ?';
-        params.push(reason);
-      }
+      const { error } = await this.db.queryAsAdmin('user_subscriptions', (query) =>
+        query.update(updateData).eq('account_id', accountId)
+      );
 
-      sql += ' WHERE user_id = ?';
-      params.push(userId);
+      if (error) throw error;
 
-      await this.db.query(sql, params);
-
-      logger.info('Subscription status updated', { userId, status, reason });
+      logger.info('Subscription status updated', { userId, accountId, status, reason });
 
       return this.getUserSubscription(userId);
     } catch (error) {
@@ -133,12 +189,17 @@ class SubscriptionService {
         return { proratedAmount: 0, daysRemaining: 0, credit: 0 };
       }
 
-      const { rows } = await this.db.query('SELECT price_cents FROM plans WHERE id = ?', [newPlanId]);
-      if (!rows || rows.length === 0) {
+      // Get new plan price
+      const { data: plans, error } = await this.db.queryAsAdmin('plans', (query) =>
+        query.select('price_cents').eq('id', newPlanId).limit(1)
+      );
+
+      if (error) throw error;
+      if (!plans || plans.length === 0) {
         throw new Error('Plan not found');
       }
 
-      const newPlanPrice = rows[0].price_cents;
+      const newPlanPrice = plans[0].price_cents;
       const currentPlanPrice = subscription.plan?.priceCents || 0;
 
       const now = new Date();
@@ -183,13 +244,23 @@ class SubscriptionService {
         return subscription;
       }
 
+      const accountId = await this.getAccountIdFromUserId(userId);
+      if (!accountId) {
+        throw new Error('No account found for user');
+      }
+
       const newPeriodStart = periodEnd;
       const newPeriodEnd = this.calculatePeriodEnd(newPeriodStart, subscription.plan?.billingCycle || 'monthly');
 
-      await this.db.query(
-        'UPDATE user_subscriptions SET current_period_start = ?, current_period_end = ?, updated_at = ? WHERE user_id = ?',
-        [newPeriodStart.toISOString(), newPeriodEnd.toISOString(), now.toISOString(), userId]
+      const { error } = await this.db.queryAsAdmin('user_subscriptions', (query) =>
+        query.update({
+          current_period_start: newPeriodStart.toISOString(),
+          current_period_end: newPeriodEnd.toISOString(),
+          updated_at: now.toISOString()
+        }).eq('account_id', accountId)
       );
+
+      if (error) throw error;
 
       logger.info('Billing cycle processed', { userId, newPeriodStart, newPeriodEnd });
 
@@ -245,45 +316,53 @@ class SubscriptionService {
     return date;
   }
 
-  formatSubscription(row) {
+  formatSubscription(row, userId) {
+    const plan = row.plans;
+    const quotas = plan?.quotas || {};
+    
     return {
       id: row.id,
-      userId: row.user_id,
+      userId: userId,
+      accountId: row.account_id,
       planId: row.plan_id,
       status: row.status,
-      startedAt: row.started_at,
       trialEndsAt: row.trial_ends_at,
       currentPeriodStart: row.current_period_start,
       currentPeriodEnd: row.current_period_end,
-      canceledAt: row.canceled_at,
-      suspensionReason: row.suspension_reason,
+      canceledAt: row.cancelled_at,
+      externalSubscriptionId: row.external_subscription_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      plan: row.plan_name ? {
-        id: row.plan_id,
-        name: row.plan_name,
-        priceCents: row.price_cents,
-        billingCycle: row.billing_cycle,
+      plan: plan ? {
+        id: plan.id,
+        name: plan.name,
+        priceCents: plan.price_cents,
+        billingCycle: plan.billing_cycle,
         quotas: {
-          maxAgents: row.max_agents,
-          maxConnections: row.max_connections,
-          maxMessagesPerDay: row.max_messages_per_day,
-          maxMessagesPerMonth: row.max_messages_per_month,
-          maxInboxes: row.max_inboxes,
-          maxTeams: row.max_teams,
-          maxWebhooks: row.max_webhooks,
-          maxCampaigns: row.max_campaigns,
-          maxStorageMb: row.max_storage_mb,
-          maxBots: row.max_bots || 3
+          maxAgents: quotas.max_agents || 1,
+          maxConnections: quotas.max_connections || 1,
+          maxMessagesPerDay: quotas.max_messages_per_day || 100,
+          maxMessagesPerMonth: quotas.max_messages_per_month || 3000,
+          maxInboxes: quotas.max_inboxes || 1,
+          maxTeams: quotas.max_teams || 1,
+          maxWebhooks: quotas.max_webhooks || 5,
+          maxCampaigns: quotas.max_campaigns || 1,
+          maxStorageMb: quotas.max_storage_mb || 100,
+          maxBots: quotas.max_bots || 3,
+          maxBotMessagesPerDay: quotas.max_bot_messages_per_day || 100,
+          maxBotMessagesPerMonth: quotas.max_bot_messages_per_month || 3000
         },
-        features: this.parseJSON(row.features, {})
+        features: this.parseJSON(plan.features, {})
       } : null
     };
   }
 
-  parseJSON(jsonString, defaultValue = {}) {
+  parseJSON(jsonValue, defaultValue = {}) {
     try {
-      return typeof jsonString === 'string' ? JSON.parse(jsonString) : jsonString || defaultValue;
+      if (typeof jsonValue === 'string') {
+        return JSON.parse(jsonValue);
+      }
+      return jsonValue || defaultValue;
     } catch {
       return defaultValue;
     }

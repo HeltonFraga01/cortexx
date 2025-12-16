@@ -399,7 +399,7 @@ export default function BotTemplateManager() {
                         console.log('Inbox selected:', value);
                         setSelectedInboxId(value);
                       }}
-                      disabled={!selectedUserId || selectedUserId === 'none' || loadingInboxes}
+                      disabled={!selectedUserId || selectedUserId === 'none' || loadingInboxes || (availableInboxes.length === 0 && !loadingInboxes && selectedUserId !== 'none')}
                     >
                       <SelectTrigger>
                         {loadingInboxes ? (
@@ -407,17 +407,25 @@ export default function BotTemplateManager() {
                             <Loader2 className="h-4 w-4 animate-spin" />
                             <span>Carregando...</span>
                           </div>
+                        ) : availableInboxes.length === 0 && selectedUserId !== 'none' ? (
+                          <span className="text-muted-foreground">Nenhuma inbox disponível</span>
                         ) : (
                           <SelectValue placeholder={selectedUserId !== 'none' ? "Selecione..." : "Selecione um usuário"} />
                         )}
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="none">Selecione...</SelectItem>
-                        {availableInboxes.map((inbox) => (
-                          <SelectItem key={inbox.id} value={inbox.id}>
-                            {inbox.name} {inbox.wuzapiConnected && <Badge variant="outline" className="ml-2 text-xs">Conectado</Badge>}
-                          </SelectItem>
-                        ))}
+                        {availableInboxes.length === 0 ? (
+                          <SelectItem value="none" disabled>Nenhuma inbox disponível</SelectItem>
+                        ) : (
+                          <>
+                            <SelectItem value="none">Selecione...</SelectItem>
+                            {availableInboxes.map((inbox) => (
+                              <SelectItem key={inbox.id} value={inbox.id}>
+                                {inbox.name} {inbox.wuzapiConnected && <Badge variant="outline" className="ml-2 text-xs">Conectado</Badge>}
+                              </SelectItem>
+                            ))}
+                          </>
+                        )}
                       </SelectContent>
                     </Select>
                   </div>

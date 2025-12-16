@@ -221,6 +221,25 @@ class WuzAPIClient {
   }
 
   /**
+   * Obtém informações de um usuário específico da WuzAPI
+   * @param {string} userId - ID do usuário
+   * @param {string} adminToken - Token de autorização administrativo
+   * @returns {Promise<Object>} Resposta da WuzAPI com dados do usuário
+   */
+  async getUser(userId, adminToken) {
+    return await this.getAdmin(`/admin/users/${userId}`, adminToken);
+  }
+
+  /**
+   * Lista todos os usuários da WuzAPI
+   * @param {string} adminToken - Token de autorização administrativo
+   * @returns {Promise<Object>} Resposta da WuzAPI com lista de usuários
+   */
+  async getUsers(adminToken) {
+    return await this.getAdmin('/admin/users', adminToken);
+  }
+
+  /**
    * Remove um usuário do banco de dados (mantém sessão ativa)
    * @param {string} userId - ID do usuário a ser removido
    * @param {string} adminToken - Token de autorização administrativo

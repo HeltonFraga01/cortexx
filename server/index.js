@@ -230,6 +230,9 @@ async function initializeDatabase() {
       throw new Error(`Falha na conexão com Supabase: ${error.message}`);
     }
 
+    // Inicializar o compatibility layer do banco de dados
+    await db.init();
+
     // Tornar o SupabaseService disponível para as rotas
     app.locals.supabase = SupabaseService;
     // Tornar o db (compatibility layer) disponível para as rotas

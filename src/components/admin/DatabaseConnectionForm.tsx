@@ -58,7 +58,7 @@ export function DatabaseConnectionForm() {
   // Carregar dados da conexão se estiver editando
   useEffect(() => {
     if (isEditing && id) {
-      loadConnection(parseInt(id));
+      loadConnection(id);
     }
   }, [isEditing, id]);
 
@@ -124,7 +124,7 @@ export function DatabaseConnectionForm() {
     }
   };
 
-  const loadConnection = async (connectionId: number) => {
+  const loadConnection = async (connectionId: string) => {
     setLoading(true);
     try {
       const connection = await databaseConnectionsService.getConnectionById(connectionId);
@@ -313,7 +313,7 @@ export function DatabaseConnectionForm() {
       }
 
       if (isEditing && id) {
-        await databaseConnectionsService.updateConnection(parseInt(id), connectionData);
+        await databaseConnectionsService.updateConnection(id, connectionData);
         toast.success('Conexão atualizada com sucesso!');
       } else {
         await databaseConnectionsService.createConnection(connectionData);

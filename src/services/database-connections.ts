@@ -74,7 +74,8 @@ export interface DatabaseConnection {
   password: string;
   table_name: string;
   status: 'connected' | 'disconnected' | 'error' | 'testing';
-  assignedUsers: string[];
+  assignedUsers?: string[];
+  assigned_users?: string[]; // Snake case para compatibilidade com backend
   // Campos específicos do NocoDB
   nocodb_token?: string;
   nocodb_project_id?: string;
@@ -160,7 +161,7 @@ export class DatabaseConnectionsService {
    * Buscar conexão por ID (rota admin - sem validação de acesso do usuário)
    * @deprecated Use getUserConnectionById para validar acesso do usuário
    */
-  async getConnectionById(id: number): Promise<DatabaseConnection | null> {
+  async getConnectionById(id: string | number): Promise<DatabaseConnection | null> {
     const response = await backendApi.get<ApiResponse<DatabaseConnection>>(`/database-connections/${id}`);
 
     if (!response.success) {
@@ -261,7 +262,7 @@ export class DatabaseConnectionsService {
   /**
    * Atualizar conexão
    */
-  async updateConnection(id: number, data: Partial<DatabaseConnection>): Promise<DatabaseConnection> {
+  async updateConnection(id: string | number, data: Partial<DatabaseConnection>): Promise<DatabaseConnection> {
     const response = await backendApi.put<ApiResponse<any>>(`/database-connections/${id}`, data);
 
     if (!response.success) {
@@ -278,7 +279,7 @@ export class DatabaseConnectionsService {
   /**
    * Atualizar apenas o status da conexão
    */
-  async updateConnectionStatus(id: number, status: 'connected' | 'disconnected' | 'error' | 'testing'): Promise<void> {
+  async updateConnectionStatus(id: string | number, status: 'connected' | 'disconnected' | 'error' | 'testing'): Promise<void> {
     const response = await backendApi.patch<ApiResponse<any>>(`/database-connections/${id}/status`, { status });
 
     if (!response.success) {
@@ -289,7 +290,7 @@ export class DatabaseConnectionsService {
   /**
    * Deletar conexão
    */
-  async deleteConnection(id: number): Promise<void> {
+  async deleteConnection(id: string | number): Promise<void> {
     const response = await backendApi.delete<ApiResponse<any>>(`/database-connections/${id}`);
 
     if (!response.success) {
@@ -1022,7 +1023,7 @@ export class DatabaseConnectionsService {
    * Invalidar cache de uma conexão específica para todos os usuários
    * Útil quando o admin atualiza configurações de uma conexão
    */
-  clearConnectionCache(connectionId: number): void {
+  clearConnectionCache(connectionId: string | number): void {
     const pattern = new RegExp(`:${connectionId}$`);
     connectionCache.invalidatePattern(pattern);
     if (IS_DEVELOPMENT) {

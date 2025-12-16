@@ -34,7 +34,7 @@ export function DatabaseAdvancedTab({ formData, onFormDataChange }: DatabaseAdva
   const [loadingColumns, setLoadingColumns] = useState(false);
   const [users, setUsers] = useState<WuzAPIUser[]>([]);
   const [columns, setColumns] = useState<NocoDBColumn[]>([]);
-  const [selectedUsers, setSelectedUsers] = useState<string[]>(formData.assignedUsers || []);
+  const [selectedUsers, setSelectedUsers] = useState<string[]>(formData.assignedUsers || formData.assigned_users || []);
   const [fieldMappings, setFieldMappings] = useState<FieldMapping[]>(formData.fieldMappings || formData.field_mappings || []);
   const [viewConfig, setViewConfig] = useState<ViewConfiguration | null>(formData.viewConfiguration || formData.view_configuration || null);
 
@@ -53,10 +53,10 @@ export function DatabaseAdvancedTab({ formData, onFormDataChange }: DatabaseAdva
 
   // Sincronizar com formData quando mudar externamente
   useEffect(() => {
-    setSelectedUsers(formData.assignedUsers || []);
+    setSelectedUsers(formData.assignedUsers || formData.assigned_users || []);
     setFieldMappings(formData.fieldMappings || formData.field_mappings || []);
     setViewConfig(formData.viewConfiguration || formData.view_configuration || null);
-  }, [formData.assignedUsers, formData.fieldMappings, formData.field_mappings, formData.viewConfiguration, formData.view_configuration]);
+  }, [formData.assignedUsers, formData.assigned_users, formData.fieldMappings, formData.field_mappings, formData.viewConfiguration, formData.view_configuration]);
 
   const loadUsers = async () => {
     setLoadingUsers(true);

@@ -185,13 +185,11 @@ router.get('/:id',
       const { id } = req.params;
       const db = req.app.locals.db;
       
-      // Buscar permissão por ID
-      const result = await db.query(
-        'SELECT * FROM table_permissions WHERE id = ?',
-        [id]
-      );
+      // Buscar permissão por ID usando o método do SupabaseService
+      const SupabaseService = require('../services/SupabaseService');
+      const { data, error } = await SupabaseService.getById('table_permissions', id);
       
-      if (result.rows.length === 0) {
+      if (error || !data) {
         logger.warn('⚠️ Permissão não encontrada:', { id });
         
         return res.status(404).json({
@@ -207,7 +205,7 @@ router.get('/:id',
       
       res.json({
         success: true,
-        data: result.rows[0],
+        data: data,
         timestamp: new Date().toISOString()
       });
       

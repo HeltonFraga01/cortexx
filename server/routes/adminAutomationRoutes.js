@@ -102,7 +102,7 @@ router.post('/bot-templates', async (req, res) => {
  */
 router.put('/bot-templates/:id', async (req, res) => {
   try {
-    const template = await automationService.updateBotTemplate(parseInt(req.params.id, 10), req.body);
+    const template = await automationService.updateBotTemplate(req.params.id, req.body);
     res.json({ success: true, data: template });
   } catch (error) {
     logger.error('Failed to update bot template', { id: req.params.id, error: error.message });
@@ -118,7 +118,7 @@ router.put('/bot-templates/:id', async (req, res) => {
  */
 router.delete('/bot-templates/:id', async (req, res) => {
   try {
-    await automationService.deleteBotTemplate(parseInt(req.params.id, 10));
+    await automationService.deleteBotTemplate(req.params.id);
     res.json({ success: true });
   } catch (error) {
     logger.error('Failed to delete bot template', { id: req.params.id, error: error.message });
@@ -134,7 +134,7 @@ router.delete('/bot-templates/:id', async (req, res) => {
  */
 router.post('/bot-templates/:id/set-default', async (req, res) => {
   try {
-    const template = await automationService.setDefaultBotTemplate(parseInt(req.params.id, 10));
+    const template = await automationService.setDefaultBotTemplate(req.params.id);
     res.json({ success: true, data: template });
   } catch (error) {
     logger.error('Failed to set default bot template', { id: req.params.id, error: error.message });
@@ -145,19 +145,29 @@ router.post('/bot-templates/:id/set-default', async (req, res) => {
 
 // ==================== Chatwoot Users & Inboxes ====================
 
+const SupabaseService = require('../services/SupabaseService');
+
 /**
  * GET /api/admin/automation/chatwoot-users
  * Get all agents (users) for bot template selection
  */
 router.get('/chatwoot-users', async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    const { rows } = await db.query(
-      `SELECT a.id, a.name, a.email, a.role, a.account_id as accountId
-       FROM agents a
-       WHERE a.status = 'active'
-       ORDER BY a.name`
-    );
+    const { data: agents, error } = await SupabaseService.getMany('agents', { status: 'active' }, {
+      orderBy: 'name',
+      ascending: true
+    });
+
+    if (error) throw error;
+
+    const rows = (agents || []).map(a => ({
+      id: a.id,
+      name: a.name,
+      email: a.email,
+      role: a.role,
+      accountId: a.account_id
+    }));
+
     res.json({ success: true, data: rows });
   } catch (error) {
     logger.error('Failed to get chatwoot users', { error: error.message });
@@ -171,12 +181,20 @@ router.get('/chatwoot-users', async (req, res) => {
  */
 router.get('/chatwoot-inboxes', async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    const { rows } = await db.query(
-      `SELECT i.id, i.name, i.channel_type as channelType, i.account_id as accountId
-       FROM inboxes i
-       ORDER BY i.name`
-    );
+    const { data: inboxes, error } = await SupabaseService.getMany('inboxes', {}, {
+      orderBy: 'name',
+      ascending: true
+    });
+
+    if (error) throw error;
+
+    const rows = (inboxes || []).map(i => ({
+      id: i.id,
+      name: i.name,
+      channelType: i.channel_type,
+      accountId: i.account_id
+    }));
+
     res.json({ success: true, data: rows });
   } catch (error) {
     logger.error('Failed to get chatwoot inboxes', { error: error.message });
@@ -221,7 +239,7 @@ router.post('/default-labels', async (req, res) => {
  */
 router.put('/default-labels/:id', async (req, res) => {
   try {
-    const label = await automationService.updateDefaultLabel(parseInt(req.params.id, 10), req.body);
+    const label = await automationService.updateDefaultLabel(req.params.id, req.body);
     res.json({ success: true, data: label });
   } catch (error) {
     logger.error('Failed to update default label', { id: req.params.id, error: error.message });
@@ -237,7 +255,7 @@ router.put('/default-labels/:id', async (req, res) => {
  */
 router.delete('/default-labels/:id', async (req, res) => {
   try {
-    await automationService.deleteDefaultLabel(parseInt(req.params.id, 10));
+    await automationService.deleteDefaultLabel(req.params.id);
     res.json({ success: true });
   } catch (error) {
     logger.error('Failed to delete default label', { id: req.params.id, error: error.message });
@@ -283,7 +301,7 @@ router.post('/default-canned-responses', async (req, res) => {
  */
 router.put('/default-canned-responses/:id', async (req, res) => {
   try {
-    const response = await automationService.updateDefaultCannedResponse(parseInt(req.params.id, 10), req.body);
+    const response = await automationService.updateDefaultCannedResponse(req.params.id, req.body);
     res.json({ success: true, data: response });
   } catch (error) {
     logger.error('Failed to update default canned response', { id: req.params.id, error: error.message });
@@ -299,7 +317,7 @@ router.put('/default-canned-responses/:id', async (req, res) => {
  */
 router.delete('/default-canned-responses/:id', async (req, res) => {
   try {
-    await automationService.deleteDefaultCannedResponse(parseInt(req.params.id, 10));
+    await automationService.deleteDefaultCannedResponse(req.params.id);
     res.json({ success: true });
   } catch (error) {
     logger.error('Failed to delete default canned response', { id: req.params.id, error: error.message });

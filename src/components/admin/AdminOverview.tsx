@@ -353,22 +353,24 @@ const AdminOverview = () => {
               </div>
 
               {/* Session Store Status */}
-              <div className="flex items-start space-x-3 p-3 rounded-lg border bg-card">
-                <HardDrive className={`h-5 w-5 mt-0.5 ${
-                  systemHealth.session_store.status === 'connected' ? 'text-green-500' : 'text-red-500'
-                }`} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">Sessões</span>
-                    {systemHealth.session_store.status === 'connected' ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <XCircle className="h-4 w-4 text-red-500" />
-                    )}
+              {systemHealth.session_store && (
+                <div className="flex items-start space-x-3 p-3 rounded-lg border bg-card">
+                  <HardDrive className={`h-5 w-5 mt-0.5 ${
+                    systemHealth.session_store.status === 'connected' ? 'text-green-500' : 'text-red-500'
+                  }`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Sessões</span>
+                      {systemHealth.session_store.status === 'connected' ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <XCircle className="h-4 w-4 text-red-500" />
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">{systemHealth.session_store.type}</p>
                   </div>
-                  <p className="text-xs text-muted-foreground">{systemHealth.session_store.type}</p>
                 </div>
-              </div>
+              )}
 
               {/* S3 Storage Status */}
               <div className="flex items-start space-x-3 p-3 rounded-lg border bg-card">

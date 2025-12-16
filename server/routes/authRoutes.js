@@ -106,8 +106,13 @@ router.post('/login', async (req, res) => {
         });
       }
       
+      // Generate a consistent UUID for admin using hash of admin token
+      // This ensures the admin always gets the same userId across sessions
+      const { hashToken } = require('../utils/userIdResolver');
+      const adminUserId = hashToken(adminToken);
+      
       userData = {
-        id: 'admin',
+        id: adminUserId,
         role: 'admin'
       };
     } else {
