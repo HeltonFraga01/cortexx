@@ -22,9 +22,9 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.943.0",
     "@aws-sdk/s3-request-presigner": "^3.943.0",
+    "@supabase/supabase-js": "^2.45.0",
     "axios": "^1.13.2",
     "body-parser": "^1.20.2",
-    "connect-sqlite3": "^0.9.16",
     "cors": "^2.8.5",
     "csurf": "^1.11.0",
     "dompurify": "^3.3.0",
@@ -39,7 +39,6 @@
     "mysql2": "^3.15.3",
     "pg": "^8.16.3",
     "socket.io": "^4.8.1",
-    "sqlite3": "^5.1.7",
     "uuid": "^11.1.0"
   },
   "devDependencies": {

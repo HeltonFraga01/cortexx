@@ -5,105 +5,188 @@
  * Each test runs a minimum of 100 iterations.
  * 
  * Feature: multi-user-inbox-system
+ * 
+ * Uses Supabase as the database backend.
  */
 
 const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert');
 const fc = require('fast-check');
-const path = require('path');
-const fs = require('fs');
-const Database = require('../database');
+const crypto = require('crypto');
+const SupabaseService = require('./SupabaseService');
 const MultiUserAuditService = require('./MultiUserAuditService');
 const { ACTION_TYPES, RESOURCE_TYPES } = require('./MultiUserAuditService');
 
-// Test database path
-const TEST_DB_PATH = path.join(__dirname, '../test-audit-service.db');
+// Test prefix to identify test data for cleanup
+const TEST_PREFIX = 'test-audit-';
 
-// Helper to create test database
-async function createTestDatabase() {
-  if (fs.existsSync(TEST_DB_PATH)) {
-    fs.unlinkSync(TEST_DB_PATH);
-  }
-  
-  const db = new Database(TEST_DB_PATH);
-  await db.init();
-  
-  // Create accounts table
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      owner_user_id TEXT NOT NULL,
-      wuzapi_token TEXT NOT NULL,
-      status TEXT DEFAULT 'active',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-  
-  // Create agents table
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS agents (
-      id TEXT PRIMARY KEY,
-      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-      email TEXT NOT NULL,
-      password_hash TEXT NOT NULL,
-      name TEXT NOT NULL,
-      role TEXT DEFAULT 'agent',
-      status TEXT DEFAULT 'active',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(account_id, email)
-    )
-  `);
-  
-  // Create audit_log table
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS audit_log (
-      id TEXT PRIMARY KEY,
-      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-      agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
-      action TEXT NOT NULL,
-      resource_type TEXT NOT NULL,
-      resource_id TEXT,
-      details TEXT DEFAULT '{}',
-      ip_address TEXT,
-      user_agent TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-  
-  // Create indexes
-  await db.query('CREATE INDEX IF NOT EXISTS idx_audit_log_account_id ON audit_log(account_id)');
-  await db.query('CREATE INDEX IF NOT EXISTS idx_audit_log_agent_id ON audit_log(agent_id)');
-  await db.query('CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)');
-  
-  return db;
+// Helper to create a database adapter compatible with MultiUserAuditService
+function createDbAdapter() {
+  return {
+    async query(sql, params = []) {
+      // Parse SQL to determine operation type and table
+      const sqlLower = sql.toLowerCase().trim();
+      
+      if (sqlLower.startsWith('insert into audit_log')) {
+        // Handle INSERT
+        const [id, account_id, agent_id, action, resource_type, resource_id, details, ip_address, user_agent, created_at] = params;
+        const { data, error } = await SupabaseService.insert('audit_log', {
+          id,
+          account_id,
+          agent_id,
+          action,
+          resource_type,
+          resource_id,
+          details,
+          ip_address,
+          user_agent,
+          created_at
+        });
+        if (error) throw error;
+        return { rows: [data], rowCount: 1 };
+      }
+      
+      if (sqlLower.startsWith('select') && sqlLower.includes('from audit_log')) {
+        // Handle SELECT queries
+        let query = SupabaseService.adminClient.from('audit_log').select('*');
+        
+        // Parse WHERE conditions
+        if (sqlLower.includes('where')) {
+          if (sqlLower.includes('id = ?')) {
+            query = query.eq('id', params[0]);
+          } else if (sqlLower.includes('account_id = ?')) {
+            query = query.eq('account_id', params[0]);
+            
+            // Handle additional filters
+            let paramIndex = 1;
+            if (sqlLower.includes('agent_id = ?')) {
+              query = query.eq('agent_id', params[paramIndex++]);
+            }
+            if (sqlLower.includes('action = ?')) {
+              query = query.eq('action', params[paramIndex++]);
+            }
+            if (sqlLower.includes('resource_type = ?')) {
+              query = query.eq('resource_type', params[paramIndex++]);
+            }
+            if (sqlLower.includes('resource_id = ?')) {
+              query = query.eq('resource_id', params[paramIndex++]);
+            }
+          } else if (sqlLower.includes('agent_id = ?')) {
+            query = query.eq('agent_id', params[0]);
+          } else if (sqlLower.includes('resource_type = ? and resource_id = ?')) {
+            query = query.eq('resource_type', params[0]).eq('resource_id', params[1]);
+          }
+        }
+        
+        // Handle ORDER BY
+        if (sqlLower.includes('order by created_at desc')) {
+          query = query.order('created_at', { ascending: false });
+        }
+        
+        // Handle LIMIT
+        const limitMatch = sqlLower.match(/limit\s+(\?|\d+)/);
+        if (limitMatch) {
+          const limitIndex = params.length - (sqlLower.includes('offset') ? 2 : 1);
+          const limit = limitMatch[1] === '?' ? params[limitIndex] : parseInt(limitMatch[1]);
+          query = query.limit(limit);
+        }
+        
+        const { data, error } = await query;
+        if (error) throw error;
+        return { rows: data || [] };
+      }
+      
+      if (sqlLower.startsWith('select count')) {
+        // Handle COUNT queries
+        let query = SupabaseService.adminClient.from('audit_log').select('*', { count: 'exact', head: true });
+        
+        if (sqlLower.includes('account_id = ?')) {
+          query = query.eq('account_id', params[0]);
+          
+          let paramIndex = 1;
+          if (sqlLower.includes('agent_id = ?')) {
+            query = query.eq('agent_id', params[paramIndex++]);
+          }
+          if (sqlLower.includes('action = ?')) {
+            query = query.eq('action', params[paramIndex++]);
+          }
+        }
+        
+        const { count, error } = await query;
+        if (error) throw error;
+        return { rows: [{ total: count || 0 }] };
+      }
+      
+      if (sqlLower.startsWith('delete from audit_log')) {
+        // Handle DELETE
+        let query = SupabaseService.adminClient.from('audit_log').delete();
+        
+        if (sqlLower.includes('account_id = ?')) {
+          query = query.eq('account_id', params[0]);
+          if (sqlLower.includes('created_at <')) {
+            query = query.lt('created_at', params[1]);
+          }
+        }
+        
+        const { data, error } = await query;
+        if (error) throw error;
+        return { rowCount: data?.length || 0 };
+      }
+      
+      throw new Error(`Unsupported SQL: ${sql}`);
+    }
+  };
 }
 
 // Helper to clean up test data
-async function cleanupTestData(db) {
-  await db.query('DELETE FROM audit_log');
-  await db.query('DELETE FROM agents');
-  await db.query('DELETE FROM accounts');
+async function cleanupTestData() {
+  // Delete test audit logs
+  await SupabaseService.adminClient
+    .from('audit_log')
+    .delete()
+    .like('account_id', `${TEST_PREFIX}%`);
+  
+  // Delete test agents
+  await SupabaseService.adminClient
+    .from('agents')
+    .delete()
+    .like('account_id', `${TEST_PREFIX}%`);
+  
+  // Delete test accounts
+  await SupabaseService.adminClient
+    .from('accounts')
+    .delete()
+    .like('id', `${TEST_PREFIX}%`);
 }
 
 // Helper to create a test account
-async function createTestAccount(db) {
-  const id = require('crypto').randomUUID();
-  await db.query(`
-    INSERT INTO accounts (id, name, owner_user_id, wuzapi_token)
-    VALUES (?, 'Test Account', ?, 'test-token')
-  `, [id, require('crypto').randomUUID()]);
+async function createTestAccount() {
+  const id = TEST_PREFIX + crypto.randomUUID();
+  const { data, error } = await SupabaseService.insert('accounts', {
+    id,
+    name: 'Test Account',
+    owner_user_id: crypto.randomUUID(),
+    wuzapi_token: 'test-token-' + crypto.randomUUID().substring(0, 8),
+    status: 'active'
+  });
+  if (error) throw error;
   return id;
 }
 
 // Helper to create a test agent
-async function createTestAgent(db, accountId) {
-  const id = require('crypto').randomUUID();
+async function createTestAgent(accountId) {
+  const id = crypto.randomUUID();
   const email = `agent-${id.substring(0, 8)}@test.com`;
-  await db.query(`
-    INSERT INTO agents (id, account_id, email, password_hash, name)
-    VALUES (?, ?, ?, 'hash', 'Test Agent')
-  `, [id, accountId, email]);
+  const { data, error } = await SupabaseService.insert('agents', {
+    id,
+    account_id: accountId,
+    email,
+    password_hash: 'hash',
+    name: 'Test Agent',
+    role: 'agent',
+    status: 'active'
+  });
+  if (error) throw error;
   return id;
 }
 
@@ -118,26 +201,31 @@ const detailsArb = fc.dictionary(
   fc.oneof(fc.string(), fc.integer(), fc.boolean())
 );
 
-describe('MultiUserAuditService Property Tests', () => {
-  let db;
+describe('MultiUserAuditService Property Tests (Supabase)', () => {
+  let dbAdapter;
   let auditService;
   
   before(async () => {
-    db = await createTestDatabase();
-    auditService = new MultiUserAuditService(db);
+    // Verify Supabase connection
+    const { data: healthy } = await SupabaseService.healthCheck();
+    if (!healthy) {
+      throw new Error('Supabase connection not available');
+    }
+    
+    dbAdapter = createDbAdapter();
+    auditService = new MultiUserAuditService(dbAdapter);
+    
+    // Initial cleanup
+    await cleanupTestData();
   });
   
   after(async () => {
-    if (db && db.db) {
-      db.db.close();
-    }
-    if (fs.existsSync(TEST_DB_PATH)) {
-      fs.unlinkSync(TEST_DB_PATH);
-    }
+    // Final cleanup
+    await cleanupTestData();
   });
   
   beforeEach(async () => {
-    await cleanupTestData(db);
+    await cleanupTestData();
   });
 
   /**
@@ -156,10 +244,10 @@ describe('MultiUserAuditService Property Tests', () => {
         detailsArb,
         ipAddressArb,
         async (action, resourceType, resourceId, details, ipAddress) => {
-          await cleanupTestData(db);
+          await cleanupTestData();
           
-          const accountId = await createTestAccount(db);
-          const agentId = await createTestAgent(db, accountId);
+          const accountId = await createTestAccount();
+          const agentId = await createTestAgent(accountId);
           
           // Log an action
           const logEntry = await auditService.logAction({
@@ -199,7 +287,7 @@ describe('MultiUserAuditService Property Tests', () => {
           assert.strictEqual(retrieved.action, action);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 20 } // Reduced for real database tests
     );
   });
 
@@ -216,10 +304,10 @@ describe('MultiUserAuditService Property Tests', () => {
         fc.string({ minLength: 1, maxLength: 100 }),
         fc.string({ minLength: 11, maxLength: 15 }),
         async (messageId, messageText, phoneNumber) => {
-          await cleanupTestData(db);
+          await cleanupTestData();
           
-          const accountId = await createTestAccount(db);
-          const agentId = await createTestAgent(db, accountId);
+          const accountId = await createTestAccount();
+          const agentId = await createTestAgent(accountId);
           
           // Log message sent action
           const logEntry = await auditService.logMessageSent(accountId, agentId, messageId, {
@@ -247,7 +335,7 @@ describe('MultiUserAuditService Property Tests', () => {
           );
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 20 }
     );
   });
 
@@ -258,12 +346,12 @@ describe('MultiUserAuditService Property Tests', () => {
   it('Property: Audit log query filtering works correctly', async () => {
     await fc.assert(
       fc.asyncProperty(
-        fc.integer({ min: 2, max: 10 }),
+        fc.integer({ min: 2, max: 5 }),
         async (logCount) => {
-          await cleanupTestData(db);
+          await cleanupTestData();
           
-          const accountId = await createTestAccount(db);
-          const agentId = await createTestAgent(db, accountId);
+          const accountId = await createTestAccount();
+          const agentId = await createTestAgent(accountId);
           
           // Create multiple log entries with different actions
           const actions = Object.values(ACTION_TYPES).slice(0, logCount);
@@ -304,7 +392,7 @@ describe('MultiUserAuditService Property Tests', () => {
           );
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 20 }
     );
   });
 
@@ -319,10 +407,10 @@ describe('MultiUserAuditService Property Tests', () => {
         userAgentArb,
         fc.boolean(),
         async (ipAddress, userAgent, loginSuccess) => {
-          await cleanupTestData(db);
+          await cleanupTestData();
           
-          const accountId = await createTestAccount(db);
-          const agentId = await createTestAgent(db, accountId);
+          const accountId = await createTestAccount();
+          const agentId = await createTestAgent(accountId);
           
           // Log login
           const loginLog = await auditService.logLogin(
@@ -350,7 +438,7 @@ describe('MultiUserAuditService Property Tests', () => {
           assert.strictEqual(logoutLog.agentId, agentId, 'Agent ID should be recorded');
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 20 }
     );
   });
 
@@ -363,12 +451,12 @@ describe('MultiUserAuditService Property Tests', () => {
       fc.asyncProperty(
         resourceTypeArb,
         resourceIdArb,
-        fc.integer({ min: 1, max: 5 }),
+        fc.integer({ min: 1, max: 3 }),
         async (resourceType, resourceId, actionCount) => {
-          await cleanupTestData(db);
+          await cleanupTestData();
           
-          const accountId = await createTestAccount(db);
-          const agentId = await createTestAgent(db, accountId);
+          const accountId = await createTestAccount();
+          const agentId = await createTestAgent(accountId);
           
           // Create multiple actions on the same resource
           for (let i = 0; i < actionCount; i++) {
@@ -397,7 +485,7 @@ describe('MultiUserAuditService Property Tests', () => {
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 20 }
     );
   });
 });

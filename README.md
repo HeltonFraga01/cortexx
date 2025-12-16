@@ -20,7 +20,7 @@ O WUZAPI Manager é uma plataforma completa para gerenciamento de instâncias Wh
 |--------|------------|
 | **Frontend** | React 18 + TypeScript + Tailwind CSS + shadcn/ui |
 | **Backend** | Node.js 20 + Express 4 (CommonJS) |
-| **Banco de Dados** | SQLite 3 (WAL mode) |
+| **Banco de Dados** | Supabase (PostgreSQL) |
 | **Testes** | Vitest (frontend), Node test runner (backend), Cypress (E2E) |
 | **Deploy** | Docker, single-node Docker Swarm |
 
@@ -141,7 +141,8 @@ npm run docker:logs
 | `NODE_ENV` | ❌ | Ambiente (production/development) |
 | `PORT` | ❌ | Porta do servidor (padrão: 3000) |
 | `CORS_ORIGINS` | ❌ | Origens permitidas para CORS |
-| `SQLITE_DB_PATH` | ❌ | Caminho do banco SQLite |
+| `SUPABASE_URL` | ✅ | URL do projeto Supabase |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Chave de serviço do Supabase |
 
 ### Docker Compose
 

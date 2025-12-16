@@ -1491,12 +1491,8 @@ router.get('/account-debug', requireAuth, async (req, res) => {
     const userId = req.session.userId;
     const userToken = req.session.userToken;
     
-    // Check if tables exist
-    const tablesResult = await db.query(`
-      SELECT name FROM sqlite_master 
-      WHERE type='table' AND name IN ('accounts', 'inboxes', 'inbox_members')
-    `);
-    const existingTables = tablesResult.rows.map(r => r.name);
+    // Tables are assumed to exist in Supabase
+    const existingTables = ['accounts', 'inboxes', 'inbox_members'];
     
     // Get account by owner_user_id
     let accountResult = { rows: [] };

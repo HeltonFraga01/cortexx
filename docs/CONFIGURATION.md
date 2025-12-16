@@ -68,12 +68,10 @@ REQUEST_TIMEOUT=10000
 # CORS - Origens permitidas
 CORS_ORIGINS=http://localhost:5173,http://localhost:3000,http://localhost:4173,http://localhost:8080
 
-# Banco de dados SQLite
-SQLITE_DB_PATH=../data/wuzapi.db
-SQLITE_WAL_MODE=true
-SQLITE_TIMEOUT=5000
-SQLITE_CACHE_SIZE=2000
-SQLITE_SYNCHRONOUS=NORMAL
+# Banco de dados Supabase
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
 # Logging
 LOG_LEVEL=info
@@ -137,22 +135,20 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:3000,http://localhost:4173,h
 CORS_ORIGINS=https://seu-dominio.com
 ```
 
-### SQLITE_DB_PATH
+### SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY
 
-**Problema anterior:** Valores inconsistentes entre ambientes
+**Configuração do Supabase:**
 
-**Solução:**
+| Variável | Descrição |
+|----------|-----------|
+| `SUPABASE_URL` | URL do seu projeto Supabase (ex: `https://xxx.supabase.co`) |
+| `SUPABASE_ANON_KEY` | Chave anônima para operações do frontend |
+| `SUPABASE_SERVICE_ROLE_KEY` | Chave de serviço para operações do backend (bypassa RLS) |
 
-| Ambiente | Arquivo | Valor | Contexto |
-|----------|---------|-------|----------|
-| Dev Frontend | `.env` | ❌ Removido | Não usado pelo frontend |
-| Dev Backend | `server/.env` | `../data/wuzapi.db` | Relativo ao dir `server/` |
-| Produção | Sistema | `/app/data/wuzapi.db` | Caminho absoluto no Docker |
-
-**Explicação:**
-- Backend sempre acessa o banco via `server/.env`
-- Em dev: `../data/wuzapi.db` sobe um nível do dir `server/`
-- Em prod: `/app/data/wuzapi.db` é o caminho absoluto no container
+**Onde encontrar:**
+1. Acesse o dashboard do Supabase
+2. Vá em Settings > API
+3. Copie as chaves correspondentes
 
 ---
 
@@ -182,9 +178,9 @@ npm run dev:full
 # Variáveis de ambiente via docker-compose.yml ou sistema
 docker run -e NODE_ENV=production \
            -e PORT=3001 \
-           -e SQLITE_DB_PATH=/app/data/wuzapi.db \
+           -e SUPABASE_URL=https://your-project.supabase.co \
+           -e SUPABASE_SERVICE_ROLE_KEY=your-service-role-key \
            -e CORS_ORIGINS=https://seu-dominio.com \
-           -v ./data:/app/data \
            wuzapi-manager
 ```
 
@@ -203,12 +199,12 @@ docker run -e NODE_ENV=production \
 
 ### Erro de Banco de Dados
 
-**Sintoma:** `SQLITE_CANTOPEN` ou arquivo não encontrado
+**Sintoma:** Erro de conexão com Supabase
 
 **Solução:**
-1. Verifique `SQLITE_DB_PATH` em `server/.env`
-2. Certifique-se que o diretório `data/` existe
-3. Verifique permissões de escrita
+1. Verifique `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` em `server/.env`
+2. Certifique-se que as chaves estão corretas no dashboard do Supabase
+3. Verifique se o projeto Supabase está ativo
 
 ### Variáveis não carregadas
 

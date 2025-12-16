@@ -12,7 +12,7 @@ RUN apk add --no-cache \
     python3 \
     make \
     g++ \
-    sqlite \
+    
     curl \
     dumb-init \
     && rm -rf /var/cache/apk/*
@@ -80,7 +80,7 @@ FROM node:20-alpine AS production
 # Instalar apenas dependências de runtime essenciais
 # FFmpeg é necessário para conversão de áudio para formato OGG/Opus (WhatsApp)
 RUN apk add --no-cache \
-    sqlite \
+    
     curl \
     dumb-init \
     tini \
@@ -114,12 +114,6 @@ EXPOSE 3001
 # Variáveis de ambiente otimizadas
 ENV NODE_ENV=production \
     PORT=3001 \
-    SQLITE_DB_PATH=/app/data/wuzapi.db \
-    SQLITE_WAL_MODE=true \
-    SQLITE_TIMEOUT=10000 \
-    SQLITE_CACHE_SIZE=8000 \
-    SQLITE_SYNCHRONOUS=NORMAL \
-    SQLITE_JOURNAL_MODE=WAL \
     NODE_OPTIONS="--max-old-space-size=512" \
     UV_THREADPOOL_SIZE=4
 

@@ -7,7 +7,7 @@
  */
 
 const { createClient } = require('@supabase/supabase-js');
-const logger = require('../utils/logger');
+const { logger } = require('../utils/logger');
 
 // Initialize Supabase client
 const supabaseUrl = process.env.SUPABASE_URL;

@@ -1,17 +1,21 @@
 const session = require('express-session');
-const SQLiteStore = require('connect-sqlite3')(session);
-const path = require('path');
+const { logger } = require('../utils/logger');
 
-// Resolver o caminho correto do diretório data
-// __dirname é server/middleware, então subimos 2 níveis para chegar na raiz do projeto
-const dataDir = path.resolve(__dirname, '../../data');
+/**
+ * Session Configuration
+ * 
+ * Uses in-memory session store by default.
+ * For production with multiple instances, consider using:
+ * - connect-pg-simple for PostgreSQL/Supabase
+ * - connect-redis for Redis
+ * 
+ * Note: In-memory store is suitable for single-instance deployments
+ * which is the architecture constraint for this project.
+ */
 
 const sessionConfig = {
-  store: new SQLiteStore({
-    db: 'sessions.db',
-    dir: dataDir,
-    table: 'sessions'
-  }),
+  // Using default MemoryStore - suitable for single-instance architecture
+  // For multi-instance, use connect-pg-simple with Supabase
   secret: process.env.SESSION_SECRET || 'dev-secret-change-in-production',
   name: 'wuzapi.sid',
   resave: false,
@@ -25,5 +29,10 @@ const sessionConfig = {
     maxAge: 24 * 60 * 60 * 1000 // 24 horas
   }
 };
+
+// Log session store type
+if (process.env.NODE_ENV !== 'test') {
+  logger.info('Session store: MemoryStore (single-instance architecture)');
+}
 
 module.exports = sessionConfig;

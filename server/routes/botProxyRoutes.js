@@ -17,6 +17,7 @@ const { validatePhoneWithAPI } = require('../services/PhoneValidationService');
 const ChatService = require('../services/ChatService');
 const OutgoingWebhookService = require('../services/OutgoingWebhookService');
 const { quotaMiddleware, incrementQuotaUsage } = require('../middleware/quotaEnforcement');
+const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
@@ -298,8 +299,8 @@ router.post('/send/text', verifyUserToken, quotaMiddleware.messages, quotaMiddle
                            `bot_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
     // Get database and services
-    const db = req.app.locals.db;
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       logger.error('Bot proxy: Database not available');
       return res.status(500).json({
         success: false,
@@ -307,7 +308,7 @@ router.post('/send/text', verifyUserToken, quotaMiddleware.messages, quotaMiddle
       });
     }
 
-    const chatService = new ChatService(db);
+    const chatService = new ChatService(SupabaseService);
     
     // Get or create conversation
     const contactJid = isGroup 
@@ -338,7 +339,7 @@ router.post('/send/text', verifyUserToken, quotaMiddleware.messages, quotaMiddle
     // Send outgoing webhook if not skipped (Requirement 2.4)
     if (!skip_webhook) {
       try {
-        const outgoingWebhookService = new OutgoingWebhookService(db);
+        const outgoingWebhookService = new OutgoingWebhookService(SupabaseService);
         await outgoingWebhookService.sendWebhookEvent(userToken, 'message.sent', {
           type: 'Message',
           event: {
@@ -506,15 +507,15 @@ router.post('/send/image', verifyUserToken, quotaMiddleware.messages, quotaMiddl
                            wuzapiResult?.Id || 
                            `bot_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-    const db = req.app.locals.db;
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({
         success: false,
         error: 'Database not available'
       });
     }
 
-    const chatService = new ChatService(db);
+    const chatService = new ChatService(SupabaseService);
     const contactJid = isGroup 
       ? validatedPhone 
       : `${validatedPhone}@s.whatsapp.net`;
@@ -543,7 +544,7 @@ router.post('/send/image', verifyUserToken, quotaMiddleware.messages, quotaMiddl
 
     if (!skip_webhook) {
       try {
-        const outgoingWebhookService = new OutgoingWebhookService(db);
+        const outgoingWebhookService = new OutgoingWebhookService(SupabaseService);
         await outgoingWebhookService.sendWebhookEvent(userToken, 'message.sent', {
           type: 'Message',
           event: {
@@ -672,15 +673,15 @@ router.post('/send/audio', verifyUserToken, quotaMiddleware.messages, quotaMiddl
                            wuzapiResult?.Id || 
                            `bot_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-    const db = req.app.locals.db;
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({
         success: false,
         error: 'Database not available'
       });
     }
 
-    const chatService = new ChatService(db);
+    const chatService = new ChatService(SupabaseService);
     const contactJid = isGroup 
       ? validatedPhone 
       : `${validatedPhone}@s.whatsapp.net`;
@@ -709,7 +710,7 @@ router.post('/send/audio', verifyUserToken, quotaMiddleware.messages, quotaMiddl
 
     if (!skip_webhook) {
       try {
-        const outgoingWebhookService = new OutgoingWebhookService(db);
+        const outgoingWebhookService = new OutgoingWebhookService(SupabaseService);
         await outgoingWebhookService.sendWebhookEvent(userToken, 'message.sent', {
           type: 'Message',
           event: {
@@ -845,15 +846,15 @@ router.post('/send/document', verifyUserToken, quotaMiddleware.messages, quotaMi
                            wuzapiResult?.Id || 
                            `bot_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-    const db = req.app.locals.db;
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({
         success: false,
         error: 'Database not available'
       });
     }
 
-    const chatService = new ChatService(db);
+    const chatService = new ChatService(SupabaseService);
     const contactJid = isGroup 
       ? validatedPhone 
       : `${validatedPhone}@s.whatsapp.net`;
@@ -883,7 +884,7 @@ router.post('/send/document', verifyUserToken, quotaMiddleware.messages, quotaMi
 
     if (!skip_webhook) {
       try {
-        const outgoingWebhookService = new OutgoingWebhookService(db);
+        const outgoingWebhookService = new OutgoingWebhookService(SupabaseService);
         await outgoingWebhookService.sendWebhookEvent(userToken, 'message.sent', {
           type: 'Message',
           event: {
@@ -1015,15 +1016,15 @@ router.post('/send/video', verifyUserToken, quotaMiddleware.messages, quotaMiddl
                            wuzapiResult?.Id || 
                            `bot_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-    const db = req.app.locals.db;
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({
         success: false,
         error: 'Database not available'
       });
     }
 
-    const chatService = new ChatService(db);
+    const chatService = new ChatService(SupabaseService);
     const contactJid = isGroup 
       ? validatedPhone 
       : `${validatedPhone}@s.whatsapp.net`;
@@ -1052,7 +1053,7 @@ router.post('/send/video', verifyUserToken, quotaMiddleware.messages, quotaMiddl
 
     if (!skip_webhook) {
       try {
-        const outgoingWebhookService = new OutgoingWebhookService(db);
+        const outgoingWebhookService = new OutgoingWebhookService(SupabaseService);
         await outgoingWebhookService.sendWebhookEvent(userToken, 'message.sent', {
           type: 'Message',
           event: {
@@ -1181,15 +1182,15 @@ router.post('/send/sticker', verifyUserToken, quotaMiddleware.messages, quotaMid
                            wuzapiResult?.Id || 
                            `bot_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-    const db = req.app.locals.db;
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({
         success: false,
         error: 'Database not available'
       });
     }
 
-    const chatService = new ChatService(db);
+    const chatService = new ChatService(SupabaseService);
     const contactJid = isGroup 
       ? validatedPhone 
       : `${validatedPhone}@s.whatsapp.net`;
@@ -1218,7 +1219,7 @@ router.post('/send/sticker', verifyUserToken, quotaMiddleware.messages, quotaMid
 
     if (!skip_webhook) {
       try {
-        const outgoingWebhookService = new OutgoingWebhookService(db);
+        const outgoingWebhookService = new OutgoingWebhookService(SupabaseService);
         await outgoingWebhookService.sendWebhookEvent(userToken, 'message.sent', {
           type: 'Message',
           event: {

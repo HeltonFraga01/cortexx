@@ -149,10 +149,12 @@ router.[HTTP_METHOD_LOWERCASE]('/[ENDPOINT]',
         headers: { 'token': token }
       });
       
-      // Exemplo para NocoDB:
-      const db = req.app.locals.db;
-      const connection = await db.getConnectionById([CONNECTION_ID]);
-      const integrationResult = await db.[NOCODB_METHOD](connection, requestData, token);
+      // Exemplo para operação com banco de dados (Supabase):
+      const SupabaseService = require('../services/SupabaseService');
+      const { data: connectionData } = await SupabaseService.getById('[TABLE_NAME]', [CONNECTION_ID]);
+      const integrationResult = await SupabaseService.queryAsAdmin('[TABLE_NAME]', (query) =>
+        query.select('*').eq('[FIELD]', requestData.[FIELD])
+      );
       
       // Exemplo para API externa genérica:
       const axios = require('axios');

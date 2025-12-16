@@ -59,9 +59,6 @@ class UserRecordService {
         case 'NOCODB':
           record = await this.fetchNocoDBRecord(connection, userLinkField, userToken);
           break;
-        case 'SQLITE':
-          record = await this.fetchSQLiteRecord(connection, userLinkField, userToken);
-          break;
         case 'POSTGRES':
         case 'POSTGRESQL':
         case 'MYSQL':
@@ -242,97 +239,6 @@ class UserRecordService {
         host: connection.host,
         projectId: connection.nocodb_project_id,
         tableId: connection.nocodb_table_id
-      });
-      
-      throw error;
-    }
-  }
-
-  /**
-   * Busca registro no SQLite
-   * @param {Object} connection - Configuração da conexão SQLite
-   * @param {string} userLinkField - Campo que vincula ao usuário
-   * @param {string} userToken - Token do usuário
-   * @returns {Promise<Object|null>} Registro encontrado ou null
-   */
-  async fetchSQLiteRecord(connection, userLinkField, userToken) {
-    try {
-      const tableName = connection.table_name || 'database_connections';
-      
-      // Validar nome da tabela para prevenir SQL injection
-      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
-        throw new Error(`Invalid table name: ${tableName}`);
-      }
-
-      // Validar nome do campo para prevenir SQL injection
-      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(userLinkField)) {
-        throw new Error(`Invalid field name: ${userLinkField}`);
-      }
-      
-      logger.info('🔍 UserRecordService: Buscando no SQLite:', { 
-        tableName, 
-        userLinkField,
-        token: userToken.substring(0, 8) + '...'
-      });
-
-      // Verificar se a tabela existe
-      const tableExistsQuery = `
-        SELECT name FROM sqlite_master 
-        WHERE type='table' AND name=?
-      `;
-      const { rows: tableCheck } = await this.db.query(tableExistsQuery, [tableName]);
-      
-      if (tableCheck.length === 0) {
-        throw new Error(`Table '${tableName}' not found in database`);
-      }
-
-      // Verificar se o campo existe na tabela
-      const columnCheckQuery = `PRAGMA table_info(${tableName})`;
-      const { rows: columns } = await this.db.query(columnCheckQuery, []);
-      const columnExists = columns.some(col => col.name === userLinkField);
-      
-      if (!columnExists) {
-        throw new Error(`Field '${userLinkField}' not found in table '${tableName}'`);
-      }
-      
-      // Buscar registro único pelo token do usuário
-      const sql = `SELECT * FROM ${tableName} WHERE ${userLinkField} = ? LIMIT 1`;
-      
-      const { rows } = await this.db.query(sql, [userToken]);
-      
-      const record = rows.length > 0 ? rows[0] : null;
-      
-      if (record) {
-        logger.info('✅ UserRecordService: Registro encontrado no SQLite:', { 
-          tableName, 
-          token: userToken.substring(0, 8) + '...',
-          recordId: record.id
-        });
-      }
-
-      return record;
-
-    } catch (error) {
-      // Tratamento específico de erros SQLite
-      if (error.code === 'SQLITE_ERROR') {
-        const sqlError = new Error(`SQL syntax error: ${error.message}`);
-        sqlError.code = 'SQLITE_SYNTAX_ERROR';
-        throw sqlError;
-      } else if (error.code === 'SQLITE_BUSY') {
-        const busyError = new Error('Database temporarily unavailable, please try again');
-        busyError.code = 'SQLITE_BUSY';
-        throw busyError;
-      } else if (error.code === 'SQLITE_CORRUPT') {
-        const corruptError = new Error('Internal database error');
-        corruptError.code = 'SQLITE_CORRUPT';
-        throw corruptError;
-      }
-      
-      logger.error('❌ UserRecordService: Erro ao buscar no SQLite:', { 
-        message: error.message,
-        code: error.code,
-        tableName: connection.table_name,
-        userLinkField
       });
       
       throw error;

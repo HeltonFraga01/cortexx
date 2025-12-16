@@ -1,7 +1,8 @@
 /**
  * Supabase Database Types
  * Auto-generated from Supabase schema
- * Task 16.1: Generate TypeScript types from Supabase schema
+ * 
+ * Regenerate with: mcp_supabase_generate_typescript_types
  */
 
 export type Json =
@@ -141,85 +142,6 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "accounts"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      agent_campaigns: {
-        Row: {
-          account_id: string
-          agent_id: string
-          completed_at: string | null
-          created_at: string | null
-          failed_count: number | null
-          id: string
-          inbox_id: string | null
-          message_template: string
-          name: string
-          scheduled_at: string | null
-          sent_count: number | null
-          settings: Json | null
-          started_at: string | null
-          status: string | null
-          total_contacts: number | null
-          updated_at: string | null
-        }
-        Insert: {
-          account_id: string
-          agent_id: string
-          completed_at?: string | null
-          created_at?: string | null
-          failed_count?: number | null
-          id?: string
-          inbox_id?: string | null
-          message_template: string
-          name: string
-          scheduled_at?: string | null
-          sent_count?: number | null
-          settings?: Json | null
-          started_at?: string | null
-          status?: string | null
-          total_contacts?: number | null
-          updated_at?: string | null
-        }
-        Update: {
-          account_id?: string
-          agent_id?: string
-          completed_at?: string | null
-          created_at?: string | null
-          failed_count?: number | null
-          id?: string
-          inbox_id?: string | null
-          message_template?: string
-          name?: string
-          scheduled_at?: string | null
-          sent_count?: number | null
-          settings?: Json | null
-          started_at?: string | null
-          status?: string | null
-          total_contacts?: number | null
-          updated_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "agent_campaigns_account_id_fkey"
-            columns: ["account_id"]
-            isOneToOne: false
-            referencedRelation: "accounts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "agent_campaigns_agent_id_fkey"
-            columns: ["agent_id"]
-            isOneToOne: false
-            referencedRelation: "agents"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "agent_campaigns_inbox_id_fkey"
-            columns: ["inbox_id"]
-            isOneToOne: false
-            referencedRelation: "inboxes"
             referencedColumns: ["id"]
           },
         ]
@@ -473,6 +395,44 @@ export type Database = {
           },
         ]
       }
+      custom_roles: {
+        Row: {
+          account_id: string
+          created_at: string | null
+          description: string | null
+          id: string
+          name: string
+          permissions: Json
+          updated_at: string | null
+        }
+        Insert: {
+          account_id: string
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          name: string
+          permissions?: Json
+          updated_at?: string | null
+        }
+        Update: {
+          account_id?: string
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          name?: string
+          permissions?: Json
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "custom_roles_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       inboxes: {
         Row: {
           account_id: string
@@ -535,47 +495,6 @@ export type Database = {
           },
         ]
       }
-      labels: {
-        Row: {
-          account_id: string
-          color: string | null
-          created_at: string | null
-          description: string | null
-          id: string
-          show_on_sidebar: boolean | null
-          title: string
-          updated_at: string | null
-        }
-        Insert: {
-          account_id: string
-          color?: string | null
-          created_at?: string | null
-          description?: string | null
-          id?: string
-          show_on_sidebar?: boolean | null
-          title: string
-          updated_at?: string | null
-        }
-        Update: {
-          account_id?: string
-          color?: string | null
-          created_at?: string | null
-          description?: string | null
-          id?: string
-          show_on_sidebar?: boolean | null
-          title?: string
-          updated_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "labels_account_id_fkey"
-            columns: ["account_id"]
-            isOneToOne: false
-            referencedRelation: "accounts"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       plans: {
         Row: {
           billing_cycle: string
@@ -621,186 +540,12 @@ export type Database = {
         }
         Relationships: []
       }
-      teams: {
-        Row: {
-          account_id: string
-          allow_auto_assign: boolean | null
-          created_at: string | null
-          description: string | null
-          id: string
-          name: string
-          updated_at: string | null
-        }
-        Insert: {
-          account_id: string
-          allow_auto_assign?: boolean | null
-          created_at?: string | null
-          description?: string | null
-          id?: string
-          name: string
-          updated_at?: string | null
-        }
-        Update: {
-          account_id?: string
-          allow_auto_assign?: boolean | null
-          created_at?: string | null
-          description?: string | null
-          id?: string
-          name?: string
-          updated_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "teams_account_id_fkey"
-            columns: ["account_id"]
-            isOneToOne: false
-            referencedRelation: "accounts"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      outgoing_webhooks: {
-        Row: {
-          account_id: string
-          created_at: string | null
-          events: string[] | null
-          id: string
-          name: string
-          secret: string | null
-          status: string | null
-          updated_at: string | null
-          url: string
-        }
-        Insert: {
-          account_id: string
-          created_at?: string | null
-          events?: string[] | null
-          id?: string
-          name: string
-          secret?: string | null
-          status?: string | null
-          updated_at?: string | null
-          url: string
-        }
-        Update: {
-          account_id?: string
-          created_at?: string | null
-          events?: string[] | null
-          id?: string
-          name?: string
-          secret?: string | null
-          status?: string | null
-          updated_at?: string | null
-          url?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "outgoing_webhooks_account_id_fkey"
-            columns: ["account_id"]
-            isOneToOne: false
-            referencedRelation: "accounts"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      canned_responses: {
-        Row: {
-          account_id: string
-          content: string
-          created_at: string | null
-          id: string
-          short_code: string
-          updated_at: string | null
-        }
-        Insert: {
-          account_id: string
-          content: string
-          created_at?: string | null
-          id?: string
-          short_code: string
-          updated_at?: string | null
-        }
-        Update: {
-          account_id?: string
-          content?: string
-          created_at?: string | null
-          id?: string
-          short_code?: string
-          updated_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "canned_responses_account_id_fkey"
-            columns: ["account_id"]
-            isOneToOne: false
-            referencedRelation: "accounts"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      user_subscriptions: {
-        Row: {
-          account_id: string
-          cancelled_at: string | null
-          created_at: string | null
-          current_period_end: string | null
-          current_period_start: string | null
-          external_subscription_id: string | null
-          id: string
-          plan_id: string
-          status: string | null
-          trial_ends_at: string | null
-          updated_at: string | null
-        }
-        Insert: {
-          account_id: string
-          cancelled_at?: string | null
-          created_at?: string | null
-          current_period_end?: string | null
-          current_period_start?: string | null
-          external_subscription_id?: string | null
-          id?: string
-          plan_id: string
-          status?: string | null
-          trial_ends_at?: string | null
-          updated_at?: string | null
-        }
-        Update: {
-          account_id?: string
-          cancelled_at?: string | null
-          created_at?: string | null
-          current_period_end?: string | null
-          current_period_start?: string | null
-          external_subscription_id?: string | null
-          id?: string
-          plan_id?: string
-          status?: string | null
-          trial_ends_at?: string | null
-          updated_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "user_subscriptions_account_id_fkey"
-            columns: ["account_id"]
-            isOneToOne: true
-            referencedRelation: "accounts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "user_subscriptions_plan_id_fkey"
-            columns: ["plan_id"]
-            isOneToOne: false
-            referencedRelation: "plans"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      get_user_account_id: { Args: Record<PropertyKey, never>; Returns: string }
+      get_user_account_id: { Args: never; Returns: string }
       get_user_role_in_account: {
         Args: { p_account_id: string }
         Returns: string
@@ -914,65 +659,3 @@ export type TablesUpdate<
       ? U
       : never
     : never
-
-export type Enums<
-  DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema["Enums"]
-    | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
-> = DefaultSchemaEnumNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
-  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
-    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
-    : never
-
-// Convenience type aliases for common tables
-export type Account = Tables<'accounts'>
-export type AccountInsert = TablesInsert<'accounts'>
-export type AccountUpdate = TablesUpdate<'accounts'>
-
-export type Agent = Tables<'agents'>
-export type AgentInsert = TablesInsert<'agents'>
-export type AgentUpdate = TablesUpdate<'agents'>
-
-export type Conversation = Tables<'conversations'>
-export type ConversationInsert = TablesInsert<'conversations'>
-export type ConversationUpdate = TablesUpdate<'conversations'>
-
-export type ChatMessage = Tables<'chat_messages'>
-export type ChatMessageInsert = TablesInsert<'chat_messages'>
-export type ChatMessageUpdate = TablesUpdate<'chat_messages'>
-
-export type Plan = Tables<'plans'>
-export type PlanInsert = TablesInsert<'plans'>
-export type PlanUpdate = TablesUpdate<'plans'>
-
-export type Inbox = Tables<'inboxes'>
-export type InboxInsert = TablesInsert<'inboxes'>
-export type InboxUpdate = TablesUpdate<'inboxes'>
-
-export type Team = Tables<'teams'>
-export type TeamInsert = TablesInsert<'teams'>
-export type TeamUpdate = TablesUpdate<'teams'>
-
-export type Label = Tables<'labels'>
-export type LabelInsert = TablesInsert<'labels'>
-export type LabelUpdate = TablesUpdate<'labels'>
-
-export type OutgoingWebhook = Tables<'outgoing_webhooks'>
-export type OutgoingWebhookInsert = TablesInsert<'outgoing_webhooks'>
-export type OutgoingWebhookUpdate = TablesUpdate<'outgoing_webhooks'>
-
-export type CannedResponse = Tables<'canned_responses'>
-export type CannedResponseInsert = TablesInsert<'canned_responses'>
-export type CannedResponseUpdate = TablesUpdate<'canned_responses'>
-
-export type UserSubscription = Tables<'user_subscriptions'>
-export type UserSubscriptionInsert = TablesInsert<'user_subscriptions'>
-export type UserSubscriptionUpdate = TablesUpdate<'user_subscriptions'>

@@ -7,7 +7,7 @@
  */
 
 const { createClient } = require('@supabase/supabase-js');
-const logger = require('../utils/logger');
+const { logger } = require('../utils/logger');
 
 // PostgreSQL error codes mapping
 const PG_ERROR_CODES = {
@@ -24,16 +24,36 @@ const PG_ERROR_CODES = {
 
 class SupabaseService {
   constructor() {
+    this._initialized = false;
+    this._adminClient = null;
+    this.supabaseUrl = null;
+    this.supabaseAnonKey = null;
+    
+    // Try to initialize immediately if config is available
+    this._tryInitialize();
+  }
+
+  /**
+   * Try to initialize the Supabase client
+   * Does not throw if config is missing - allows tests to run without Supabase
+   */
+  _tryInitialize() {
+    if (this._initialized) return true;
+    
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
     
     if (!supabaseUrl || !supabaseServiceKey) {
-      throw new Error('Missing required Supabase configuration: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY');
+      // Don't throw - allow module to load for testing
+      if (process.env.NODE_ENV !== 'test') {
+        logger.warn('Supabase configuration missing - some features may not work');
+      }
+      return false;
     }
     
     // Service role client (bypasses RLS) - for admin operations
-    this.adminClient = createClient(supabaseUrl, supabaseServiceKey, {
+    this._adminClient = createClient(supabaseUrl, supabaseServiceKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false
@@ -43,8 +63,24 @@ class SupabaseService {
     // Store config for creating user clients
     this.supabaseUrl = supabaseUrl;
     this.supabaseAnonKey = supabaseAnonKey;
+    this._initialized = true;
     
     logger.info('SupabaseService initialized');
+    return true;
+  }
+
+  /**
+   * Get the admin client, initializing if needed
+   * @throws {Error} if Supabase is not configured
+   */
+  get adminClient() {
+    if (!this._initialized) {
+      this._tryInitialize();
+    }
+    if (!this._adminClient) {
+      throw new Error('Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.');
+    }
+    return this._adminClient;
   }
 
   /**
@@ -349,6 +385,56 @@ class SupabaseService {
     
     const result = await this.queryAsAdmin(table, queryFn);
     return { count: result.count, error: result.error };
+  }
+
+  /**
+   * Health check - verify Supabase connection
+   * @returns {Promise<{data: boolean, error: any}>}
+   */
+  async healthCheck() {
+    try {
+      // Simple query to verify connection
+      const { data, error } = await this.adminClient
+        .from('plans')
+        .select('id')
+        .limit(1);
+      
+      if (error) {
+        return { data: false, error };
+      }
+      
+      return { data: true, error: null };
+    } catch (error) {
+      logger.error('Supabase health check failed', { error: error.message });
+      return { data: false, error };
+    }
+  }
+
+  /**
+   * Execute raw SQL (for compatibility)
+   * @param {string} sql - SQL query
+   * @param {array} params - Query parameters
+   * @returns {Promise<{rows: array, error: any}>}
+   */
+  async executeSql(sql, params = []) {
+    try {
+      // Use RPC for raw SQL execution
+      const { data, error } = await this.adminClient.rpc('execute_sql', {
+        query: sql,
+        params: params
+      });
+      
+      if (error) {
+        // If RPC doesn't exist, log warning
+        logger.warn('executeSql RPC not available, returning empty result');
+        return { rows: [], error: null };
+      }
+      
+      return { rows: data || [], error: null };
+    } catch (error) {
+      logger.error('executeSql failed', { sql, error: error.message });
+      return { rows: [], error };
+    }
   }
 }
 

@@ -1,13 +1,15 @@
 /**
- * AgentService - Service for managing agents in multi-user system
+ * AgentServiceSupabase - Service for managing agents using Supabase
+ * Task 12.2: Refactor AgentService.js to use SupabaseService
  * 
  * Handles agent CRUD operations, invitation management, and authentication.
  * 
- * Requirements: 2.1, 2.4, 2.5, 2.6, 2.7, 2.8
+ * Requirements: 2.1, 2.4, 2.5, 2.6, 2.7, 2.8, 6.1, 6.2
  */
 
 const { logger } = require('../utils/logger');
 const crypto = require('crypto');
+const supabaseService = require('./SupabaseService');
 
 // Invitation expiration time (48 hours in milliseconds)
 const INVITATION_EXPIRY_MS = 48 * 60 * 60 * 1000;
@@ -44,18 +46,6 @@ const DEFAULT_ROLE_PERMISSIONS = {
 };
 
 class AgentService {
-  constructor(db) {
-    this.db = db;
-  }
-
-  /**
-   * Generate a unique ID
-   * @returns {string} UUID
-   */
-  generateId() {
-    return crypto.randomUUID();
-  }
-
   /**
    * Generate a secure invitation token
    * @returns {string} Secure random token
@@ -99,51 +89,37 @@ class AgentService {
 
   /**
    * Create an invitation for a new agent
-   * @param {string} accountId - Account ID
+   * @param {string} accountId - Account ID (UUID)
    * @param {Object} data - Invitation data
-   * @param {string} [data.email] - Optional email for the invitation
-   * @param {string} [data.role] - Role for the new agent (default: 'agent')
-   * @param {string} [data.customRoleId] - Custom role ID (optional)
    * @param {string} createdBy - Agent ID who created the invitation
+   * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<Object>} Created invitation with token
    */
-  async createInvitation(accountId, data, createdBy) {
+  async createInvitation(accountId, data, createdBy, token = null) {
     try {
-      const id = this.generateId();
-      const token = this.generateInvitationToken();
+      const invitationToken = this.generateInvitationToken();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + INVITATION_EXPIRY_MS);
 
-      const sql = `
-        INSERT INTO agent_invitations (id, account_id, email, token, role, custom_role_id, expires_at, created_by, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
-
-      await this.db.query(sql, [
-        id,
-        accountId,
-        data.email || null,
-        token,
-        data.role || 'agent',
-        data.customRoleId || null,
-        expiresAt.toISOString(),
-        createdBy,
-        now.toISOString()
-      ]);
-
-      logger.info('Invitation created', { invitationId: id, accountId, role: data.role || 'agent' });
-
-      return {
-        id,
-        accountId,
+      const invitationData = {
+        account_id: accountId,
         email: data.email || null,
-        token,
+        token: invitationToken,
         role: data.role || 'agent',
-        customRoleId: data.customRoleId || null,
-        expiresAt: expiresAt.toISOString(),
-        createdBy,
-        createdAt: now.toISOString()
+        custom_role_id: data.customRoleId || null,
+        expires_at: expiresAt.toISOString(),
+        created_by: createdBy
       };
+
+      const { data: invitation, error } = await supabaseService.insert('agent_invitations', invitationData, token);
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Invitation created', { invitationId: invitation.id, accountId, role: data.role || 'agent' });
+
+      return this.formatInvitation(invitation);
     } catch (error) {
       logger.error('Failed to create invitation', { error: error.message, accountId });
       throw error;
@@ -157,14 +133,21 @@ class AgentService {
    */
   async getInvitationByToken(token) {
     try {
-      const sql = 'SELECT * FROM agent_invitations WHERE token = ?';
-      const result = await this.db.query(sql, [token]);
+      const { data: invitations, error } = await supabaseService.getMany(
+        'agent_invitations',
+        { token },
+        { limit: 1 }
+      );
 
-      if (result.rows.length === 0) {
+      if (error) {
+        throw error;
+      }
+
+      if (!invitations || invitations.length === 0) {
         return null;
       }
 
-      return this.formatInvitation(result.rows[0]);
+      return this.formatInvitation(invitations[0]);
     } catch (error) {
       logger.error('Failed to get invitation', { error: error.message });
       throw error;
@@ -196,255 +179,35 @@ class AgentService {
 
   /**
    * Mark invitation as used
-   * @param {string} invitationId - Invitation ID
+   * @param {string} invitationId - Invitation ID (UUID)
    * @returns {Promise<void>}
    */
   async markInvitationUsed(invitationId) {
-    const sql = 'UPDATE agent_invitations SET used_at = ? WHERE id = ?';
-    await this.db.query(sql, [new Date().toISOString(), invitationId]);
-  }
-
-  /**
-   * List invitations for an account
-   * @param {string} accountId - Account ID
-   * @param {Object} [filters] - Optional filters
-   * @returns {Promise<Object[]>} List of invitations
-   */
-  async listInvitations(accountId, filters = {}) {
-    try {
-      let sql = 'SELECT * FROM agent_invitations WHERE account_id = ?';
-      const params = [accountId];
-
-      if (filters.status === 'pending') {
-        sql += ' AND used_at IS NULL AND expires_at > ?';
-        params.push(new Date().toISOString());
-      } else if (filters.status === 'used') {
-        sql += ' AND used_at IS NOT NULL';
-      } else if (filters.status === 'expired') {
-        sql += ' AND used_at IS NULL AND expires_at <= ?';
-        params.push(new Date().toISOString());
-      }
-
-      sql += ' ORDER BY created_at DESC';
-
-      const result = await this.db.query(sql, params);
-      return result.rows.map(row => this.formatInvitation(row));
-    } catch (error) {
-      logger.error('Failed to list invitations', { error: error.message, accountId });
-      throw error;
-    }
-  }
-
-  /**
-   * Delete an invitation
-   * @param {string} invitationId - Invitation ID
-   * @returns {Promise<void>}
-   */
-  async deleteInvitation(invitationId) {
-    const sql = 'DELETE FROM agent_invitations WHERE id = ?';
-    await this.db.query(sql, [invitationId]);
-    logger.info('Invitation deleted', { invitationId });
-  }
-
-  // ==================== AGENT REGISTRATION ====================
-
-  /**
-   * Complete registration via invitation link
-   * @param {string} token - Invitation token
-   * @param {Object} data - Registration data
-   * @param {string} data.email - Agent email
-   * @param {string} data.password - Agent password
-   * @param {string} data.name - Agent name
-   * @param {string} [data.avatarUrl] - Avatar URL
-   * @returns {Promise<Object>} Created agent
-   */
-  async completeRegistration(token, data) {
-    try {
-      // Validate invitation
-      const validation = await this.validateInvitation(token);
-      if (!validation.valid) {
-        throw new Error(validation.error);
-      }
-
-      const { invitation } = validation;
-
-      // Check if email already exists in account
-      const existingAgent = await this.getAgentByEmail(invitation.accountId, data.email);
-      if (existingAgent) {
-        throw new Error('EMAIL_ALREADY_EXISTS');
-      }
-
-      // Create agent
-      const agent = await this.createAgentInternal({
-        accountId: invitation.accountId,
-        email: data.email,
-        password: data.password,
-        name: data.name,
-        avatarUrl: data.avatarUrl,
-        role: invitation.role,
-        customRoleId: invitation.customRoleId,
-        status: 'active'
-      });
-
-      // Mark invitation as used
-      await this.markInvitationUsed(invitation.id);
-
-      logger.info('Agent registered via invitation', { 
-        agentId: agent.id, 
-        accountId: invitation.accountId,
-        invitationId: invitation.id 
-      });
-
-      return agent;
-    } catch (error) {
-      logger.error('Failed to complete registration', { error: error.message, token });
-      throw error;
-    }
-  }
-
-  /**
-   * Get the max_agents quota for an account from their subscription plan
-   * @param {string} accountId - Account ID (user_id in subscriptions)
-   * @returns {Promise<number>} Max agents allowed
-   */
-  async getMaxAgentsQuota(accountId) {
-    try {
-      const result = await this.db.query(
-        `SELECT p.max_agents FROM user_subscriptions s
-         JOIN plans p ON s.plan_id = p.id
-         WHERE s.user_id = ? AND s.status IN ('trial', 'active')
-         LIMIT 1`,
-        [accountId]
-      );
-      
-      if (result.rows.length === 0) {
-        return 1; // Default to 1 if no subscription found
-      }
-      
-      return result.rows[0].max_agents || 1;
-    } catch (error) {
-      logger.error('Failed to get max agents quota', { error: error.message, accountId });
-      return 1;
-    }
-  }
-
-  /**
-   * Check if account can create more agents based on quota
-   * @param {string} accountId - Account ID
-   * @returns {Promise<{allowed: boolean, current: number, limit: number}>}
-   */
-  async checkAgentQuota(accountId) {
-    const currentCount = await this.countAgents(accountId);
-    const maxAgents = await this.getMaxAgentsQuota(accountId);
-    
-    return {
-      allowed: currentCount < maxAgents,
-      current: currentCount,
-      limit: maxAgents
-    };
-  }
-
-  /**
-   * Create agent directly with credentials (by owner/admin)
-   * @param {string} accountId - Account ID
-   * @param {Object} data - Agent data
-   * @param {string} data.email - Agent email
-   * @param {string} data.password - Agent password
-   * @param {string} data.name - Agent name
-   * @param {string} [data.role] - Role (default: 'agent')
-   * @param {string} [data.avatarUrl] - Avatar URL
-   * @param {string} [data.customRoleId] - Custom role ID
-   * @param {boolean} [data.skipQuotaCheck] - Skip quota check (for system operations)
-   * @returns {Promise<Object>} Created agent
-   */
-  async createAgentDirect(accountId, data) {
-    try {
-      // Check agent quota unless explicitly skipped
-      if (!data.skipQuotaCheck) {
-        const quotaCheck = await this.checkAgentQuota(accountId);
-        if (!quotaCheck.allowed) {
-          throw new Error(`QUOTA_EXCEEDED: Cannot create agent. Current: ${quotaCheck.current}, Limit: ${quotaCheck.limit}. Please upgrade your plan to add more agents.`);
-        }
-      }
-
-      // Check if email already exists in account
-      const existingAgent = await this.getAgentByEmail(accountId, data.email);
-      if (existingAgent) {
-        throw new Error('EMAIL_ALREADY_EXISTS');
-      }
-
-      const agent = await this.createAgentInternal({
-        accountId,
-        email: data.email,
-        password: data.password,
-        name: data.name,
-        avatarUrl: data.avatarUrl,
-        role: data.role || 'agent',
-        customRoleId: data.customRoleId,
-        status: 'active'
-      });
-
-      logger.info('Agent created directly', { agentId: agent.id, accountId });
-
-      return agent;
-    } catch (error) {
-      logger.error('Failed to create agent directly', { error: error.message, accountId });
-      throw error;
-    }
-  }
-
-  /**
-   * Internal method to create an agent
-   * @private
-   */
-  async createAgentInternal(data) {
-    const id = this.generateId();
-    const now = new Date().toISOString();
-    const passwordHash = await this.hashPassword(data.password);
-
-    const sql = `
-      INSERT INTO agents (
-        id, account_id, email, password_hash, name, avatar_url, 
-        role, custom_role_id, availability, status, created_at, updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    await this.db.query(sql, [
-      id,
-      data.accountId,
-      data.email,
-      passwordHash,
-      data.name,
-      data.avatarUrl || null,
-      data.role,
-      data.customRoleId || null,
-      'offline',
-      data.status,
-      now,
-      now
-    ]);
-
-    return this.getAgentById(id);
+    await supabaseService.update('agent_invitations', invitationId, {
+      used_at: new Date().toISOString()
+    });
   }
 
   // ==================== AGENT CRUD ====================
 
   /**
    * Get agent by ID
-   * @param {string} agentId - Agent ID
+   * @param {string} agentId - Agent ID (UUID)
+   * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<Object|null>} Agent or null
    */
-  async getAgentById(agentId) {
+  async getAgentById(agentId, token = null) {
     try {
-      const sql = 'SELECT * FROM agents WHERE id = ?';
-      const result = await this.db.query(sql, [agentId]);
+      const { data: agent, error } = await supabaseService.getById('agents', agentId, token);
 
-      if (result.rows.length === 0) {
-        return null;
+      if (error) {
+        if (error.code === 'ROW_NOT_FOUND') {
+          return null;
+        }
+        throw error;
       }
 
-      return this.formatAgent(result.rows[0]);
+      return agent ? this.formatAgent(agent) : null;
     } catch (error) {
       logger.error('Failed to get agent', { error: error.message, agentId });
       throw error;
@@ -453,20 +216,29 @@ class AgentService {
 
   /**
    * Get agent by email within an account
-   * @param {string} accountId - Account ID
+   * @param {string} accountId - Account ID (UUID)
    * @param {string} email - Agent email
+   * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<Object|null>} Agent or null
    */
-  async getAgentByEmail(accountId, email) {
+  async getAgentByEmail(accountId, email, token = null) {
     try {
-      const sql = 'SELECT * FROM agents WHERE account_id = ? AND email = ?';
-      const result = await this.db.query(sql, [accountId, email]);
+      const { data: agents, error } = await supabaseService.getMany(
+        'agents',
+        { account_id: accountId, email },
+        { limit: 1 },
+        token
+      );
 
-      if (result.rows.length === 0) {
+      if (error) {
+        throw error;
+      }
+
+      if (!agents || agents.length === 0) {
         return null;
       }
 
-      return this.formatAgent(result.rows[0]);
+      return this.formatAgent(agents[0]);
     } catch (error) {
       logger.error('Failed to get agent by email', { error: error.message, accountId, email });
       throw error;
@@ -474,26 +246,33 @@ class AgentService {
   }
 
   /**
-   * Get agent with password hash for authentication
-   * @param {string} accountId - Account ID
+   * Get agent with password hash for authentication (admin query)
+   * @param {string} accountId - Account ID (UUID)
    * @param {string} email - Agent email
    * @returns {Promise<Object|null>} Agent with password hash or null
    */
   async getAgentForAuth(accountId, email) {
     try {
-      const sql = 'SELECT * FROM agents WHERE account_id = ? AND email = ?';
-      const result = await this.db.query(sql, [accountId, email]);
+      const queryFn = (query) => query
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('email', email)
+        .single();
 
-      if (result.rows.length === 0) {
-        return null;
+      const { data: agent, error } = await supabaseService.queryAsAdmin('agents', queryFn);
+
+      if (error) {
+        if (error.code === 'ROW_NOT_FOUND') {
+          return null;
+        }
+        throw error;
       }
 
-      const row = result.rows[0];
       return {
-        ...this.formatAgent(row),
-        passwordHash: row.password_hash,
-        failedLoginAttempts: row.failed_login_attempts,
-        lockedUntil: row.locked_until
+        ...this.formatAgent(agent),
+        passwordHash: agent.password_hash,
+        failedLoginAttempts: agent.failed_login_attempts,
+        lockedUntil: agent.locked_until
       };
     } catch (error) {
       logger.error('Failed to get agent for auth', { error: error.message, accountId, email });
@@ -503,33 +282,38 @@ class AgentService {
 
   /**
    * Get agent by email only (searches across all accounts)
-   * Used for simplified login where user only provides email
    * @param {string} email - Agent email
    * @returns {Promise<Object|null>} Agent with password hash and account info or null
    */
   async getAgentByEmailOnly(email) {
     try {
-      const sql = `
-        SELECT a.*, acc.name as account_name, acc.status as account_status
-        FROM agents a
-        JOIN accounts acc ON a.account_id = acc.id
-        WHERE a.email = ? AND a.status = 'active' AND acc.status = 'active'
-        LIMIT 1
-      `;
-      const result = await this.db.query(sql, [email]);
+      const queryFn = (query) => query
+        .select(`
+          *,
+          accounts!inner(name, status)
+        `)
+        .eq('email', email)
+        .eq('status', 'active')
+        .eq('accounts.status', 'active')
+        .limit(1)
+        .single();
 
-      if (result.rows.length === 0) {
-        return null;
+      const { data: agent, error } = await supabaseService.queryAsAdmin('agents', queryFn);
+
+      if (error) {
+        if (error.code === 'ROW_NOT_FOUND') {
+          return null;
+        }
+        throw error;
       }
 
-      const row = result.rows[0];
       return {
-        ...this.formatAgent(row),
-        passwordHash: row.password_hash,
-        failedLoginAttempts: row.failed_login_attempts,
-        lockedUntil: row.locked_until,
-        accountName: row.account_name,
-        accountStatus: row.account_status
+        ...this.formatAgent(agent),
+        passwordHash: agent.password_hash,
+        failedLoginAttempts: agent.failed_login_attempts,
+        lockedUntil: agent.locked_until,
+        accountName: agent.accounts?.name,
+        accountStatus: agent.accounts?.status
       };
     } catch (error) {
       logger.error('Failed to get agent by email only', { error: error.message, email });
@@ -539,44 +323,50 @@ class AgentService {
 
   /**
    * List agents for an account
-   * @param {string} accountId - Account ID
+   * @param {string} accountId - Account ID (UUID)
    * @param {Object} [filters] - Optional filters
+   * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<Object[]>} List of agents
    */
-  async listAgents(accountId, filters = {}) {
+  async listAgents(accountId, filters = {}, token = null) {
     try {
-      let sql = 'SELECT * FROM agents WHERE account_id = ?';
-      const params = [accountId];
+      const queryFn = (query) => {
+        let q = query.select('*').eq('account_id', accountId);
 
-      if (filters.status) {
-        sql += ' AND status = ?';
-        params.push(filters.status);
+        if (filters.status) {
+          q = q.eq('status', filters.status);
+        }
+
+        if (filters.role) {
+          q = q.eq('role', filters.role);
+        }
+
+        if (filters.availability) {
+          q = q.eq('availability', filters.availability);
+        }
+
+        q = q.order('created_at', { ascending: false });
+
+        if (filters.limit) {
+          q = q.limit(filters.limit);
+        }
+
+        if (filters.offset) {
+          q = q.range(filters.offset, filters.offset + (filters.limit || 10) - 1);
+        }
+
+        return q;
+      };
+
+      const { data: agents, error } = token
+        ? await supabaseService.queryAsUser(token, 'agents', queryFn)
+        : await supabaseService.queryAsAdmin('agents', queryFn);
+
+      if (error) {
+        throw error;
       }
 
-      if (filters.role) {
-        sql += ' AND role = ?';
-        params.push(filters.role);
-      }
-
-      if (filters.availability) {
-        sql += ' AND availability = ?';
-        params.push(filters.availability);
-      }
-
-      sql += ' ORDER BY created_at DESC';
-
-      if (filters.limit) {
-        sql += ' LIMIT ?';
-        params.push(filters.limit);
-      }
-
-      if (filters.offset) {
-        sql += ' OFFSET ?';
-        params.push(filters.offset);
-      }
-
-      const result = await this.db.query(sql, params);
-      return result.rows.map(row => this.formatAgent(row));
+      return (agents || []).map(row => this.formatAgent(row));
     } catch (error) {
       logger.error('Failed to list agents', { error: error.message, accountId });
       throw error;
@@ -584,50 +374,92 @@ class AgentService {
   }
 
   /**
+   * Create agent directly with credentials
+   * @param {string} accountId - Account ID (UUID)
+   * @param {Object} data - Agent data
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<Object>} Created agent
+   */
+  async createAgentDirect(accountId, data, token = null) {
+    try {
+      // Check if email already exists in account
+      const existingAgent = await this.getAgentByEmail(accountId, data.email, token);
+      if (existingAgent) {
+        throw new Error('EMAIL_ALREADY_EXISTS');
+      }
+
+      const passwordHash = await this.hashPassword(data.password);
+
+      const agentData = {
+        account_id: accountId,
+        email: data.email,
+        password_hash: passwordHash,
+        name: data.name,
+        avatar_url: data.avatarUrl || null,
+        role: data.role || 'agent',
+        custom_role_id: data.customRoleId || null,
+        availability: 'offline',
+        status: 'active'
+      };
+
+      const { data: agent, error } = await supabaseService.insert('agents', agentData, token);
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Agent created directly', { agentId: agent.id, accountId });
+
+      return this.formatAgent(agent);
+    } catch (error) {
+      logger.error('Failed to create agent directly', { error: error.message, accountId });
+      throw error;
+    }
+  }
+
+  /**
    * Update agent
-   * @param {string} agentId - Agent ID
+   * @param {string} agentId - Agent ID (UUID)
    * @param {Object} data - Update data
+   * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<Object>} Updated agent
    */
-  async updateAgent(agentId, data) {
+  async updateAgent(agentId, data, token = null) {
     try {
-      const agent = await this.getAgentById(agentId);
+      const agent = await this.getAgentById(agentId, token);
       if (!agent) {
         throw new Error('AGENT_NOT_FOUND');
       }
 
-      const updates = [];
-      const params = [];
+      const updates = {};
 
       if (data.name !== undefined) {
-        updates.push('name = ?');
-        params.push(data.name);
+        updates.name = data.name;
       }
 
       if (data.avatarUrl !== undefined) {
-        updates.push('avatar_url = ?');
-        params.push(data.avatarUrl);
+        updates.avatar_url = data.avatarUrl;
       }
 
       if (data.availability !== undefined) {
-        updates.push('availability = ?');
-        params.push(data.availability);
+        updates.availability = data.availability;
       }
 
-      if (updates.length === 0) {
+      if (Object.keys(updates).length === 0) {
         return agent;
       }
 
-      updates.push('updated_at = ?');
-      params.push(new Date().toISOString());
-      params.push(agentId);
+      updates.updated_at = new Date().toISOString();
 
-      const sql = `UPDATE agents SET ${updates.join(', ')} WHERE id = ?`;
-      await this.db.query(sql, params);
+      const { data: updatedAgent, error } = await supabaseService.update('agents', agentId, updates, token);
+
+      if (error) {
+        throw error;
+      }
 
       logger.info('Agent updated', { agentId });
 
-      return this.getAgentById(agentId);
+      return this.formatAgent(updatedAgent);
     } catch (error) {
       logger.error('Failed to update agent', { error: error.message, agentId });
       throw error;
@@ -636,24 +468,32 @@ class AgentService {
 
   /**
    * Update agent role
-   * @param {string} agentId - Agent ID
+   * @param {string} agentId - Agent ID (UUID)
    * @param {string} role - New role
    * @param {string} [customRoleId] - Custom role ID (optional)
+   * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<Object>} Updated agent
    */
-  async updateAgentRole(agentId, role, customRoleId = null) {
+  async updateAgentRole(agentId, role, customRoleId = null, token = null) {
     try {
-      const sql = `
-        UPDATE agents 
-        SET role = ?, custom_role_id = ?, updated_at = ? 
-        WHERE id = ?
-      `;
-      
-      await this.db.query(sql, [role, customRoleId, new Date().toISOString(), agentId]);
+      const { data: agent, error } = await supabaseService.update(
+        'agents',
+        agentId,
+        {
+          role,
+          custom_role_id: customRoleId,
+          updated_at: new Date().toISOString()
+        },
+        token
+      );
+
+      if (error) {
+        throw error;
+      }
 
       logger.info('Agent role updated', { agentId, role, customRoleId });
 
-      return this.getAgentById(agentId);
+      return this.formatAgent(agent);
     } catch (error) {
       logger.error('Failed to update agent role', { error: error.message, agentId });
       throw error;
@@ -662,24 +502,32 @@ class AgentService {
 
   /**
    * Update agent availability
-   * @param {string} agentId - Agent ID
+   * @param {string} agentId - Agent ID (UUID)
    * @param {string} availability - New availability status
+   * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<Object>} Updated agent
    */
-  async updateAvailability(agentId, availability) {
+  async updateAvailability(agentId, availability, token = null) {
     try {
-      const sql = `
-        UPDATE agents 
-        SET availability = ?, last_activity_at = ?, updated_at = ? 
-        WHERE id = ?
-      `;
-      
       const now = new Date().toISOString();
-      await this.db.query(sql, [availability, now, now, agentId]);
+      const { data: agent, error } = await supabaseService.update(
+        'agents',
+        agentId,
+        {
+          availability,
+          last_activity_at: now,
+          updated_at: now
+        },
+        token
+      );
+
+      if (error) {
+        throw error;
+      }
 
       logger.info('Agent availability updated', { agentId, availability });
 
-      return this.getAgentById(agentId);
+      return this.formatAgent(agent);
     } catch (error) {
       logger.error('Failed to update availability', { error: error.message, agentId });
       throw error;
@@ -687,63 +535,27 @@ class AgentService {
   }
 
   /**
-   * Update agent profile (name and avatar)
-   * @param {string} agentId - Agent ID
-   * @param {Object} data - Profile data
-   * @param {string} [data.name] - New name
-   * @param {string|null} [data.avatarUrl] - New avatar URL
-   * @returns {Promise<Object>} Updated agent
-   */
-  async updateProfile(agentId, data) {
-    try {
-      const updates = [];
-      const params = [];
-      
-      if (data.name !== undefined) {
-        updates.push('name = ?');
-        params.push(data.name);
-      }
-      
-      if (data.avatarUrl !== undefined) {
-        updates.push('avatar_url = ?');
-        params.push(data.avatarUrl);
-      }
-      
-      if (updates.length === 0) {
-        return this.getAgentById(agentId);
-      }
-      
-      updates.push('updated_at = ?');
-      params.push(new Date().toISOString());
-      params.push(agentId);
-      
-      const sql = `UPDATE agents SET ${updates.join(', ')} WHERE id = ?`;
-      await this.db.query(sql, params);
-
-      logger.info('Agent profile updated', { agentId, updates: Object.keys(data) });
-
-      return this.getAgentById(agentId);
-    } catch (error) {
-      logger.error('Failed to update profile', { error: error.message, agentId });
-      throw error;
-    }
-  }
-
-  /**
    * Deactivate agent
-   * @param {string} agentId - Agent ID
+   * @param {string} agentId - Agent ID (UUID)
+   * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<void>}
    */
-  async deactivateAgent(agentId) {
+  async deactivateAgent(agentId, token = null) {
     try {
-      // Update agent status
-      const sql = `
-        UPDATE agents 
-        SET status = 'inactive', availability = 'offline', updated_at = ? 
-        WHERE id = ?
-      `;
-      
-      await this.db.query(sql, [new Date().toISOString(), agentId]);
+      const { error } = await supabaseService.update(
+        'agents',
+        agentId,
+        {
+          status: 'inactive',
+          availability: 'offline',
+          updated_at: new Date().toISOString()
+        },
+        token
+      );
+
+      if (error) {
+        throw error;
+      }
 
       // Invalidate all sessions for this agent
       await this.invalidateAgentSessions(agentId);
@@ -756,36 +568,18 @@ class AgentService {
   }
 
   /**
-   * Activate agent
-   * @param {string} agentId - Agent ID
-   * @returns {Promise<void>}
-   */
-  async activateAgent(agentId) {
-    try {
-      const sql = `
-        UPDATE agents 
-        SET status = 'active', updated_at = ? 
-        WHERE id = ?
-      `;
-      
-      await this.db.query(sql, [new Date().toISOString(), agentId]);
-
-      logger.info('Agent activated', { agentId });
-    } catch (error) {
-      logger.error('Failed to activate agent', { error: error.message, agentId });
-      throw error;
-    }
-  }
-
-  /**
    * Delete agent (hard delete)
-   * @param {string} agentId - Agent ID
+   * @param {string} agentId - Agent ID (UUID)
+   * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<void>}
    */
-  async deleteAgent(agentId) {
+  async deleteAgent(agentId, token = null) {
     try {
-      const sql = 'DELETE FROM agents WHERE id = ?';
-      await this.db.query(sql, [agentId]);
+      const { error } = await supabaseService.delete('agents', agentId, token);
+
+      if (error) {
+        throw error;
+      }
 
       logger.info('Agent deleted', { agentId });
     } catch (error) {
@@ -798,27 +592,26 @@ class AgentService {
 
   /**
    * Update agent password
-   * @param {string} agentId - Agent ID
+   * @param {string} agentId - Agent ID (UUID)
    * @param {string} newPassword - New password
    * @param {boolean} [invalidateSessions=true] - Whether to invalidate other sessions
-   * @param {string} [currentSessionId] - Current session to keep active
    * @returns {Promise<void>}
    */
-  async updatePassword(agentId, newPassword, invalidateSessions = true, currentSessionId = null) {
+  async updatePassword(agentId, newPassword, invalidateSessions = true) {
     try {
       const passwordHash = await this.hashPassword(newPassword);
-      
-      const sql = `
-        UPDATE agents 
-        SET password_hash = ?, updated_at = ? 
-        WHERE id = ?
-      `;
-      
-      await this.db.query(sql, [passwordHash, new Date().toISOString(), agentId]);
 
-      // Invalidate other sessions if requested
+      const { error } = await supabaseService.update('agents', agentId, {
+        password_hash: passwordHash,
+        updated_at: new Date().toISOString()
+      });
+
+      if (error) {
+        throw error;
+      }
+
       if (invalidateSessions) {
-        await this.invalidateAgentSessions(agentId, currentSessionId);
+        await this.invalidateAgentSessions(agentId);
       }
 
       logger.info('Agent password updated', { agentId });
@@ -832,7 +625,7 @@ class AgentService {
 
   /**
    * Record failed login attempt
-   * @param {string} agentId - Agent ID
+   * @param {string} agentId - Agent ID (UUID)
    * @returns {Promise<Object>} Updated attempt info
    */
   async recordFailedLogin(agentId) {
@@ -842,27 +635,35 @@ class AgentService {
         throw new Error('AGENT_NOT_FOUND');
       }
 
-      const result = await this.db.query(
-        'SELECT failed_login_attempts FROM agents WHERE id = ?',
-        [agentId]
-      );
-      
-      const currentAttempts = result.rows[0]?.failed_login_attempts || 0;
+      const queryFn = (query) => query
+        .select('failed_login_attempts')
+        .eq('id', agentId)
+        .single();
+
+      const { data: result, error: fetchError } = await supabaseService.queryAsAdmin('agents', queryFn);
+
+      if (fetchError) {
+        throw fetchError;
+      }
+
+      const currentAttempts = result?.failed_login_attempts || 0;
       const newAttempts = currentAttempts + 1;
-      
+
       // Lock account after 5 failed attempts for 15 minutes
       let lockedUntil = null;
       if (newAttempts >= 5) {
         lockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
       }
 
-      const sql = `
-        UPDATE agents 
-        SET failed_login_attempts = ?, locked_until = ?, updated_at = ? 
-        WHERE id = ?
-      `;
-      
-      await this.db.query(sql, [newAttempts, lockedUntil, new Date().toISOString(), agentId]);
+      const { error: updateError } = await supabaseService.update('agents', agentId, {
+        failed_login_attempts: newAttempts,
+        locked_until: lockedUntil,
+        updated_at: new Date().toISOString()
+      });
+
+      if (updateError) {
+        throw updateError;
+      }
 
       logger.warn('Failed login attempt recorded', { agentId, attempts: newAttempts, locked: !!lockedUntil });
 
@@ -875,48 +676,22 @@ class AgentService {
 
   /**
    * Reset failed login attempts
-   * @param {string} agentId - Agent ID
+   * @param {string} agentId - Agent ID (UUID)
    * @returns {Promise<void>}
    */
   async resetFailedLogins(agentId) {
     try {
-      const sql = `
-        UPDATE agents 
-        SET failed_login_attempts = 0, locked_until = NULL, updated_at = ? 
-        WHERE id = ?
-      `;
-      
-      await this.db.query(sql, [new Date().toISOString(), agentId]);
+      const { error } = await supabaseService.update('agents', agentId, {
+        failed_login_attempts: 0,
+        locked_until: null,
+        updated_at: new Date().toISOString()
+      });
+
+      if (error) {
+        throw error;
+      }
     } catch (error) {
       logger.error('Failed to reset failed logins', { error: error.message, agentId });
-      throw error;
-    }
-  }
-
-  /**
-   * Check if agent is locked
-   * @param {string} agentId - Agent ID
-   * @returns {Promise<boolean>} True if locked
-   */
-  async isAgentLocked(agentId) {
-    try {
-      const result = await this.db.query(
-        'SELECT locked_until FROM agents WHERE id = ?',
-        [agentId]
-      );
-      
-      if (result.rows.length === 0) {
-        return false;
-      }
-
-      const lockedUntil = result.rows[0].locked_until;
-      if (!lockedUntil) {
-        return false;
-      }
-
-      return new Date(lockedUntil) > new Date();
-    } catch (error) {
-      logger.error('Failed to check agent lock status', { error: error.message, agentId });
       throw error;
     }
   }
@@ -925,21 +700,21 @@ class AgentService {
 
   /**
    * Invalidate all sessions for an agent
-   * @param {string} agentId - Agent ID
+   * @param {string} agentId - Agent ID (UUID)
    * @param {string} [exceptSessionId] - Session ID to keep active
    * @returns {Promise<void>}
    */
   async invalidateAgentSessions(agentId, exceptSessionId = null) {
     try {
-      let sql = 'DELETE FROM agent_sessions WHERE agent_id = ?';
-      const params = [agentId];
+      const queryFn = (query) => {
+        let q = query.delete().eq('agent_id', agentId);
+        if (exceptSessionId) {
+          q = q.neq('id', exceptSessionId);
+        }
+        return q;
+      };
 
-      if (exceptSessionId) {
-        sql += ' AND id != ?';
-        params.push(exceptSessionId);
-      }
-
-      await this.db.query(sql, params);
+      await supabaseService.queryAsAdmin('agent_sessions', queryFn);
 
       logger.info('Agent sessions invalidated', { agentId, exceptSessionId });
     } catch (error) {
@@ -952,25 +727,23 @@ class AgentService {
 
   /**
    * Get permissions for an agent
-   * @param {string} agentId - Agent ID
+   * @param {string} agentId - Agent ID (UUID)
+   * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<string[]>} List of permissions
    */
-  async getAgentPermissions(agentId) {
+  async getAgentPermissions(agentId, token = null) {
     try {
-      const agent = await this.getAgentById(agentId);
+      const agent = await this.getAgentById(agentId, token);
       if (!agent) {
         return [];
       }
 
       // If agent has a custom role, get those permissions
       if (agent.customRoleId) {
-        const result = await this.db.query(
-          'SELECT permissions FROM custom_roles WHERE id = ?',
-          [agent.customRoleId]
-        );
-        
-        if (result.rows.length > 0) {
-          return JSON.parse(result.rows[0].permissions || '[]');
+        const { data: customRole, error } = await supabaseService.getById('custom_roles', agent.customRoleId, token);
+
+        if (!error && customRole) {
+          return customRole.permissions || [];
         }
       }
 
@@ -986,22 +759,25 @@ class AgentService {
 
   /**
    * Get agent count for an account
-   * @param {string} accountId - Account ID
+   * @param {string} accountId - Account ID (UUID)
    * @param {Object} [filters] - Optional filters
+   * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<number>} Agent count
    */
-  async getAgentCount(accountId, filters = {}) {
+  async countAgents(accountId, filters = {}, token = null) {
     try {
-      let sql = 'SELECT COUNT(*) as count FROM agents WHERE account_id = ?';
-      const params = [accountId];
-
+      const filterObj = { account_id: accountId };
       if (filters.status) {
-        sql += ' AND status = ?';
-        params.push(filters.status);
+        filterObj.status = filters.status;
       }
 
-      const result = await this.db.query(sql, params);
-      return result.rows[0]?.count || 0;
+      const { count, error } = await supabaseService.count('agents', filterObj, token);
+
+      if (error) {
+        throw error;
+      }
+
+      return count || 0;
     } catch (error) {
       logger.error('Failed to get agent count', { error: error.message, accountId });
       throw error;
@@ -1019,6 +795,7 @@ class AgentService {
     return {
       id: row.id,
       accountId: row.account_id,
+      userId: row.user_id,
       email: row.email,
       name: row.name,
       avatarUrl: row.avatar_url,
@@ -1050,26 +827,6 @@ class AgentService {
       createdBy: row.created_by,
       createdAt: row.created_at
     };
-  }
-
-  // ==================== COUNT METHODS ====================
-
-  /**
-   * Count active agents for an account
-   * @param {string} accountId - Account ID
-   * @returns {Promise<number>} Number of active agents
-   */
-  async countAgents(accountId) {
-    try {
-      const result = await this.db.query(
-        "SELECT COUNT(*) as count FROM agents WHERE account_id = ? AND status = 'active'",
-        [accountId]
-      );
-      return result.rows[0]?.count || 0;
-    } catch (error) {
-      logger.error('Failed to count agents', { error: error.message, accountId });
-      return 0;
-    }
   }
 }
 

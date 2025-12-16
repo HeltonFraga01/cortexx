@@ -153,13 +153,12 @@ router.[HTTP_METHOD_LOWERCASE]('/[ENDPOINT]',
       // [BUSINESS_LOGIC]
       // Implementar lógica específica aqui
       
-      // Exemplo para operação com banco de dados:
-      const db = req.app.locals.db;
-      const result = await db.[DATABASE_METHOD](token, {
-        limit: limitNum,
-        offset: offsetNum,
-        ...requestData
-      });
+      // Exemplo para operação com banco de dados (Supabase):
+      const SupabaseService = require('../services/SupabaseService');
+      const { data: result, error } = await SupabaseService.queryAsUser(token, '[TABLE_NAME]', (query) =>
+        query.select('*')
+          .range(offsetNum, offsetNum + limitNum - 1)
+      );
       
       // Exemplo para operação com WUZAPI:
       const wuzapiClient = require('../utils/wuzapiClient');

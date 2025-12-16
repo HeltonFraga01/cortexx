@@ -6,10 +6,10 @@
  */
 
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class SessionMappingService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
     this.cache = new Map(); // sessionId -> { token, instanceName, jid }
   }
 
@@ -31,16 +31,20 @@ class SessionMappingService {
       // Update cache
       this.cache.set(sessionId, { token: userToken, instanceName, jid });
 
-      // Persist to database (upsert)
-      await this.db.query(`
-        INSERT INTO session_token_mapping (session_id, user_token, instance_name, jid, updated_at)
-        VALUES (?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(session_id) DO UPDATE SET
-          user_token = excluded.user_token,
-          instance_name = excluded.instance_name,
-          jid = excluded.jid,
-          updated_at = datetime('now')
-      `, [sessionId, userToken, instanceName || null, jid || null]);
+      // Persist to database (upsert) using Supabase
+      const { error } = await SupabaseService.queryAsAdmin('session_token_mapping', (query) =>
+        query.upsert({
+          session_id: sessionId,
+          user_token: userToken,
+          instance_name: instanceName || null,
+          jid: jid || null,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'session_id' })
+      );
+
+      if (error) {
+        throw error;
+      }
 
       logger.info('Session mapping registered', {
         sessionId: sessionId.substring(0, 10) + '...',
@@ -69,15 +73,19 @@ class SessionMappingService {
       return cached.token;
     }
 
-    // Query database
+    // Query database using Supabase
     try {
-      const { rows } = await this.db.query(
-        'SELECT user_token FROM session_token_mapping WHERE session_id = ?',
-        [sessionId]
+      const { data, error } = await SupabaseService.queryAsAdmin('session_token_mapping', (query) =>
+        query.select('user_token').eq('session_id', sessionId).single()
       );
 
-      if (rows.length > 0) {
-        const token = rows[0].user_token;
+      if (error && error.code !== 'PGRST116') {
+        // PGRST116 = no rows returned, which is expected when not found
+        throw error;
+      }
+
+      if (data) {
+        const token = data.user_token;
         // Update cache
         this.cache.set(sessionId, { token });
         return token;
@@ -97,11 +105,15 @@ class SessionMappingService {
    */
   async loadCache() {
     try {
-      const { rows } = await this.db.query(
-        'SELECT session_id, user_token, instance_name, jid FROM session_token_mapping'
+      const { data, error } = await SupabaseService.queryAsAdmin('session_token_mapping', (query) =>
+        query.select('session_id, user_token, instance_name, jid')
       );
 
-      for (const row of rows) {
+      if (error) {
+        throw error;
+      }
+
+      for (const row of (data || [])) {
         this.cache.set(row.session_id, {
           token: row.user_token,
           instanceName: row.instance_name,
@@ -109,7 +121,7 @@ class SessionMappingService {
         });
       }
 
-      logger.info('Session mapping cache loaded', { count: rows.length });
+      logger.info('Session mapping cache loaded', { count: (data || []).length });
     } catch (error) {
       // Table might not exist yet
       logger.warn('Failed to load session mapping cache', { error: error.message });
@@ -127,9 +139,9 @@ class SessionMappingService {
 // Singleton instance
 let instance = null;
 
-function getSessionMappingService(db) {
-  if (!instance && db) {
-    instance = new SessionMappingService(db);
+function getSessionMappingService() {
+  if (!instance) {
+    instance = new SessionMappingService();
   }
   return instance;
 }

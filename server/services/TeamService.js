@@ -10,11 +10,11 @@ const { logger } = require('../utils/logger');
 const crypto = require('crypto');
 const MultiUserAuditService = require('./MultiUserAuditService');
 const { ACTION_TYPES, RESOURCE_TYPES } = require('./MultiUserAuditService');
+const SupabaseService = require('./SupabaseService');
 
 class TeamService {
-  constructor(db, auditService = null) {
-    this.db = db;
-    this.auditService = auditService || new MultiUserAuditService(db);
+  constructor(auditService = null) {
+    this.auditService = auditService || new MultiUserAuditService();
   }
 
   /**
@@ -46,7 +46,7 @@ class TeamService {
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `;
 
-      await this.db.query(sql, [
+      await SupabaseService.executeSql(sql, [
         id,
         accountId,
         data.name,
@@ -83,7 +83,7 @@ class TeamService {
   async getTeamById(teamId) {
     try {
       const sql = 'SELECT * FROM teams WHERE id = ?';
-      const result = await this.db.query(sql, [teamId]);
+      const result = await SupabaseService.executeSql(sql, [teamId]);
 
       if (result.rows.length === 0) {
         return null;
@@ -104,7 +104,7 @@ class TeamService {
   async listTeams(accountId) {
     try {
       const sql = 'SELECT * FROM teams WHERE account_id = ? ORDER BY name';
-      const result = await this.db.query(sql, [accountId]);
+      const result = await SupabaseService.executeSql(sql, [accountId]);
       return result.rows.map(row => this.formatTeam(row));
     } catch (error) {
       logger.error('Failed to list teams', { error: error.message, accountId });
@@ -127,7 +127,7 @@ class TeamService {
         GROUP BY t.id
         ORDER BY t.name
       `;
-      const result = await this.db.query(sql, [accountId]);
+      const result = await SupabaseService.executeSql(sql, [accountId]);
       return result.rows.map(row => ({
         ...this.formatTeam(row),
         memberCount: row.member_count || 0
@@ -173,7 +173,7 @@ class TeamService {
       params.push(teamId);
 
       const sql = `UPDATE teams SET ${updates.join(', ')} WHERE id = ?`;
-      await this.db.query(sql, params);
+      await SupabaseService.executeSql(sql, params);
 
       logger.info('Team updated', { teamId });
 
@@ -193,7 +193,7 @@ class TeamService {
     try {
       const team = await this.getTeamById(teamId);
       // Members will be deleted via CASCADE
-      await this.db.query('DELETE FROM teams WHERE id = ?', [teamId]);
+      await SupabaseService.executeSql('DELETE FROM teams WHERE id = ?', [teamId]);
       logger.info('Team deleted', { teamId });
 
       // Audit log
@@ -231,7 +231,7 @@ class TeamService {
         VALUES (?, ?, ?, ?)
       `;
 
-      await this.db.query(sql, [id, teamId, agentId, now]);
+      await SupabaseService.executeSql(sql, [id, teamId, agentId, now]);
 
       logger.info('Team member added', { teamId, agentId });
 
@@ -268,7 +268,7 @@ class TeamService {
     try {
       const team = await this.getTeamById(teamId);
       const sql = 'DELETE FROM team_members WHERE team_id = ? AND agent_id = ?';
-      await this.db.query(sql, [teamId, agentId]);
+      await SupabaseService.executeSql(sql, [teamId, agentId]);
       logger.info('Team member removed', { teamId, agentId });
 
       // Audit log
@@ -301,7 +301,7 @@ class TeamService {
         WHERE tm.team_id = ?
         ORDER BY a.name
       `;
-      const result = await this.db.query(sql, [teamId]);
+      const result = await SupabaseService.executeSql(sql, [teamId]);
       return result.rows.map(row => ({
         id: row.id,
         email: row.email,
@@ -327,7 +327,7 @@ class TeamService {
   async isMember(teamId, agentId) {
     try {
       const sql = 'SELECT 1 FROM team_members WHERE team_id = ? AND agent_id = ?';
-      const result = await this.db.query(sql, [teamId, agentId]);
+      const result = await SupabaseService.executeSql(sql, [teamId, agentId]);
       return result.rows.length > 0;
     } catch (error) {
       logger.error('Failed to check team membership', { error: error.message, teamId, agentId });
@@ -349,7 +349,7 @@ class TeamService {
         WHERE tm.agent_id = ?
         ORDER BY t.name
       `;
-      const result = await this.db.query(sql, [agentId]);
+      const result = await SupabaseService.executeSql(sql, [agentId]);
       return result.rows.map(row => this.formatTeam(row));
     } catch (error) {
       logger.error('Failed to get agent teams', { error: error.message, agentId });
@@ -366,12 +366,12 @@ class TeamService {
    */
   async getTeamStats(teamId) {
     try {
-      const memberResult = await this.db.query(
+      const memberResult = await SupabaseService.executeSql(
         'SELECT COUNT(*) as count FROM team_members WHERE team_id = ?',
         [teamId]
       );
 
-      const onlineResult = await this.db.query(`
+      const onlineResult = await SupabaseService.executeSql(`
         SELECT COUNT(*) as count 
         FROM team_members tm
         JOIN agents a ON tm.agent_id = a.id
@@ -416,7 +416,7 @@ class TeamService {
    */
   async countTeams(accountId) {
     try {
-      const result = await this.db.query(
+      const result = await SupabaseService.executeSql(
         'SELECT COUNT(*) as count FROM teams WHERE account_id = ?',
         [accountId]
       );

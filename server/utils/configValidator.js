@@ -1,15 +1,16 @@
 /**
  * Configuration Validator
- * Task 17.3: Create configuration validation
  * 
  * Validates required environment variables on startup
  * Fails fast with clear error messages
+ * 
+ * Note: SQLite support has been removed. Supabase is the only database backend.
  */
 
-const logger = require('./logger');
+const { logger } = require('./logger');
 
 /**
- * Required environment variables by database backend
+ * Required environment variables
  */
 const REQUIRED_VARS = {
   // Always required
@@ -24,11 +25,6 @@ const REQUIRED_VARS = {
     'SUPABASE_SERVICE_ROLE_KEY',
     'SUPABASE_ANON_KEY',
   ],
-  
-  // Required for SQLite backend
-  sqlite: [
-    'SQLITE_DB_PATH',
-  ],
 };
 
 /**
@@ -41,10 +37,6 @@ const RECOMMENDED_VARS = {
     'SESSION_SECRET',
   ],
   supabase: [],
-  sqlite: [
-    'SQLITE_WAL_MODE',
-    'SQLITE_TIMEOUT',
-  ],
 };
 
 /**
@@ -70,13 +62,6 @@ function validateConfig(options = { exitOnError: true }) {
   const errors = [];
   const warnings = [];
   
-  // Determine database backend
-  const databaseBackend = process.env.DATABASE_BACKEND || 'sqlite';
-  
-  if (!['sqlite', 'supabase'].includes(databaseBackend)) {
-    errors.push(`Invalid DATABASE_BACKEND: ${databaseBackend}. Must be 'sqlite' or 'supabase'`);
-  }
-  
   // Validate common required vars
   for (const varName of REQUIRED_VARS.common) {
     const { valid } = validateVar(varName);
@@ -90,19 +75,16 @@ function validateConfig(options = { exitOnError: true }) {
     }
   }
   
-  // Validate backend-specific required vars
-  const backendVars = REQUIRED_VARS[databaseBackend] || [];
-  for (const varName of backendVars) {
+  // Validate Supabase required vars
+  for (const varName of REQUIRED_VARS.supabase) {
     const { valid } = validateVar(varName);
     if (!valid) {
-      errors.push(`Missing required environment variable for ${databaseBackend} backend: ${varName}`);
+      errors.push(`Missing required environment variable: ${varName}`);
     }
   }
   
   // Check recommended vars
-  const recommendedCommon = RECOMMENDED_VARS.common || [];
-  const recommendedBackend = RECOMMENDED_VARS[databaseBackend] || [];
-  const allRecommended = [...recommendedCommon, ...recommendedBackend];
+  const allRecommended = [...RECOMMENDED_VARS.common, ...RECOMMENDED_VARS.supabase];
   
   for (const varName of allRecommended) {
     const { valid } = validateVar(varName);
@@ -112,36 +94,26 @@ function validateConfig(options = { exitOnError: true }) {
   }
   
   // Validate Supabase URL format
-  if (databaseBackend === 'supabase') {
-    const supabaseUrl = process.env.SUPABASE_URL;
-    if (supabaseUrl && !supabaseUrl.includes('supabase.co')) {
-      warnings.push('SUPABASE_URL does not appear to be a valid Supabase URL');
-    }
-    
-    // Check key formats
-    const anonKey = process.env.SUPABASE_ANON_KEY;
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    
-    if (anonKey && anonKey.length < 100) {
-      warnings.push('SUPABASE_ANON_KEY appears to be too short');
-    }
-    
-    if (serviceKey && serviceKey.length < 100) {
-      warnings.push('SUPABASE_SERVICE_ROLE_KEY appears to be too short');
-    }
-    
-    // Security check: ensure service key is not exposed in frontend vars
-    if (process.env.VITE_SUPABASE_SERVICE_ROLE_KEY) {
-      errors.push('SECURITY ERROR: SUPABASE_SERVICE_ROLE_KEY must NOT be prefixed with VITE_');
-    }
+  const supabaseUrl = process.env.SUPABASE_URL;
+  if (supabaseUrl && !supabaseUrl.includes('supabase.co')) {
+    warnings.push('SUPABASE_URL does not appear to be a valid Supabase URL');
   }
   
-  // Validate SQLite path
-  if (databaseBackend === 'sqlite') {
-    const dbPath = process.env.SQLITE_DB_PATH;
-    if (dbPath && !dbPath.endsWith('.db')) {
-      warnings.push('SQLITE_DB_PATH should end with .db extension');
-    }
+  // Check key formats
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  
+  if (anonKey && anonKey.length < 100) {
+    warnings.push('SUPABASE_ANON_KEY appears to be too short');
+  }
+  
+  if (serviceKey && serviceKey.length < 100) {
+    warnings.push('SUPABASE_SERVICE_ROLE_KEY appears to be too short');
+  }
+  
+  // Security check: ensure service key is not exposed in frontend vars
+  if (process.env.VITE_SUPABASE_SERVICE_ROLE_KEY) {
+    errors.push('SECURITY ERROR: SUPABASE_SERVICE_ROLE_KEY must NOT be prefixed with VITE_');
   }
   
   // Log results
@@ -162,7 +134,7 @@ function validateConfig(options = { exitOnError: true }) {
     }
   } else {
     logger.info('Configuration validated successfully', {
-      databaseBackend,
+      databaseBackend: 'supabase',
       nodeEnv: process.env.NODE_ENV || 'development',
     });
   }
@@ -172,10 +144,10 @@ function validateConfig(options = { exitOnError: true }) {
 
 /**
  * Get current database backend
- * @returns {'sqlite' | 'supabase'}
+ * @returns {'supabase'}
  */
 function getDatabaseBackend() {
-  return process.env.DATABASE_BACKEND || 'sqlite';
+  return 'supabase';
 }
 
 /**
@@ -188,14 +160,6 @@ function isSupabaseConfigured() {
     process.env.SUPABASE_SERVICE_ROLE_KEY &&
     process.env.SUPABASE_ANON_KEY
   );
-}
-
-/**
- * Check if SQLite is configured
- * @returns {boolean}
- */
-function isSqliteConfigured() {
-  return !!process.env.SQLITE_DB_PATH;
 }
 
 /**
@@ -216,7 +180,6 @@ module.exports = {
   validateConfig,
   getDatabaseBackend,
   isSupabaseConfigured,
-  isSqliteConfigured,
   getSupabaseConfig,
   REQUIRED_VARS,
   RECOMMENDED_VARS,

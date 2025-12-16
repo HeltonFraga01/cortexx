@@ -17,6 +17,7 @@ const OutgoingWebhookService = require('../services/OutgoingWebhookService')
 const BotService = require('../services/BotService')
 const GroupNameResolver = require('../services/GroupNameResolver')
 const { resolveLidToPhone } = require('../utils/phoneUtils')
+const SupabaseService = require('../services/SupabaseService')
 
 /**
  * Convert timestamp to Brazil timezone (America/Sao_Paulo)
@@ -129,14 +130,13 @@ function shouldIgnoreMessage(messageContent) {
 }
 
 class ChatMessageHandler {
-  constructor(db, chatHandler = null) {
-    this.db = db
-    this.chatService = new ChatService(db)
+  constructor(chatHandler = null) {
+    this.chatService = new ChatService(SupabaseService)
     this.chatHandler = chatHandler // WebSocket handler for real-time updates
     this.presenceState = new Map() // contactJid -> { state, timestamp }
-    this.outgoingWebhookService = new OutgoingWebhookService(db)
-    this.botService = new BotService(db)
-    this.groupNameResolver = new GroupNameResolver(db, logger) // NEW: Group name resolution service
+    this.outgoingWebhookService = new OutgoingWebhookService(SupabaseService)
+    this.botService = new BotService(SupabaseService)
+    this.groupNameResolver = new GroupNameResolver(SupabaseService, logger) // Group name resolution service
     
     logger.info('ChatMessageHandler initialized with GroupNameResolver', {
       hasGroupNameResolver: !!this.groupNameResolver
@@ -528,11 +528,10 @@ class ChatMessageHandler {
       const quotedMessageId = messageContextInfo.StanzaId || messageContextInfo.stanzaId
       if (quotedMessageId) {
         // Find the original message by WUZAPI message ID
-        const sql = `
-          SELECT id FROM chat_messages 
-          WHERE conversation_id = ? AND message_id = ?
-        `
-        const { rows } = await this.db.query(sql, [conversation.id, quotedMessageId])
+        const { data: replyRows, error: replyError } = await SupabaseService.queryAsAdmin('chat_messages', (query) =>
+          query.select('id').eq('conversation_id', conversation.id).eq('message_id', quotedMessageId)
+        )
+        const rows = replyRows || []
         if (rows.length > 0) {
           replyToMessageId = rows[0].id
           logger.debug('Reply context found', { 
@@ -790,20 +789,19 @@ class ChatMessageHandler {
   async handleMessageEdit(conversationId, targetMessageId, newContent) {
     try {
       // Find the original message by WUZAPI message ID
-      const sql = `
-        SELECT id, content FROM chat_messages 
-        WHERE conversation_id = ? AND message_id = ?
-      `
-      const { rows } = await this.db.query(sql, [conversationId, targetMessageId])
+      const { data: editRows, error: editError } = await SupabaseService.queryAsAdmin('chat_messages', (query) =>
+        query.select('id, content').eq('conversation_id', conversationId).eq('message_id', targetMessageId)
+      )
+      const rows = editRows || []
       
       if (rows.length > 0) {
         const originalMessage = rows[0]
         
         // Update the message content and mark as edited
-        await this.db.query(
-          'UPDATE chat_messages SET content = ?, is_edited = 1 WHERE id = ?',
-          [newContent, originalMessage.id]
-        )
+        await SupabaseService.update('chat_messages', originalMessage.id, {
+          content: newContent,
+          is_edited: true
+        })
         
         logger.info('Message edited', {
           conversationId,
@@ -852,20 +850,19 @@ class ChatMessageHandler {
   async handleMessageDelete(conversationId, targetMessageId) {
     try {
       // Find the original message by WUZAPI message ID
-      const sql = `
-        SELECT id, content FROM chat_messages 
-        WHERE conversation_id = ? AND message_id = ?
-      `
-      const { rows } = await this.db.query(sql, [conversationId, targetMessageId])
+      const { data: deleteRows, error: deleteError } = await SupabaseService.queryAsAdmin('chat_messages', (query) =>
+        query.select('id, content').eq('conversation_id', conversationId).eq('message_id', targetMessageId)
+      )
+      const rows = deleteRows || []
       
       if (rows.length > 0) {
         const originalMessage = rows[0]
         
         // Mark the message as deleted and update content
-        await this.db.query(
-          'UPDATE chat_messages SET content = ?, is_deleted = 1 WHERE id = ?',
-          ['🚫 Esta mensagem foi apagada', originalMessage.id]
-        )
+        await SupabaseService.update('chat_messages', originalMessage.id, {
+          content: '🚫 Esta mensagem foi apagada',
+          is_deleted: true
+        })
         
         logger.info('Message deleted', {
           conversationId,
@@ -931,23 +928,26 @@ class ChatMessageHandler {
     // Update each message status
     for (const wuzapiMessageId of MessageIds) {
       try {
-        // Find message by WUZAPI message ID
-        const sql = `
-          SELECT m.id, m.conversation_id 
-          FROM chat_messages m
-          JOIN conversations c ON m.conversation_id = c.id
-          WHERE m.message_id = ? AND c.user_id = ?
-        `
-        const { rows } = await this.db.query(sql, [wuzapiMessageId, userId])
+        // Find message by WUZAPI message ID - need to join with conversations
+        // First get conversations for this user
+        const { data: convData } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+          query.select('id').eq('user_id', userId)
+        )
+        const convIds = (convData || []).map(c => c.id)
+        
+        if (convIds.length === 0) continue
+        
+        // Then find the message
+        const { data: msgData } = await SupabaseService.queryAsAdmin('chat_messages', (query) =>
+          query.select('id, conversation_id').eq('message_id', wuzapiMessageId).in('conversation_id', convIds)
+        )
+        const rows = msgData || []
         
         if (rows.length > 0) {
           const message = rows[0]
           
           // Update message status
-          await this.db.query(
-            'UPDATE chat_messages SET status = ? WHERE id = ?',
-            ['read', message.id]
-          )
+          await SupabaseService.update('chat_messages', message.id, { status: 'read' })
 
           // Broadcast via WebSocket
           if (this.chatHandler) {
@@ -1004,11 +1004,10 @@ class ChatMessageHandler {
       return { handled: false, error: 'User not found' }
     }
 
-    const sql = `
-      SELECT id FROM conversations 
-      WHERE user_id = ? AND contact_jid = ?
-    `
-    const { rows } = await this.db.query(sql, [userId, contactJid])
+    const { data: presenceConvData } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+      query.select('id').eq('user_id', userId).eq('contact_jid', contactJid)
+    )
+    const rows = presenceConvData || []
 
     if (rows.length > 0) {
       const conversationId = rows[0].id
@@ -1060,22 +1059,25 @@ class ChatMessageHandler {
 
     const status = statusMap[Status] || Status
 
-    // Find and update message
-    const sql = `
-      SELECT m.id, m.conversation_id 
-      FROM chat_messages m
-      JOIN conversations c ON m.conversation_id = c.id
-      WHERE m.message_id = ? AND c.user_id = ?
-    `
-    const { rows } = await this.db.query(sql, [MessageId, userId])
+    // Find and update message - need to join with conversations
+    // First get conversations for this user
+    const { data: statusConvData } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+      query.select('id').eq('user_id', userId)
+    )
+    const statusConvIds = (statusConvData || []).map(c => c.id)
+    
+    let rows = []
+    if (statusConvIds.length > 0) {
+      const { data: statusMsgData } = await SupabaseService.queryAsAdmin('chat_messages', (query) =>
+        query.select('id, conversation_id').eq('message_id', MessageId).in('conversation_id', statusConvIds)
+      )
+      rows = statusMsgData || []
+    }
 
     if (rows.length > 0) {
       const message = rows[0]
       
-      await this.db.query(
-        'UPDATE chat_messages SET status = ? WHERE id = ?',
-        [status, message.id]
-      )
+      await SupabaseService.update('chat_messages', message.id, { status })
 
       // Broadcast via WebSocket
       if (this.chatHandler) {

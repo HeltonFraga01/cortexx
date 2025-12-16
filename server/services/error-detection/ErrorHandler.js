@@ -186,8 +186,8 @@ class ErrorHandler extends EventEmitter {
     }
     
     // Database errors
-    if (message.includes('database') || message.includes('sqlite') ||
-        message.includes('query')) {
+    if (message.includes('database') || message.includes('supabase') ||
+        message.includes('postgres') || message.includes('query')) {
       return SystemErrorType.DATABASE;
     }
     

@@ -7,16 +7,15 @@ inclusion: always
 ## Stack Overview
 
 - **Frontend:** React 18 + TypeScript, Vite 5, Tailwind CSS 3, shadcn/ui
-- **Backend:** Node.js 20 + Express 4 (CommonJS), SQLite 3 (WAL mode)
+- **Backend:** Node.js 20 + Express 4 (CommonJS), Supabase (PostgreSQL)
 - **Testing:** Vitest (frontend), Node test runner (backend), Cypress (E2E)
 - **Deployment:** Docker, single-node Docker Swarm
 
 ## Architecture Constraints
 
 **Single-instance architecture - NEVER suggest:**
-- SQLite clustering, replicas, or horizontal scaling
+- Database clustering, replicas, or horizontal scaling
 - Multi-node Docker Swarm or distributed deployments
-- Redis/external caching (SQLite WAL mode provides sufficient performance)
 
 ## Module Systems & Imports
 
@@ -30,7 +29,7 @@ import { Button } from '../../../components/ui/button'  // ❌ Never use ../..
 **Backend (`.js`)** - CommonJS only:
 ```javascript
 const logger = require('../utils/logger')  // ✅ Relative paths only
-const db = require('../database')
+const supabase = require('../services/SupabaseService')
 const logger = require('@/utils/logger')   // ❌ No aliases in backend
 ```
 
@@ -40,7 +39,7 @@ const logger = require('@/utils/logger')   // ❌ No aliases in backend
 
 | Layer | Required Module | Forbidden |
 |-------|----------------|-----------|
-| Database | `server/database.js` | Direct `sqlite3` |
+| Database | `server/services/SupabaseService.js` | Direct Supabase client |
 | Logging | `server/utils/logger.js` | `console.log/error` |
 | WhatsApp API | `server/utils/wuzapiClient.js` | Direct `fetch` calls |
 | Backend API | `src/lib/api.ts` | Direct `fetch` calls |
@@ -101,7 +100,7 @@ router.get('/endpoint', authenticate, async (req, res) => {
 - Input: `server/validators/` functions on all routes
 - Rate limiting: Apply to auth and sensitive endpoints
 - CORS: Configure via `CORS_ORIGINS` env var
-- SQL injection: Prevented by `database.js` prepared statements
+- SQL injection: Prevented by Supabase parameterized queries
 
 ## Development Commands
 
@@ -121,11 +120,14 @@ npm run generate <type> <name>  # Scaffold from templates
 - `VITE_API_BASE_URL` - Backend URL (default: http://localhost:3000)
 - `VITE_WUZAPI_BASE_URL` - WUZAPI service URL
 - `VITE_ADMIN_TOKEN` - Admin authentication token
+- `VITE_SUPABASE_URL` - Supabase project URL
+- `VITE_SUPABASE_ANON_KEY` - Supabase anonymous key
 
 **Backend (`server/.env`):**
 - `NODE_ENV` - Environment (development/production)
 - `PORT` - Server port (default: 3000)
 - `WUZAPI_BASE_URL` - WUZAPI service URL
 - `CORS_ORIGINS` - Allowed origins (comma-separated)
-- `SQLITE_DB_PATH` - Database file path (default: ./wuzapi.db)
+- `SUPABASE_URL` - Supabase project URL
+- `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key
 - `LOG_LEVEL` - Logging level (debug/info/warn/error)

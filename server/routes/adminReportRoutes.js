@@ -10,6 +10,7 @@
 const express = require('express');
 const { requireAdmin } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
+const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
@@ -19,8 +20,8 @@ const router = express.Router();
  */
 router.get('/usage', requireAdmin, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
@@ -182,8 +183,8 @@ router.get('/usage', requireAdmin, async (req, res) => {
  */
 router.get('/revenue', requireAdmin, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
@@ -327,8 +328,8 @@ router.get('/revenue', requireAdmin, async (req, res) => {
  */
 router.get('/growth', requireAdmin, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
@@ -506,8 +507,8 @@ router.get('/growth', requireAdmin, async (req, res) => {
  */
 router.get('/export', requireAdmin, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 

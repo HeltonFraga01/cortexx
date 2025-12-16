@@ -7,7 +7,7 @@
  * Requirements: 9.1, 9.2, 9.3
  */
 
-const logger = require('./logger');
+const { logger } = require('./logger');
 
 // Schema definitions for validation
 const SCHEMAS = {

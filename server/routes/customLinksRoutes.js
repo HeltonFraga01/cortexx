@@ -1,6 +1,7 @@
 const express = require('express');
 const { logger } = require('../utils/logger');
 const errorHandler = require('../middleware/errorHandler');
+const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
@@ -19,8 +20,10 @@ router.get('/', async (req, res) => {
   const startTime = Date.now();
   
   try {
-    const db = req.app.locals.db;
-    const links = await db.getCustomLinks();
+    const { data: links, error } = await SupabaseService.queryAsAdmin('custom_links', (query) =>
+      query.select('*').eq('active', true).order('position', { ascending: true })
+    );
+    if (error) throw error;
     
     const responseTime = Date.now() - startTime;
     
@@ -72,8 +75,10 @@ router.get('/', async (req, res) => {
 router.get('/all',
   async (req, res) => {
     try {
-      const db = req.app.locals.db;
-      const links = await db.getAllCustomLinks();
+      const { data: links, error } = await SupabaseService.queryAsAdmin('custom_links', (query) =>
+        query.select('*').order('position', { ascending: true })
+      );
+      if (error) throw error;
       
       res.json({
         success: true,
@@ -106,13 +111,14 @@ router.post('/',
         });
       }
       
-      const db = req.app.locals.db;
-      const link = await db.createCustomLink(
+      const { data: link, error } = await SupabaseService.insert('custom_links', {
         label,
         url,
-        icon || 'ExternalLink',
-        position || 0
-      );
+        icon: icon || 'ExternalLink',
+        position: position || 0,
+        active: true
+      });
+      if (error) throw error;
       
       logger.info('Link customizado criado:', { id: link.id, label });
       
@@ -148,15 +154,14 @@ router.put('/:id',
         });
       }
       
-      const db = req.app.locals.db;
-      const updated = await db.updateCustomLink(
-        parseInt(id),
+      const { data: updated, error } = await SupabaseService.update('custom_links', parseInt(id), {
         label,
         url,
-        icon || 'ExternalLink',
-        position || 0,
-        active !== undefined ? active : true
-      );
+        icon: icon || 'ExternalLink',
+        position: position || 0,
+        active: active !== undefined ? active : true
+      });
+      if (error) throw error;
       
       if (updated) {
         logger.info('Link customizado atualizado:', { id, label });
@@ -190,8 +195,8 @@ router.delete('/:id',
     try {
       const { id } = req.params;
       
-      const db = req.app.locals.db;
-      const deleted = await db.deleteCustomLink(parseInt(id));
+      const { error } = await SupabaseService.delete('custom_links', parseInt(id));
+      const deleted = !error;
       
       if (deleted) {
         logger.info('Link customizado deletado:', { id });

@@ -8,8 +8,10 @@ const path = require('path');
 const axios = require('axios');
 const session = require('express-session');
 const helmet = require('helmet');
-const Database = require('./database');
-const SQLiteConfig = require('./config/sqlite');
+// SQLite removed - using Supabase only
+const SupabaseService = require('./services/SupabaseService');
+// Database compatibility layer for legacy code
+const db = require('./database');
 
 // Importar novos componentes de validação
 const corsHandler = require('./middleware/corsHandler');
@@ -209,214 +211,40 @@ function invalidateBrandingCache() {
   cacheTimestamp = null;
 }
 
-// Inicializar configurações SQLite e banco de dados
-let db;
-let sqliteConfig;
-
+// Inicializar Supabase (único backend de banco de dados)
 async function initializeDatabase() {
   try {
-    logger.info('🔧 Inicializando configurações SQLite...');
+    logger.info('🔧 Inicializando conexão com Supabase...');
 
-    // Carregar configurações SQLite
-    sqliteConfig = new SQLiteConfig();
-    const configInfo = sqliteConfig.getConfigInfo();
+    // Validar configuração do Supabase
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    logger.info('⚙️ Configurações SQLite carregadas:', configInfo);
-
-    // Garantir que o diretório do banco existe
-    await ensureDatabaseDirectory(configInfo.dbPath);
-
-    // Validar configurações
-    const validation = sqliteConfig.validate();
-    if (!validation.valid) {
-      throw new Error(`Configurações SQLite inválidas: ${validation.errors.join(', ')}`);
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Configuração do Supabase incompleta. Verifique SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY.');
     }
 
-    // Inicializar banco de dados (Database criará sua própria instância de SQLiteConfig)
-    logger.info('🗄️ Inicializando banco de dados SQLite...');
-    db = new Database();
-    await db.init();
-
-    // Executar migrations automaticamente
-    logger.info('🔄 Executando migrations do banco de dados...');
-    await runDatabaseMigrations(db);
-
-    // Tornar a instância do banco disponível para as rotas
-    app.locals.db = db;
-
-    // Inicializar VariationTracker com instância do banco
-    const variationTracker = require('./services/VariationTracker');
-    variationTracker.initialize(db);
-    logger.info('✅ VariationTracker inicializado');
-
-    // Inicializar SessionMappingService e carregar cache
-    const { getSessionMappingService } = require('./services/SessionMappingService');
-    const sessionMapping = getSessionMappingService(db);
-    await sessionMapping.loadCache();
-    logger.info('✅ SessionMappingService inicializado');
-
-    logger.info('✅ Banco de dados SQLite inicializado com sucesso');
-
-    // Log das estatísticas do banco
-    try {
-      const stats = await db.getDatabaseStats();
-      logger.info('📊 Estatísticas do banco:', {
-        tamanho: `${Math.round(stats.databaseSize / 1024)} KB`,
-        registros: stats.recordCount,
-        caminho: configInfo.dbPath
-      });
-    } catch (statsError) {
-      logger.warn('⚠️ Não foi possível obter estatísticas do banco:', statsError.message);
+    // Testar conexão com Supabase
+    const { data, error } = await SupabaseService.healthCheck();
+    if (error) {
+      throw new Error(`Falha na conexão com Supabase: ${error.message}`);
     }
+
+    // Tornar o SupabaseService disponível para as rotas
+    app.locals.supabase = SupabaseService;
+
+    logger.info('✅ Conexão com Supabase estabelecida com sucesso');
 
     return true;
   } catch (error) {
-    logger.error('❌ Erro ao inicializar banco de dados:', error.message);
-
-    // Melhor tratamento de erros específicos do SQLite
-    if (error.code === 'SQLITE_CANTOPEN') {
-      logger.error('❌ Não foi possível abrir o arquivo do banco de dados. Verifique as permissões e o caminho.');
-    } else if (error.code === 'SQLITE_PERM') {
-      logger.error('❌ Permissão negada para acessar o arquivo do banco de dados.');
-    } else if (error.code === 'ENOENT') {
-      logger.error('❌ Diretório do banco de dados não existe ou não pode ser criado.');
-    } else if (error.code === 'EACCES') {
-      logger.error('❌ Sem permissão para escrever no diretório do banco de dados.');
-    }
-
+    logger.error('❌ Erro ao inicializar Supabase:', error.message);
     throw error;
   }
 }
 
-async function ensureDatabaseDirectory(dbPath) {
-  const fs = require('fs').promises;
-  const path = require('path');
+// SQLite directory functions removed - using Supabase only
 
-  try {
-    const dbDir = path.dirname(dbPath);
-
-    logger.info(`📁 Verificando diretório do banco: ${dbDir}`);
-
-    // Verificar se o diretório existe
-    try {
-      await fs.access(dbDir);
-      logger.info(`✅ Diretório do banco já existe: ${dbDir}`);
-    } catch (error) {
-      if (error.code === 'ENOENT') {
-        // Diretório não existe, criar
-        logger.info(`📁 Criando diretório do banco: ${dbDir}`);
-        await fs.mkdir(dbDir, { recursive: true });
-        logger.info(`✅ Diretório do banco criado: ${dbDir}`);
-      } else {
-        throw error;
-      }
-    }
-
-    // Verificar permissões de escrita
-    try {
-      await fs.access(dbDir, fs.constants.W_OK);
-      logger.info(`✅ Permissões de escrita verificadas para: ${dbDir}`);
-    } catch (error) {
-      throw new Error(`Sem permissão de escrita no diretório do banco: ${dbDir}`);
-    }
-
-  } catch (error) {
-    logger.error('❌ Erro ao garantir diretório do banco:', error.message);
-    throw new Error(`Falha ao preparar diretório do banco de dados: ${error.message}`);
-  }
-}
-
-async function runDatabaseMigrations(database) {
-  const fs = require('fs');
-  const path = require('path');
-
-  try {
-    const migrationsDir = path.join(__dirname, 'migrations');
-
-    // Verificar se o diretório de migrations existe
-    if (!fs.existsSync(migrationsDir)) {
-      logger.warn('⚠️ Diretório de migrations não encontrado, pulando migrations');
-      return;
-    }
-
-    // Buscar todos os arquivos de migration (formato: XXX_*.js)
-    const migrationFiles = fs.readdirSync(migrationsDir)
-      .filter(file => file.match(/^\d{3}_.*\.js$/))
-      .sort(); // Ordenar por número
-
-    if (migrationFiles.length === 0) {
-      logger.info('ℹ️ Nenhuma migration encontrada');
-      return;
-    }
-
-    logger.info(`📋 Encontradas ${migrationFiles.length} migrations`);
-
-    // Criar tabela de controle de migrations se não existir
-    await database.query(`
-      CREATE TABLE IF NOT EXISTS migrations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        executed_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Verificar quais migrations já foram executadas
-    const { rows: executedMigrations } = await database.query(
-      'SELECT name FROM migrations ORDER BY id'
-    );
-    const executedNames = new Set(executedMigrations.map(m => m.name));
-
-    let executedCount = 0;
-    let skippedCount = 0;
-
-    // Executar migrations pendentes
-    for (const file of migrationFiles) {
-      const migrationName = file.replace('.js', '');
-
-      // Verificar se já foi executada
-      if (executedNames.has(migrationName)) {
-        logger.debug(`⏭️ Migration ${migrationName} já executada, pulando`);
-        skippedCount++;
-        continue;
-      }
-
-      const migrationPath = path.join(migrationsDir, file);
-      const migration = require(migrationPath);
-
-      if (typeof migration.up === 'function') {
-        try {
-          logger.info(`🔄 Executando migration: ${file}`);
-          await migration.up(database);
-
-          // Registrar como executada
-          await database.query(
-            'INSERT INTO migrations (name) VALUES (?)',
-            [migrationName]
-          );
-
-          logger.info(`✅ Migration ${file} executada com sucesso`);
-          executedCount++;
-        } catch (error) {
-          logger.error(`❌ Erro ao executar migration ${file}:`, error.message);
-          throw error;
-        }
-      } else {
-        logger.warn(`⚠️ Migration ${file} não possui função 'up', pulando`);
-      }
-    }
-
-    if (executedCount > 0) {
-      logger.info(`✅ ${executedCount} migration(s) executada(s) com sucesso`);
-    }
-    if (skippedCount > 0) {
-      logger.info(`ℹ️ ${skippedCount} migration(s) já executada(s) anteriormente`);
-    }
-
-  } catch (error) {
-    logger.error('❌ Erro ao executar migrations:', error.message);
-    throw error;
-  }
-}
+// SQLite migrations removed - using Supabase migrations via MCP
 
 // Middleware de log estruturado
 app.use(errorHandler.logRequest.bind(errorHandler));
@@ -428,7 +256,7 @@ app.get('/health', async (req, res) => {
     const { wuzapiConnectivityChecker } = require('./utils/wuzapiConnectivityChecker');
 
     const corsInfo = corsHandler.getConfigInfo();
-    const sqliteInfo = sqliteConfig ? sqliteConfig.getConfigInfo() : null;
+    // SQLite removed - using Supabase only
 
     // 1. Verificar validação de ambiente
     const envValidation = environmentValidator.validate();
@@ -454,14 +282,8 @@ app.get('/health', async (req, res) => {
           code: dbError.code || 'UNKNOWN'
         };
 
-        // Log específico para diferentes tipos de erro SQLite
-        if (dbError.code === 'SQLITE_BUSY') {
-          logger.warn('⚠️ Banco de dados ocupado durante health check');
-        } else if (dbError.code === 'SQLITE_CORRUPT') {
-          logger.error('❌ Banco de dados corrompido detectado no health check');
-        } else if (dbError.code === 'SQLITE_CANTOPEN') {
-          logger.error('❌ Não foi possível abrir banco de dados no health check');
-        } else {
+        // Log de erro do banco de dados
+        if (dbError.code) {
           logger.warn('⚠️ Erro ao verificar status do banco no health check:', dbError.message);
         }
       }
@@ -469,34 +291,8 @@ app.get('/health', async (req, res) => {
       databaseStatus = 'not_initialized';
     }
 
-    // 3. Verificar se o arquivo do banco existe
-    let fileExists = false;
-    let fileSize = 0;
-    if (sqliteInfo?.dbPath) {
-      try {
-        const fs = require('fs');
-        const stats = fs.statSync(sqliteInfo.dbPath);
-        fileExists = true;
-        fileSize = stats.size;
-      } catch (error) {
-        // Arquivo não existe ou não pode ser acessado
-        fileExists = false;
-      }
-    }
-
-    // 4. Verificar conectividade com WUZAPI
+    // 3. Verificar conectividade com WUZAPI
     const wuzapiStatus = await wuzapiConnectivityChecker.getStatus();
-
-    // 5. Verificar session store (SQLite sessions)
-    let sessionStoreStatus = 'unknown';
-    const sessionDbPath = path.join(__dirname, '../data/sessions.db');
-    try {
-      const fs = require('fs');
-      fs.accessSync(sessionDbPath, fs.constants.R_OK | fs.constants.W_OK);
-      sessionStoreStatus = 'connected';
-    } catch (error) {
-      sessionStoreStatus = 'error';
-    }
 
     // 6. Verificar S3 Storage
     let s3Status = {
@@ -525,8 +321,7 @@ app.get('/health', async (req, res) => {
     const isHealthy =
       envValidation.valid &&
       databaseStatus === 'connected' &&
-      wuzapiStatus.connected &&
-      sessionStoreStatus === 'connected';
+      wuzapiStatus.connected;
 
     const overallStatus = isHealthy ? 'ok' :
       (databaseStatus === 'connected' && envValidation.valid) ? 'degraded' : 'error';
@@ -547,11 +342,9 @@ app.get('/health', async (req, res) => {
       },
       cors_config: corsInfo,
       database: {
-        type: 'SQLite',
+        type: 'Supabase',
         status: databaseStatus,
-        path: sqliteInfo?.dbPath || 'unknown',
-        file_exists: fileExists,
-        file_size_bytes: fileSize,
+        url: process.env.SUPABASE_URL || 'not configured',
         stats: databaseStats,
         error: databaseError
       },
@@ -562,11 +355,6 @@ app.get('/health', async (req, res) => {
         lastCheck: wuzapiStatus.timestamp,
         cached: wuzapiStatus.cached || false,
         error: wuzapiStatus.error || null
-      },
-      session_store: {
-        status: sessionStoreStatus,
-        type: 'SQLite',
-        path: sessionDbPath
       },
       s3_storage: s3Status
     };
@@ -584,9 +372,9 @@ app.get('/health', async (req, res) => {
       error: error.message,
       timestamp: new Date().toISOString(),
       database: {
-        type: 'SQLite',
+        type: 'Supabase',
         status: 'error',
-        path: sqliteConfig?.getConfigInfo()?.dbPath || 'unknown'
+        url: process.env.SUPABASE_URL || 'not configured'
       }
     });
   }
@@ -939,16 +727,13 @@ app.post('/api/database-connections/:id/test', async (req, res) => {
       });
     }
 
-    // Para SQLite local, sempre retorna sucesso se o banco existe
+    // SQLite connections are no longer supported
     if (connection.type === 'SQLITE') {
-      // Atualizar status para connected
-      await db.updateConnectionStatus(id, 'connected');
-
-      return res.json({
-        success: true,
-        message: 'Conexão SQLite testada com sucesso',
+      return res.status(400).json({
+        success: false,
+        error: 'SQLite connections are no longer supported. Please use Supabase.',
         data: {
-          status: 'connected',
+          status: 'error',
           type: connection.type,
           database: connection.database
         }
@@ -1317,8 +1102,6 @@ app.get('/api/user/database-connections/:id/record', userRecordRateLimiter, veri
     try {
       if (connection.type === 'NOCODB') {
         record = await db.fetchNocoDBUserRecord(connection, userLinkField, userToken);
-      } else if (connection.type === 'SQLITE') {
-        record = await db.fetchSQLiteUserRecord(connection, userLinkField, userToken);
       } else if (connection.type === 'MYSQL' || connection.type === 'POSTGRESQL' || connection.type === 'POSTGRES') {
         record = await db.fetchSQLUserRecord(connection, userLinkField, userToken);
       } else {
@@ -1799,11 +1582,10 @@ async function startServer() {
     logger.info('✅ Validação de ambiente concluída com sucesso');
 
     // 2. Verificar variáveis de ambiente críticas
-    const dbPath = process.env.SQLITE_DB_PATH || '../data/wuzapi.db';
     logger.info('🔧 Configuração de inicialização:', {
       node_env: NODE_ENV,
       port: PORT,
-      sqlite_db_path: dbPath
+      supabase_url: process.env.SUPABASE_URL || 'not configured'
     });
 
     // 3. Inicializar banco de dados antes de iniciar o servidor
@@ -1869,21 +1651,19 @@ async function startServer() {
 
     // Iniciar servidor HTTP
     const server = app.listen(PORT, () => {
-      const configInfo = sqliteConfig?.getConfigInfo();
-
       logger.info('WUZAPI Manager Server iniciado', {
         port: PORT,
         environment: NODE_ENV,
         health_check: `http://localhost:${PORT}/health`,
         api_base: `http://localhost:${PORT}/api`,
         frontend_served: NODE_ENV === 'production' ? `http://localhost:${PORT}` : false,
-        database_path: configInfo?.dbPath || 'unknown',
-        database_config: configInfo
+        database: 'Supabase',
+        database_url: process.env.SUPABASE_URL || 'not configured'
       });
 
       console.log(`🚀 WUZAPI Manager Server rodando na porta ${PORT}`);
       console.log(`📊 Environment: ${NODE_ENV}`);
-      console.log(`🗄️ Banco SQLite: ${configInfo?.dbPath || 'unknown'}`);
+      console.log(`🗄️ Database: Supabase (${process.env.SUPABASE_URL || 'not configured'})`);
       console.log(`📊 Health check: http://localhost:${PORT}/health`);
       console.log(`🔗 API Base: http://localhost:${PORT}/api`);
 
@@ -1906,11 +1686,9 @@ async function startServer() {
     console.error('❌ Erro ao iniciar servidor:', error.message);
 
     // Fornecer orientações específicas baseadas no tipo de erro
-    if (error.message.includes('diretório do banco')) {
-      console.error('💡 Dica: Verifique se o diretório especificado em SQLITE_DB_PATH existe e tem permissões de escrita');
-      console.error(`💡 Caminho atual: ${process.env.SQLITE_DB_PATH || '../data/wuzapi.db'}`);
-    } else if (error.message.includes('Configurações SQLite inválidas')) {
-      console.error('💡 Dica: Verifique as variáveis de ambiente relacionadas ao SQLite');
+    if (error.message.includes('Supabase')) {
+      console.error('💡 Dica: Verifique se SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY estão configurados corretamente');
+      console.error(`💡 URL atual: ${process.env.SUPABASE_URL || 'não configurado'}`);
     } else if (error.code === 'EADDRINUSE') {
       console.error(`💡 Dica: A porta ${PORT} já está em uso. Tente uma porta diferente ou pare o processo que está usando esta porta`);
     }

@@ -97,8 +97,7 @@ router.post('/', verifyUserToken, async (req, res) => {
             return res.status(400).json({ error: 'Nome da lista é obrigatório' });
         }
 
-        // Iniciar transação (SQLite não tem BEGIN TRANSACTION explícito no driver simples, mas podemos tentar sequencial)
-        // O driver sqlite3 serializa operações por padrão.
+        // Operations are executed sequentially
 
         // 1. Criar lista
         const createListSql = `

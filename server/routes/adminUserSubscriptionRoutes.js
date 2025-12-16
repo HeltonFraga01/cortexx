@@ -13,6 +13,7 @@ const { logger } = require('../utils/logger');
 const SubscriptionService = require('../services/SubscriptionService');
 const PlanService = require('../services/PlanService');
 const AdminAuditService = require('../services/AdminAuditService');
+const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
@@ -20,26 +21,23 @@ let subscriptionService = null;
 let planService = null;
 let auditService = null;
 
-function getSubscriptionService(req) {
+function getSubscriptionService() {
   if (!subscriptionService) {
-    const db = req.app.locals.db;
-    if (db) subscriptionService = new SubscriptionService(db);
+    subscriptionService = new SubscriptionService(SupabaseService);
   }
   return subscriptionService;
 }
 
-function getPlanService(req) {
+function getPlanService() {
   if (!planService) {
-    const db = req.app.locals.db;
-    if (db) planService = new PlanService(db);
+    planService = new PlanService(SupabaseService);
   }
   return planService;
 }
 
-function getAuditService(req) {
+function getAuditService() {
   if (!auditService) {
-    const db = req.app.locals.db;
-    if (db) auditService = new AdminAuditService(db);
+    auditService = new AdminAuditService(SupabaseService);
   }
   return auditService;
 }
@@ -51,7 +49,7 @@ function getAuditService(req) {
  */
 router.get('/:userId/subscription', requireAdmin, async (req, res) => {
   try {
-    const service = getSubscriptionService(req);
+    const service = getSubscriptionService();
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -89,8 +87,8 @@ router.get('/:userId/subscription', requireAdmin, async (req, res) => {
  */
 router.put('/:userId/subscription', requireAdmin, async (req, res) => {
   try {
-    const service = getSubscriptionService(req);
-    const audit = getAuditService(req);
+    const service = getSubscriptionService();
+    const audit = getAuditService();
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -147,9 +145,9 @@ router.put('/:userId/subscription', requireAdmin, async (req, res) => {
  */
 router.post('/:userId/subscription/assign-plan', requireAdmin, async (req, res) => {
   try {
-    const subService = getSubscriptionService(req);
-    const plnService = getPlanService(req);
-    const audit = getAuditService(req);
+    const subService = getSubscriptionService();
+    const plnService = getPlanService();
+    const audit = getAuditService();
     if (!subService || !plnService) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -214,8 +212,8 @@ router.post('/:userId/subscription/assign-plan', requireAdmin, async (req, res) 
  */
 router.get('/:userId/subscription/proration', requireAdmin, async (req, res) => {
   try {
-    const service = getSubscriptionService(req);
-    const plnService = getPlanService(req);
+    const service = getSubscriptionService();
+    const plnService = getPlanService();
     if (!service || !plnService) {
       return res.status(500).json({ error: 'Database not initialized' });
     }

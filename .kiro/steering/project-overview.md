@@ -23,13 +23,13 @@ WUZAPI Manager is a multi-user platform for managing WhatsApp Business API with 
 │  ├── src/contexts/    (global state)                        │
 │  └── src/types/       (TypeScript definitions)              │
 │                                                             │
-│  Backend (Node.js + Express + SQLite WAL)                   │
+│  Backend (Node.js + Express + Supabase)                     │
 │  ├── server/routes/   (HTTP endpoints)                      │
 │  ├── server/services/ (business logic)                      │
 │  ├── server/validators/ (input validation)                  │
 │  ├── server/middleware/ (auth, CSRF, rate limiting)         │
 │  ├── server/utils/    (logger, wuzapiClient)                │
-│  └── server/database.js (SQLite abstraction)                │
+│  └── server/services/SupabaseService.js (DB abstraction)    │
 │                                                             │
 │  External Integrations                                      │
 │  ├── WUZAPI (WhatsApp Business API)                         │
@@ -136,14 +136,15 @@ NODE_ENV=development
 PORT=3000
 WUZAPI_BASE_URL=https://wzapi.wasend.com.br
 CORS_ORIGINS=http://localhost:5173
-SQLITE_DB_PATH=./wuzapi.db
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 LOG_LEVEL=debug
 ```
 
 ## Important Constraints
 
 - **Single-instance architecture** - No clustering, replicas, or horizontal scaling
-- **SQLite WAL mode** - Provides sufficient performance, no Redis needed
+- **Supabase (PostgreSQL)** - Cloud database with RLS and realtime features
 - **CommonJS backend** - All backend code uses `require()`, not ES modules
 - **ES modules frontend** - All frontend code uses `import`, not CommonJS
 - **No alias imports in backend** - Use relative paths only (`../utils/logger`)
@@ -155,7 +156,7 @@ LOG_LEVEL=debug
 - 🔗 Backend: http://localhost:3000
 - 📊 Health check: http://localhost:3000/health
 - 📚 API docs: http://localhost:3000/api/docs (if available)
-- 🗄️ Database: `./wuzapi.db` (SQLite)
+- 🗄️ Database: Supabase (PostgreSQL)
 
 ## Next Steps
 

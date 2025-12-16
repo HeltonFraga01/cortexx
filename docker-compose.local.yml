@@ -28,7 +28,6 @@ services:
     
     # Volumes para persistência
     volumes:
-      - ./data:/app/data
       - ./logs:/app/logs
     
     # Health check

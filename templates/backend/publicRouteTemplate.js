@@ -143,16 +143,14 @@ async function performHealthChecks() {
   
   try {
     // [HEALTH_CHECKS]
-    // Verificar banco de dados
-    const db = require('../database');
-    await db.ensureInitialized();
-    const dbStats = await db.getDatabaseStats();
+    // Verificar banco de dados (Supabase)
+    const SupabaseService = require('../services/SupabaseService');
+    const { data: dbHealthy, error: dbError } = await SupabaseService.healthCheck();
     
     health.checks.database = {
-      status: 'connected',
-      response_time: Date.now() - Date.now(), // Placeholder
-      file_size: dbStats.file?.size_mb || 0,
-      records: dbStats.records?.total_connections || 0
+      status: dbHealthy ? 'connected' : 'disconnected',
+      type: 'supabase',
+      error: dbError?.message || null
     };
     
     // Verificar WUZAPI
@@ -166,15 +164,15 @@ async function performHealthChecks() {
       timeout: wuzapiConfig.timeout
     };
     
-    // Verificar sistema de arquivos
+    // Verificar sistema de arquivos (logs directory)
     const fs = require('fs');
-    const dbPath = process.env.SQLITE_DB_PATH || './wuzapi.db';
+    const logsPath = process.env.LOG_PATH || './logs';
     
     try {
-      fs.accessSync(dbPath, fs.constants.R_OK | fs.constants.W_OK);
+      fs.accessSync(logsPath, fs.constants.R_OK | fs.constants.W_OK);
       health.checks.filesystem = {
         status: 'accessible',
-        db_path: dbPath
+        logs_path: logsPath
       };
     } catch (fsError) {
       health.checks.filesystem = {

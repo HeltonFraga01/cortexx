@@ -11,6 +11,7 @@ const router = express.Router()
 const { logger } = require('../utils/logger')
 const ChatService = require('../services/ChatService')
 const { validatePhoneWithAPI } = require('../services/PhoneValidationService')
+const SupabaseService = require('../services/SupabaseService')
 
 // Middleware to verify user token
 const verifyUserToken = async (req, res, next) => {
@@ -50,12 +51,12 @@ router.get('/conversations', verifyUserToken, async (req, res) => {
   try {
     const { status, hasUnread, assignedBotId, labelId, search, inboxId, limit = 50, offset = 0 } = req.query
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     
     const filters = {}
     if (status) filters.status = status
@@ -98,8 +99,8 @@ router.post('/conversations/start', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Phone number is required' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
@@ -109,7 +110,7 @@ router.post('/conversations/start', verifyUserToken, async (req, res) => {
     // Create JID format for WhatsApp
     const contactJid = `${normalizedPhone}@s.whatsapp.net`
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const conversation = await chatService.getOrCreateConversation(
       req.userToken,
       contactJid,
@@ -137,12 +138,12 @@ router.get('/conversations/:id', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const conversation = await chatService.getConversation(req.userToken, id)
 
     if (!conversation) {
@@ -165,12 +166,12 @@ router.patch('/conversations/:id', verifyUserToken, async (req, res) => {
     const { id } = req.params
     const { status, assignedBotId, isMuted } = req.body
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     
     const updates = {}
     if (status) updates.status = status
@@ -200,12 +201,12 @@ router.delete('/conversations/:id', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     await chatService.deleteConversation(req.userToken, id)
 
     res.json({ success: true, message: 'Conversa excluída com sucesso' })
@@ -223,12 +224,12 @@ router.post('/conversations/:id/read', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     await chatService.markConversationAsRead(req.userToken, id)
 
     res.json({ success: true, message: 'Conversation marked as read' })
@@ -284,7 +285,7 @@ router.get('/avatar/:phone', verifyUserToken, async (req, res) => {
         const avatarUrl = avatarData.URL || avatarData.url
         
         // Update conversation avatar if we have one
-        const db = req.app.locals.db
+        // Using SupabaseService directly
         if (db) {
           const contactJid = `${cleanPhone}@s.whatsapp.net`
           await db.query(
@@ -339,12 +340,12 @@ router.post('/conversations/:id/fetch-avatar', verifyUserToken, async (req, res)
   try {
     const { id } = req.params
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const conversation = await chatService.getConversation(req.userToken, id)
     
     if (!conversation) {
@@ -447,12 +448,12 @@ router.post('/conversations/:id/refresh-group-name', verifyUserToken, async (req
   try {
     const { id } = req.params
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const conversation = await chatService.getConversation(req.userToken, id)
     
     if (!conversation) {
@@ -548,12 +549,12 @@ router.get('/conversations/:id/messages', verifyUserToken, async (req, res) => {
     const { id } = req.params
     const { limit = 50, before, after } = req.query
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const conversationId = parseInt(id, 10)
     const result = await chatService.getMessages(req.userToken, conversationId, {
       limit: parseInt(limit, 10),
@@ -590,12 +591,12 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
       return res.status(400).json({ success: false, error: 'Content is required for text messages' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     
     // Get conversation to get the contact JID
     const conversation = await chatService.getConversation(req.userToken, id)
@@ -861,12 +862,12 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
  */
 router.get('/labels', verifyUserToken, async (req, res) => {
   try {
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const labels = await chatService.getLabels(req.userToken)
 
     res.json({ success: true, data: labels })
@@ -888,12 +889,12 @@ router.post('/labels', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Name is required' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const label = await chatService.createLabel(req.userToken, { name, color })
 
     res.status(201).json({ success: true, data: label })
@@ -912,12 +913,12 @@ router.put('/labels/:id', verifyUserToken, async (req, res) => {
     const { id } = req.params
     const { name, color } = req.body
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const label = await chatService.updateLabel(req.userToken, id, { name, color })
 
     res.json({ success: true, data: label })
@@ -935,12 +936,12 @@ router.delete('/labels/:id', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     await chatService.deleteLabel(req.userToken, id)
 
     res.json({ success: true, message: 'Label deleted' })
@@ -963,12 +964,12 @@ router.post('/conversations/:id/labels', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'labelId is required' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     await chatService.assignLabel(req.userToken, id, labelId)
 
     res.json({ success: true, message: 'Label assigned' })
@@ -986,12 +987,12 @@ router.delete('/conversations/:id/labels/:labelId', verifyUserToken, async (req,
   try {
     const { id, labelId } = req.params
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     await chatService.removeLabel(req.userToken, id, labelId)
 
     res.json({ success: true, message: 'Label removed' })
@@ -1011,12 +1012,12 @@ router.get('/canned-responses', verifyUserToken, async (req, res) => {
   try {
     const { search } = req.query
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const responses = await chatService.getCannedResponses(req.userToken, { search })
 
     res.json({ success: true, data: responses })
@@ -1038,12 +1039,12 @@ router.post('/canned-responses', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Shortcut and content are required' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const response = await chatService.createCannedResponse(req.userToken, { shortcut, content })
 
     res.status(201).json({ success: true, data: response })
@@ -1062,12 +1063,12 @@ router.put('/canned-responses/:id', verifyUserToken, async (req, res) => {
     const { id } = req.params
     const { shortcut, content } = req.body
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const response = await chatService.updateCannedResponse(req.userToken, id, { shortcut, content })
 
     res.json({ success: true, data: response })
@@ -1085,12 +1086,12 @@ router.delete('/canned-responses/:id', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     await chatService.deleteCannedResponse(req.userToken, id)
 
     res.json({ success: true, message: 'Canned response deleted' })
@@ -1115,12 +1116,12 @@ router.post('/conversations/:id/notes', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Content is required' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     
     // Use token directly as userId (no local users table)
     const note = await chatService.addPrivateNote(req.userToken, parseInt(id, 10), content)
@@ -1140,12 +1141,12 @@ router.get('/conversations/:id/notes', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     
     // Use token directly as userId (no local users table)
     const notes = await chatService.getPrivateNotes(parseInt(id, 10), req.userToken)
@@ -1168,12 +1169,12 @@ router.post('/conversations/:id/assign-bot', verifyUserToken, async (req, res) =
     const { id } = req.params
     const { botId } = req.body
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     
     // Update conversation with bot assignment
     const conversation = await chatService.updateConversation(req.userToken, parseInt(id, 10), {
@@ -1212,12 +1213,12 @@ router.post('/messages/:messageId/react', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Emoji is required' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     
     // Use token directly as userId (no local users table)
     const reaction = await chatService.addReaction(
@@ -1254,12 +1255,12 @@ router.get('/search', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Search query must be at least 2 characters' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const results = await chatService.searchMessages(req.userToken, q, { limit: parseInt(limit, 10) })
 
     res.json({ success: true, data: results })
@@ -1281,12 +1282,12 @@ router.get('/conversations/search', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Search query must be at least 2 characters' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     
     // Use token directly as userId (no local users table)
     const results = await chatService.searchConversations(req.userToken, q, { limit: parseInt(limit, 10) })
@@ -1311,12 +1312,12 @@ router.get('/conversations/:id/messages/search', verifyUserToken, async (req, re
       return res.status(400).json({ success: false, error: 'Search query must be at least 2 characters' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     
     // Use token directly as userId (no local users table)
     // Note: This calls the class method searchMessages(conversationId, userId, query, options)
@@ -1474,8 +1475,8 @@ router.get('/messages/:messageId/media', verifyUserToken, async (req, res) => {
   try {
     const { messageId } = req.params
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
@@ -1806,12 +1807,12 @@ router.get('/contacts/:jid/attributes', verifyUserToken, async (req, res) => {
   try {
     const { jid } = req.params
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -1852,12 +1853,12 @@ router.post('/contacts/:jid/attributes', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Attribute value must be 1000 characters or less' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -1913,12 +1914,12 @@ router.put('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res) =>
       return res.status(400).json({ success: false, error: 'Attribute value must be 1000 characters or less' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -1965,12 +1966,12 @@ router.delete('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res)
   try {
     const { jid, id } = req.params
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -2009,12 +2010,12 @@ router.get('/contacts/:jid/notes', verifyUserToken, async (req, res) => {
   try {
     const { jid } = req.params
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -2049,12 +2050,12 @@ router.post('/contacts/:jid/notes', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Note content must be 5000 characters or less' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -2090,12 +2091,12 @@ router.delete('/contacts/:jid/notes/:id', verifyUserToken, async (req, res) => {
   try {
     const { jid, id } = req.params
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -2134,12 +2135,12 @@ router.get('/conversations/:id/info', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const conversation = await chatService.getConversation(req.userToken, id)
     
     if (!conversation) {
@@ -2207,12 +2208,12 @@ router.get('/contacts/:jid/conversations', verifyUserToken, async (req, res) => 
     const { jid } = req.params
     const { excludeId } = req.query
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -2264,12 +2265,12 @@ router.get('/conversations/:id/participants', verifyUserToken, async (req, res) 
   try {
     const { id } = req.params
     
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const conversation = await chatService.getConversation(req.userToken, id)
     
     if (!conversation) {
@@ -2336,12 +2337,12 @@ router.get('/conversations/:id/participants', verifyUserToken, async (req, res) 
  */
 router.get('/macros', verifyUserToken, async (req, res) => {
   try {
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -2392,12 +2393,12 @@ router.post('/macros/:id/execute', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'conversationId is required' })
     }
 
-    const db = req.app.locals.db
-    if (!db) {
+    // Using SupabaseService directly
+    if (!SupabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(db)
+    const chatService = new ChatService(SupabaseService)
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {

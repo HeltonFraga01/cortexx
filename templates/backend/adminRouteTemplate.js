@@ -126,9 +126,11 @@ router.[HTTP_METHOD_LOWERCASE]('/[ENDPOINT]',
         // [BUSINESS_LOGIC]
         // Implementar lógica específica aqui
         
-        // Exemplo para operação com banco de dados:
-        const db = req.app.locals.db;
-        const result = await db.[DATABASE_METHOD](/* parameters */);
+        // Exemplo para operação com banco de dados (Supabase):
+        const SupabaseService = require('../services/SupabaseService');
+        const { data: result, error } = await SupabaseService.queryAsAdmin('[TABLE_NAME]', (query) =>
+          query.select('*').eq('[FIELD]', '[VALUE]')
+        );
         
         // Exemplo para operação com integração externa:
         const externalClient = require('../utils/[EXTERNAL_CLIENT]');
