@@ -4,11 +4,18 @@ const { logger } = require('./logger');
 /**
  * Cliente base para comunicação com a WuzAPI
  * Centraliza configurações de timeout, headers e base URL
+ * Suporta configurações dinâmicas do banco de dados via ApiSettingsService
  */
 class WuzAPIClient {
   constructor() {
+    // Initial config from environment (will be overridden by database settings)
     this.baseURL = process.env.WUZAPI_BASE_URL || 'https://wzapi.wasend.com.br';
-    this.timeout = parseInt(process.env.REQUEST_TIMEOUT) || 30000; // 30 segundos (increased from 10)
+    this.timeout = parseInt(process.env.REQUEST_TIMEOUT) || 30000;
+    
+    // Cache for dynamic config
+    this._configCache = null;
+    this._configCacheExpiry = null;
+    this._configCacheTTL = 30000; // 30 seconds cache
     
     // Criar instância do axios com configurações padrão
     this.client = axios.create({
@@ -46,6 +53,62 @@ class WuzAPIClient {
   }
 
   /**
+   * Reloads configuration from ApiSettingsService
+   * Called automatically when cache expires
+   */
+  async reloadConfig() {
+    try {
+      // Lazy load to avoid circular dependency
+      const ApiSettingsService = require('../services/ApiSettingsService');
+      
+      const [baseUrl, timeout] = await Promise.all([
+        ApiSettingsService.getBaseUrl(),
+        ApiSettingsService.getTimeout()
+      ]);
+
+      const configChanged = this.baseURL !== baseUrl || this.timeout !== timeout;
+      
+      if (configChanged) {
+        this.baseURL = baseUrl;
+        this.timeout = timeout;
+        
+        // Recreate axios client with new config
+        this.client = axios.create({
+          baseURL: this.baseURL,
+          timeout: this.timeout,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+
+        logger.info('WuzAPIClient config reloaded', {
+          baseURL: this.baseURL,
+          timeout: this.timeout
+        });
+      }
+
+      this._configCache = { baseURL: this.baseURL, timeout: this.timeout };
+      this._configCacheExpiry = Date.now() + this._configCacheTTL;
+      
+      return this._configCache;
+    } catch (error) {
+      logger.warn('Failed to reload WuzAPIClient config, using current values', {
+        error: error.message
+      });
+      return { baseURL: this.baseURL, timeout: this.timeout };
+    }
+  }
+
+  /**
+   * Ensures config is up to date before making requests
+   */
+  async _ensureConfig() {
+    if (!this._configCache || !this._configCacheExpiry || Date.now() > this._configCacheExpiry) {
+      await this.reloadConfig();
+    }
+  }
+
+  /**
    * Faz uma requisição GET para a WuzAPI
    * @param {string} endpoint - Endpoint da API (ex: '/session/status')
    * @param {Object} options - Opções da requisição (headers, etc)
@@ -53,6 +116,7 @@ class WuzAPIClient {
    */
   async get(endpoint, options = {}) {
     try {
+      await this._ensureConfig();
       const response = await this.client.get(endpoint, options);
       
       return {
@@ -74,6 +138,7 @@ class WuzAPIClient {
    */
   async post(endpoint, data = {}, options = {}) {
     try {
+      await this._ensureConfig();
       const response = await this.client.post(endpoint, data, options);
       
       return {
@@ -94,6 +159,7 @@ class WuzAPIClient {
    */
   async delete(endpoint, options = {}) {
     try {
+      await this._ensureConfig();
       const response = await this.client.delete(endpoint, options);
       
       return {
@@ -114,6 +180,7 @@ class WuzAPIClient {
    */
   async getAdmin(endpoint, adminToken) {
     try {
+      await this._ensureConfig();
       const response = await this.client.get(endpoint, {
         headers: {
           'Authorization': adminToken
@@ -139,6 +206,7 @@ class WuzAPIClient {
    */
   async postAdmin(endpoint, data, adminToken) {
     try {
+      await this._ensureConfig();
       const response = await this.client.post(endpoint, data, {
         headers: {
           'Authorization': adminToken

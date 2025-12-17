@@ -49,6 +49,7 @@ const adminDashboardRoutes = require('./routes/adminDashboardRoutes');
 const adminAuditRoutes = require('./routes/adminAuditRoutes');
 const adminReportRoutes = require('./routes/adminReportRoutes');
 const adminSettingsRoutes = require('./routes/adminSettingsRoutes');
+const adminApiSettingsRoutes = require('./routes/adminApiSettingsRoutes');
 // User Account Routes (subscription, quotas, features)
 const userSubscriptionRoutes = require('./routes/userSubscriptionRoutes');
 const userTableAccessRoutes = require('./routes/userTableAccessRoutes');
@@ -447,6 +448,7 @@ app.use('/api/admin/management/dashboard', adminDashboardRoutes);
 app.use('/api/admin/audit', adminAuditRoutes);
 app.use('/api/admin/reports', adminReportRoutes);
 app.use('/api/admin/settings', adminSettingsRoutes);
+app.use('/api/admin/api-settings', adminApiSettingsRoutes);
 // Generic admin routes
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/branding', brandingRoutes);

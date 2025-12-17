@@ -43,6 +43,7 @@ const adminDashboardRoutes = require('./adminDashboardRoutes');
 const adminAuditRoutes = require('./adminAuditRoutes');
 const adminReportRoutes = require('./adminReportRoutes');
 const adminSettingsRoutes = require('./adminSettingsRoutes');
+const adminApiSettingsRoutes = require('./adminApiSettingsRoutes');
 
 logger.debug('contactImportRoutes loaded', { 
   type: typeof contactImportRoutes, 
@@ -73,6 +74,7 @@ function setupRoutes(app) {
   app.use('/api/admin/audit', adminAuditRoutes);
   app.use('/api/admin/reports', adminReportRoutes);
   app.use('/api/admin/settings', adminSettingsRoutes);
+  app.use('/api/admin/api-settings', adminApiSettingsRoutes);
   
   // Generic admin routes - MUST come AFTER specific routes
   app.use('/api/admin', adminRoutes);
