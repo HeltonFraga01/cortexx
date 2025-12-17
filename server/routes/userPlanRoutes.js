@@ -63,7 +63,10 @@ router.get('/', requireUser, async (req, res) => {
     }
 
     // Format plans for frontend (exclude internal fields)
-    const formattedPlans = plans.map(plan => ({
+    // Filter out credit packages - users should only see subscription plans
+    const subscriptionPlans = plans.filter(plan => !plan.isCreditPackage);
+    
+    const formattedPlans = subscriptionPlans.map(plan => ({
       id: plan.id,
       name: plan.name,
       description: plan.description,

@@ -23,7 +23,7 @@ import {
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { stripeService } from '@/services/stripe'
-import type { Subscription, Plan } from '@/types/stripe'
+import type { Subscription, AvailablePlan } from '@/types/stripe'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,7 +38,7 @@ import {
 
 export function SubscriptionManager() {
   const [subscription, setSubscription] = useState<Subscription | null>(null)
-  const [plans, setPlans] = useState<Plan[]>([])
+  const [plans, setPlans] = useState<AvailablePlan[]>([])
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const { toast } = useToast()
@@ -55,8 +55,8 @@ export function SubscriptionManager() {
         stripeService.getAvailablePlans()
       ])
       setSubscription(sub)
-      // Filter out credit packages (user plans endpoint already filters by active status)
-      setPlans(availablePlans.filter(p => !p.isCreditPackage) as unknown as Plan[])
+      // User plans endpoint already filters by active status and excludes credit packages
+      setPlans(availablePlans)
     } catch (error) {
       toast({
         title: 'Erro',
