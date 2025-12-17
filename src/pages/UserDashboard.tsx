@@ -24,6 +24,7 @@ import TeamManagementPage from '@/pages/user/TeamManagementPage';
 import InboxManagementPage from '@/pages/user/InboxManagementPage';
 import RoleManagementPage from '@/pages/user/RoleManagementPage';
 import AuditLogPage from '@/pages/user/AuditLogPage';
+import ResellerDashboardPage from '@/pages/user/ResellerDashboardPage';
 
 const UserDashboard = () => {
   return (
@@ -69,6 +70,7 @@ const UserDashboard = () => {
           <Route path="/inboxes" element={<InboxManagementPage />} />
           <Route path="/roles" element={<RoleManagementPage />} />
           <Route path="/audit" element={<AuditLogPage />} />
+          <Route path="/reseller" element={<ResellerDashboardPage />} />
         </Routes>
       </DraftProvider>
       </AgentProvider>

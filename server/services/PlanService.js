@@ -10,6 +10,7 @@
 
 const { logger } = require('../utils/logger');
 const supabaseService = require('./SupabaseService');
+const StripeService = require('./StripeService');
 
 // Valid user features for plans
 const VALID_USER_FEATURES = [
@@ -469,6 +470,10 @@ class PlanService {
       status: row.status,
       isDefault: row.is_default,
       trialDays: row.trial_days,
+      stripeProductId: row.stripe_product_id,
+      stripePriceId: row.stripe_price_id,
+      isCreditPackage: row.is_credit_package,
+      creditAmount: row.credit_amount,
       quotas: {
         maxAgents: quotas.max_agents ?? DEFAULT_QUOTAS.maxAgents,
         maxConnections: quotas.max_connections ?? DEFAULT_QUOTAS.maxConnections,
@@ -492,6 +497,210 @@ class PlanService {
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
+  }
+
+  // ==================== Stripe Sync Operations ====================
+
+  /**
+   * Sync a plan to Stripe (create or update Product and Price)
+   * Requirements: 2.1, 2.2, 2.4
+   * @param {string} planId - Plan ID (UUID)
+   * @returns {Promise<Object>} Updated plan with Stripe IDs
+   */
+  async syncPlanToStripe(planId) {
+    try {
+      const plan = await this.getPlanById(planId);
+      if (!plan) {
+        throw new Error('Plan not found');
+      }
+
+      let stripeProductId = plan.stripeProductId;
+      let stripePriceId = plan.stripePriceId;
+
+      // Create or update Stripe Product
+      if (!stripeProductId) {
+        const product = await StripeService.createProduct(
+          plan.name,
+          plan.description || `${plan.name} subscription plan`,
+          { planId: plan.id, billingCycle: plan.billingCycle }
+        );
+        stripeProductId = product.id;
+        logger.info('Stripe product created for plan', { planId, stripeProductId });
+      }
+
+      // Determine recurring interval based on billing cycle
+      const recurringInterval = this.getBillingInterval(plan.billingCycle);
+
+      // Create new Price (archive old one if exists)
+      if (stripePriceId) {
+        await StripeService.archivePrice(stripePriceId);
+        logger.info('Old Stripe price archived', { planId, oldPriceId: stripePriceId });
+      }
+
+      // Create new price with recurring settings for subscription plans
+      const recurring = plan.isCreditPackage ? null : {
+        interval: recurringInterval.interval,
+        interval_count: recurringInterval.intervalCount
+      };
+
+      const price = await StripeService.createPrice(
+        stripeProductId,
+        plan.priceCents,
+        'brl',
+        recurring
+      );
+      stripePriceId = price.id;
+      logger.info('Stripe price created for plan', { planId, stripePriceId });
+
+      // Update plan with Stripe IDs
+      const { data: updatedPlan, error } = await supabaseService.update('plans', planId, {
+        stripe_product_id: stripeProductId,
+        stripe_price_id: stripePriceId,
+        updated_at: new Date().toISOString()
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Plan synced to Stripe', { planId, stripeProductId, stripePriceId });
+
+      return this.formatPlan(updatedPlan);
+    } catch (error) {
+      logger.error('Failed to sync plan to Stripe', { error: error.message, planId });
+      throw error;
+    }
+  }
+
+  /**
+   * Archive a plan in Stripe (deactivate Product)
+   * Requirements: 2.3
+   * @param {string} planId - Plan ID (UUID)
+   * @returns {Promise<Object>} Updated plan
+   */
+  async archivePlanInStripe(planId) {
+    try {
+      const plan = await this.getPlanById(planId);
+      if (!plan) {
+        throw new Error('Plan not found');
+      }
+
+      if (!plan.stripeProductId) {
+        throw new Error('Plan is not synced with Stripe');
+      }
+
+      // Archive the product in Stripe
+      await StripeService.archiveProduct(plan.stripeProductId);
+      logger.info('Stripe product archived', { planId, stripeProductId: plan.stripeProductId });
+
+      // Archive the price if exists
+      if (plan.stripePriceId) {
+        await StripeService.archivePrice(plan.stripePriceId);
+        logger.info('Stripe price archived', { planId, stripePriceId: plan.stripePriceId });
+      }
+
+      // Update plan status to inactive
+      const { data: updatedPlan, error } = await supabaseService.update('plans', planId, {
+        status: 'inactive',
+        updated_at: new Date().toISOString()
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Plan archived in Stripe', { planId });
+
+      return this.formatPlan(updatedPlan);
+    } catch (error) {
+      logger.error('Failed to archive plan in Stripe', { error: error.message, planId });
+      throw error;
+    }
+  }
+
+  /**
+   * Sync all active plans to Stripe
+   * Requirements: 2.1, 2.4
+   * @returns {Promise<Object>} Sync results
+   */
+  async syncAllPlansToStripe() {
+    try {
+      const plans = await this.listPlans({ status: 'active' });
+      const results = {
+        synced: [],
+        failed: [],
+        skipped: []
+      };
+
+      for (const plan of plans) {
+        try {
+          // Skip plans that are already synced and have matching price
+          if (plan.stripePriceId) {
+            results.skipped.push({ id: plan.id, name: plan.name, reason: 'Already synced' });
+            continue;
+          }
+
+          const syncedPlan = await this.syncPlanToStripe(plan.id);
+          results.synced.push({ id: syncedPlan.id, name: syncedPlan.name, stripePriceId: syncedPlan.stripePriceId });
+        } catch (error) {
+          results.failed.push({ id: plan.id, name: plan.name, error: error.message });
+        }
+      }
+
+      logger.info('Bulk plan sync completed', {
+        synced: results.synced.length,
+        failed: results.failed.length,
+        skipped: results.skipped.length
+      });
+
+      return results;
+    } catch (error) {
+      logger.error('Failed to sync all plans to Stripe', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get plans that are not synced with Stripe
+   * Requirements: 2.5
+   * @returns {Promise<Object[]>} List of unsynced plans
+   */
+  async getUnsyncedPlans() {
+    try {
+      const queryFn = (query) => query
+        .select('*')
+        .eq('status', 'active')
+        .is('stripe_price_id', null)
+        .order('name', { ascending: true });
+
+      const { data: plans, error } = await supabaseService.queryAsAdmin('plans', queryFn);
+
+      if (error) {
+        throw error;
+      }
+
+      return (plans || []).map(plan => this.formatPlan(plan));
+    } catch (error) {
+      logger.error('Failed to get unsynced plans', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Convert billing cycle to Stripe interval
+   * @param {string} billingCycle - Billing cycle (monthly, yearly, etc.)
+   * @returns {Object} Stripe interval config
+   */
+  getBillingInterval(billingCycle) {
+    const intervals = {
+      monthly: { interval: 'month', intervalCount: 1 },
+      yearly: { interval: 'year', intervalCount: 1 },
+      quarterly: { interval: 'month', intervalCount: 3 },
+      weekly: { interval: 'week', intervalCount: 1 },
+      biweekly: { interval: 'week', intervalCount: 2 }
+    };
+
+    return intervals[billingCycle] || intervals.monthly;
   }
 }
 

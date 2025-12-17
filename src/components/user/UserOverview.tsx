@@ -13,6 +13,8 @@ import { LoadingSkeleton } from '@/components/ui-custom/LoadingSkeleton';
 import { CardHeaderWithIcon } from '@/components/ui-custom/CardHeaderWithIcon';
 import { EmptyState } from '@/components/ui-custom/EmptyState';
 import { QuotaSummaryCard } from '@/components/user/QuotaUsageCard';
+import { CreditBalance } from '@/components/user/billing/CreditBalance';
+import { CreditPurchase } from '@/components/user/billing/CreditPurchase';
 
 import { WuzAPIService, SessionStatus, WebhookConfig } from '@/services/wuzapi';
 import { getAccountSummary, type QuotaStatus } from '@/services/user-subscription';
@@ -72,6 +74,7 @@ const UserOverview = () => {
   const [showToken, setShowToken] = useState(false);
   const [quotas, setQuotas] = useState<QuotaStatus[]>([]);
   const [hasManagementPermission, setHasManagementPermission] = useState(false);
+  const [showCreditPurchase, setShowCreditPurchase] = useState(false);
   const { user } = useAuth();
   const { config: brandingConfig } = useBranding();
   const navigate = useNavigate();
@@ -648,6 +651,15 @@ const UserOverview = () => {
           </CardContent>
         </Card>
       )}
+
+      {/* Credit Balance - Requirements 6.4 */}
+      <CreditBalance onPurchase={() => setShowCreditPurchase(true)} />
+      
+      {/* Credit Purchase Dialog - Requirements 6.1 */}
+      <CreditPurchase 
+        open={showCreditPurchase} 
+        onOpenChange={setShowCreditPurchase}
+      />
 
       {/* Quota Summary and Quick Actions Grid */}
       <div className="grid gap-6 lg:grid-cols-2">

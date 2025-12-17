@@ -12,6 +12,8 @@
 const { logger } = require('../utils/logger');
 const crypto = require('crypto');
 const SupabaseService = require('./SupabaseService');
+const StripeService = require('./StripeService');
+const PlanService = require('./PlanService');
 
 const SUBSCRIPTION_STATUS = {
   TRIAL: 'trial',
@@ -419,6 +421,373 @@ class SubscriptionService {
       return jsonValue || defaultValue;
     } catch {
       return defaultValue;
+    }
+  }
+
+  // ==================== Stripe Integration Methods ====================
+
+  /**
+   * Create a Stripe Checkout Session for subscription
+   * Requirements: 3.1, 3.2
+   * @param {string} userId - User ID
+   * @param {string} planId - Plan ID to subscribe to
+   * @param {string} successUrl - URL to redirect on success
+   * @param {string} cancelUrl - URL to redirect on cancel
+   * @returns {Promise<Object>} Checkout session with URL
+   */
+  async createSubscriptionCheckout(userId, planId, successUrl, cancelUrl) {
+    try {
+      // Get or create account for user
+      let accountId = await this.getAccountIdFromUserId(userId);
+      if (!accountId) {
+        accountId = await this.createAccountForUser(userId);
+        if (!accountId) {
+          throw new Error('Failed to create account for user');
+        }
+      }
+
+      // Get account to check for existing Stripe customer
+      const { data: account, error: accountError } = await SupabaseService.getById('accounts', accountId);
+      if (accountError) throw accountError;
+
+      // Get plan with Stripe price ID
+      const planService = new PlanService();
+      const plan = await planService.getPlanById(planId);
+      if (!plan) {
+        throw new Error('Plan not found');
+      }
+      if (!plan.stripePriceId) {
+        throw new Error('Plan is not synced with Stripe. Please sync the plan first.');
+      }
+
+      // Get or create Stripe customer
+      let stripeCustomerId = account.stripe_customer_id;
+      if (!stripeCustomerId) {
+        const customer = await StripeService.createCustomer(
+          account.email || `user-${userId}@placeholder.com`,
+          account.name || `User ${userId.substring(0, 8)}`,
+          { accountId, userId }
+        );
+        stripeCustomerId = customer.id;
+
+        // Save Stripe customer ID to account
+        await SupabaseService.update('accounts', accountId, {
+          stripe_customer_id: stripeCustomerId,
+          updated_at: new Date().toISOString()
+        });
+      }
+
+      // Create Checkout Session
+      const session = await StripeService.createCheckoutSession({
+        customerId: stripeCustomerId,
+        priceId: plan.stripePriceId,
+        mode: 'subscription',
+        successUrl: `${successUrl}?session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl,
+        metadata: {
+          userId,
+          accountId,
+          planId
+        }
+      });
+
+      logger.info('Subscription checkout session created', {
+        userId,
+        accountId,
+        planId,
+        sessionId: session.id
+      });
+
+      return {
+        url: session.url,
+        sessionId: session.id
+      };
+    } catch (error) {
+      logger.error('Failed to create subscription checkout', {
+        error: error.message,
+        userId,
+        planId
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Sync subscription from Stripe webhook event
+   * Requirements: 5.1, 5.2, 5.3
+   * @param {Object} stripeSubscription - Stripe subscription object
+   * @returns {Promise<Object>} Updated subscription
+   */
+  async syncSubscriptionFromWebhook(stripeSubscription) {
+    try {
+      const stripeSubscriptionId = stripeSubscription.id;
+      const stripeCustomerId = stripeSubscription.customer;
+      const stripePriceId = stripeSubscription.items?.data?.[0]?.price?.id;
+
+      // Find account by Stripe customer ID
+      const { data: accounts, error: accountError } = await SupabaseService.adminClient
+        .from('accounts')
+        .select('id, owner_user_id, wuzapi_token')
+        .eq('stripe_customer_id', stripeCustomerId)
+        .limit(1);
+
+      if (accountError) throw accountError;
+      if (!accounts || accounts.length === 0) {
+        throw new Error(`No account found for Stripe customer: ${stripeCustomerId}`);
+      }
+
+      const account = accounts[0];
+      const accountId = account.id;
+      const userId = account.wuzapi_token || account.owner_user_id;
+
+      // Find plan by Stripe price ID
+      const { data: plans, error: planError } = await SupabaseService.adminClient
+        .from('plans')
+        .select('id')
+        .eq('stripe_price_id', stripePriceId)
+        .limit(1);
+
+      if (planError) throw planError;
+      const planId = plans?.[0]?.id;
+
+      // Map Stripe status to local status
+      const statusMap = {
+        'active': SUBSCRIPTION_STATUS.ACTIVE,
+        'trialing': SUBSCRIPTION_STATUS.TRIAL,
+        'past_due': SUBSCRIPTION_STATUS.PAST_DUE,
+        'canceled': SUBSCRIPTION_STATUS.CANCELED,
+        'unpaid': SUBSCRIPTION_STATUS.PAST_DUE,
+        'incomplete': SUBSCRIPTION_STATUS.SUSPENDED,
+        'incomplete_expired': SUBSCRIPTION_STATUS.EXPIRED
+      };
+      const localStatus = statusMap[stripeSubscription.status] || SUBSCRIPTION_STATUS.ACTIVE;
+
+      // Check for existing subscription
+      const { data: existingSubs, error: subError } = await SupabaseService.adminClient
+        .from('user_subscriptions')
+        .select('id')
+        .eq('account_id', accountId)
+        .limit(1);
+
+      if (subError) throw subError;
+
+      const now = new Date().toISOString();
+      const subscriptionData = {
+        plan_id: planId,
+        status: localStatus,
+        stripe_subscription_id: stripeSubscriptionId,
+        current_period_start: new Date(stripeSubscription.current_period_start * 1000).toISOString(),
+        current_period_end: new Date(stripeSubscription.current_period_end * 1000).toISOString(),
+        cancel_at_period_end: stripeSubscription.cancel_at_period_end || false,
+        updated_at: now
+      };
+
+      if (stripeSubscription.canceled_at) {
+        subscriptionData.cancelled_at = new Date(stripeSubscription.canceled_at * 1000).toISOString();
+      }
+
+      if (existingSubs && existingSubs.length > 0) {
+        // Update existing subscription
+        await SupabaseService.update('user_subscriptions', existingSubs[0].id, subscriptionData);
+        logger.info('Subscription synced from webhook (updated)', {
+          subscriptionId: existingSubs[0].id,
+          stripeSubscriptionId,
+          status: localStatus
+        });
+      } else {
+        // Create new subscription
+        subscriptionData.id = this.generateId();
+        subscriptionData.account_id = accountId;
+        subscriptionData.created_at = now;
+        await SupabaseService.insert('user_subscriptions', subscriptionData);
+        logger.info('Subscription synced from webhook (created)', {
+          subscriptionId: subscriptionData.id,
+          stripeSubscriptionId,
+          status: localStatus
+        });
+      }
+
+      return this.getUserSubscription(userId);
+    } catch (error) {
+      logger.error('Failed to sync subscription from webhook', {
+        error: error.message,
+        stripeSubscriptionId: stripeSubscription?.id
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Cancel subscription via Stripe
+   * Requirements: 4.3, 4.4
+   * @param {string} userId - User ID
+   * @param {boolean} cancelAtPeriodEnd - Whether to cancel at period end
+   * @returns {Promise<Object>} Updated subscription
+   */
+  async cancelSubscriptionViaStripe(userId, cancelAtPeriodEnd = true) {
+    try {
+      const subscription = await this.getUserSubscription(userId);
+      if (!subscription) {
+        throw new Error('No subscription found for user');
+      }
+
+      // Get Stripe subscription ID
+      const { data: subData, error: subError } = await SupabaseService.adminClient
+        .from('user_subscriptions')
+        .select('stripe_subscription_id')
+        .eq('id', subscription.id)
+        .single();
+
+      if (subError) throw subError;
+      if (!subData?.stripe_subscription_id) {
+        throw new Error('Subscription is not linked to Stripe');
+      }
+
+      // Cancel in Stripe
+      await StripeService.cancelSubscription(subData.stripe_subscription_id, cancelAtPeriodEnd);
+
+      // Update local subscription
+      const updateData = {
+        cancel_at_period_end: cancelAtPeriodEnd,
+        updated_at: new Date().toISOString()
+      };
+
+      if (!cancelAtPeriodEnd) {
+        updateData.status = SUBSCRIPTION_STATUS.CANCELED;
+        updateData.cancelled_at = new Date().toISOString();
+      }
+
+      await SupabaseService.update('user_subscriptions', subscription.id, updateData);
+
+      logger.info('Subscription canceled via Stripe', {
+        userId,
+        subscriptionId: subscription.id,
+        cancelAtPeriodEnd
+      });
+
+      return this.getUserSubscription(userId);
+    } catch (error) {
+      logger.error('Failed to cancel subscription via Stripe', {
+        error: error.message,
+        userId
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Reactivate a canceled subscription via Stripe
+   * Requirements: 4.5
+   * @param {string} userId - User ID
+   * @returns {Promise<Object>} Updated subscription
+   */
+  async reactivateSubscriptionViaStripe(userId) {
+    try {
+      const subscription = await this.getUserSubscription(userId);
+      if (!subscription) {
+        throw new Error('No subscription found for user');
+      }
+
+      // Get Stripe subscription ID
+      const { data: subData, error: subError } = await SupabaseService.adminClient
+        .from('user_subscriptions')
+        .select('stripe_subscription_id, cancel_at_period_end')
+        .eq('id', subscription.id)
+        .single();
+
+      if (subError) throw subError;
+      if (!subData?.stripe_subscription_id) {
+        throw new Error('Subscription is not linked to Stripe');
+      }
+
+      if (!subData.cancel_at_period_end) {
+        throw new Error('Subscription is not scheduled for cancellation');
+      }
+
+      // Reactivate in Stripe
+      await StripeService.reactivateSubscription(subData.stripe_subscription_id);
+
+      // Update local subscription
+      await SupabaseService.update('user_subscriptions', subscription.id, {
+        cancel_at_period_end: false,
+        cancelled_at: null,
+        updated_at: new Date().toISOString()
+      });
+
+      logger.info('Subscription reactivated via Stripe', {
+        userId,
+        subscriptionId: subscription.id
+      });
+
+      return this.getUserSubscription(userId);
+    } catch (error) {
+      logger.error('Failed to reactivate subscription via Stripe', {
+        error: error.message,
+        userId
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get subscription details including Stripe info
+   * Requirements: 4.1
+   * @param {string} userId - User ID
+   * @returns {Promise<Object>} Subscription with payment details
+   */
+  async getSubscriptionWithStripeDetails(userId) {
+    try {
+      const subscription = await this.getUserSubscription(userId);
+      if (!subscription) {
+        return null;
+      }
+
+      // Get Stripe subscription ID
+      const { data: subData, error: subError } = await SupabaseService.adminClient
+        .from('user_subscriptions')
+        .select('stripe_subscription_id, cancel_at_period_end')
+        .eq('id', subscription.id)
+        .single();
+
+      if (subError) throw subError;
+
+      const result = {
+        ...subscription,
+        stripeSubscriptionId: subData?.stripe_subscription_id,
+        cancelAtPeriodEnd: subData?.cancel_at_period_end || false,
+        paymentMethod: null
+      };
+
+      // Get payment method from Stripe if available
+      if (subData?.stripe_subscription_id) {
+        try {
+          const stripeSubscription = await StripeService.getSubscription(subData.stripe_subscription_id);
+          if (stripeSubscription?.default_payment_method) {
+            const pm = stripeSubscription.default_payment_method;
+            if (pm.card) {
+              result.paymentMethod = {
+                brand: pm.card.brand,
+                last4: pm.card.last4,
+                expMonth: pm.card.exp_month,
+                expYear: pm.card.exp_year
+              };
+            }
+          }
+        } catch (stripeError) {
+          logger.warn('Could not fetch Stripe subscription details', {
+            error: stripeError.message,
+            stripeSubscriptionId: subData.stripe_subscription_id
+          });
+        }
+      }
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to get subscription with Stripe details', {
+        error: error.message,
+        userId
+      });
+      throw error;
     }
   }
 }

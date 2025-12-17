@@ -30,6 +30,9 @@ const linkPreviewRoutes = require('./linkPreviewRoutes');
 
 // User Account Routes (subscription, quotas, features)
 const userSubscriptionRoutes = require('./userSubscriptionRoutes');
+const userBillingRoutes = require('./userBillingRoutes');
+const userPlanRoutes = require('./userPlanRoutes');
+const resellerRoutes = require('./resellerRoutes');
 
 // Admin User Management Routes
 const adminPlanRoutes = require('./adminPlanRoutes');
@@ -44,6 +47,8 @@ const adminAuditRoutes = require('./adminAuditRoutes');
 const adminReportRoutes = require('./adminReportRoutes');
 const adminSettingsRoutes = require('./adminSettingsRoutes');
 const adminApiSettingsRoutes = require('./adminApiSettingsRoutes');
+const adminStripeRoutes = require('./adminStripeRoutes');
+const stripeWebhookRoutes = require('./stripeWebhookRoutes');
 
 logger.debug('contactImportRoutes loaded', { 
   type: typeof contactImportRoutes, 
@@ -75,6 +80,7 @@ function setupRoutes(app) {
   app.use('/api/admin/reports', adminReportRoutes);
   app.use('/api/admin/settings', adminSettingsRoutes);
   app.use('/api/admin/api-settings', adminApiSettingsRoutes);
+  app.use('/api/admin/stripe', adminStripeRoutes);
   
   // Generic admin routes - MUST come AFTER specific routes
   app.use('/api/admin', adminRoutes);
@@ -89,6 +95,9 @@ function setupRoutes(app) {
   });
   app.use('/api/user/contacts', contactImportRoutes);
   app.use('/api/user', userSubscriptionRoutes); // subscription, quotas, features
+  app.use('/api/user', userBillingRoutes); // Stripe billing routes
+  app.use('/api/user/plans', userPlanRoutes); // Available plans for upgrade
+  app.use('/api/reseller', resellerRoutes); // Reseller/Connect routes
   app.use('/api/user/drafts', userDraftRoutes);
   // IMPORTANT: userBotTestRoutes MUST come BEFORE userBotRoutes
   // because userBotRoutes has a /:id catch-all route that would intercept test routes
@@ -104,6 +113,9 @@ function setupRoutes(app) {
   app.use('/api/media', mediaRoutes);
   app.use('/api/bot', botProxyRoutes);
   app.use('/api/link-preview', linkPreviewRoutes);
+  
+  // Stripe Webhook (no auth - uses signature verification)
+  app.use('/api/webhooks/stripe', stripeWebhookRoutes);
   
   // Monitoring Routes (root level)
   app.use('/', monitoringRoutes);

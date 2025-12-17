@@ -29,6 +29,7 @@ import {
   UserCog,
   Shield,
   ClipboardList,
+  Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -118,6 +119,7 @@ const UserLayout = ({ children }: UserLayoutProps) => {
 
   // Itens depois dos bancos dinâmicos e links customizados
   const navigationAfter = [
+    { name: 'Revendedor', href: '/user/reseller', icon: Building2 },
     { name: 'Minha Conta', href: '/user/account', icon: User },
     { name: 'Configurações', href: '/user/settings', icon: Settings },
   ];

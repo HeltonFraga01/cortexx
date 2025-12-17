@@ -66,9 +66,10 @@ export const clearApiCredentials = (): void => {
 // CSRF Token management
 let csrfToken: string | null = null;
 
-// Get CSRF token from server
-export const getCsrfToken = async (): Promise<string> => {
-  if (csrfToken) {
+// Get CSRF token from server - always fetch fresh for reliability
+export const getCsrfToken = async (forceRefresh = false): Promise<string> => {
+  // Return cached token if available and not forcing refresh
+  if (csrfToken && !forceRefresh) {
     return csrfToken;
   }
 
@@ -1804,78 +1805,57 @@ interface ApiClientConfig {
 }
 
 /**
+ * Helper to make fetch request with CSRF token and retry on CSRF failure
+ */
+async function fetchWithCsrf<T>(
+  url: string,
+  method: string,
+  body?: unknown,
+  config?: ApiClientConfig,
+  retried = false
+): Promise<ApiClientResponse<T>> {
+  const token = await getCsrfToken(retried) // Force refresh on retry
+  
+  const response = await fetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { 'CSRF-Token': token }),
+      ...config?.headers
+    },
+    credentials: 'include',
+    body: body ? JSON.stringify(body) : undefined
+  })
+
+  const data = await response.json()
+  
+  // If CSRF validation failed and we haven't retried yet, refresh token and retry
+  if (response.status === 403 && data?.code === 'CSRF_VALIDATION_FAILED' && !retried) {
+    clearCsrfToken() // Clear the invalid token
+    return fetchWithCsrf<T>(url, method, body, config, true)
+  }
+  
+  return { data, status: response.status }
+}
+
+/**
  * API client with axios-like interface for admin services
  * Uses session-based authentication via cookies
  */
 export const api = {
   async get<T>(url: string, config?: ApiClientConfig): Promise<ApiClientResponse<T>> {
-    const csrfToken = await getCsrfToken()
-    
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(csrfToken && { 'CSRF-Token': csrfToken }),
-        ...config?.headers
-      },
-      credentials: 'include'
-    })
-
-    const data = await response.json()
-    return { data, status: response.status }
+    return fetchWithCsrf<T>(url, 'GET', undefined, config)
   },
 
   async post<T>(url: string, body?: unknown, config?: ApiClientConfig): Promise<ApiClientResponse<T>> {
-    const csrfToken = await getCsrfToken()
-    
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(csrfToken && { 'CSRF-Token': csrfToken }),
-        ...config?.headers
-      },
-      credentials: 'include',
-      body: body ? JSON.stringify(body) : undefined
-    })
-
-    const data = await response.json()
-    return { data, status: response.status }
+    return fetchWithCsrf<T>(url, 'POST', body, config)
   },
 
   async put<T>(url: string, body?: unknown, config?: ApiClientConfig): Promise<ApiClientResponse<T>> {
-    const csrfToken = await getCsrfToken()
-    
-    const response = await fetch(url, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(csrfToken && { 'CSRF-Token': csrfToken }),
-        ...config?.headers
-      },
-      credentials: 'include',
-      body: body ? JSON.stringify(body) : undefined
-    })
-
-    const data = await response.json()
-    return { data, status: response.status }
+    return fetchWithCsrf<T>(url, 'PUT', body, config)
   },
 
   async delete<T>(url: string, config?: ApiClientConfig): Promise<ApiClientResponse<T>> {
-    const csrfToken = await getCsrfToken()
-    
-    const response = await fetch(url, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(csrfToken && { 'CSRF-Token': csrfToken }),
-        ...config?.headers
-      },
-      credentials: 'include',
-      body: config?.data ? JSON.stringify(config.data) : undefined
-    })
-
-    const data = await response.json()
-    return { data, status: response.status }
+    return fetchWithCsrf<T>(url, 'DELETE', config?.data, config)
   }
 }

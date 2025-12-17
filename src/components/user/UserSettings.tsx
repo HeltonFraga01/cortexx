@@ -16,7 +16,8 @@ import { WebhookSettings } from '@/components/features/chat/settings/WebhookSett
 import { LabelManager } from '@/components/features/chat/settings/LabelManager';
 import { CannedResponseManager } from '@/components/features/chat/settings/CannedResponseManager';
 import { NotificationSettings } from '@/components/features/chat/settings/NotificationSettings';
-import { Save, Webhook, Settings as SettingsIcon, Eye, EyeOff, Copy, User as UserIcon, Loader2, AlertCircle, CheckCircle2, Bot, Tags, MessageSquareText, Bell } from 'lucide-react';
+import { Save, Webhook, Settings as SettingsIcon, Eye, EyeOff, Copy, User as UserIcon, Loader2, AlertCircle, CheckCircle2, Bot, Tags, MessageSquareText, Bell, CreditCard } from 'lucide-react';
+import { SubscriptionManager } from '@/components/user/billing/SubscriptionManager';
 import { toast } from 'sonner';
 
 const UserSettings = () => {
@@ -213,10 +214,14 @@ const UserSettings = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="account" className="flex items-center gap-2">
             <UserIcon className="h-4 w-4" />
             <span className="hidden sm:inline">Conta</span>
+          </TabsTrigger>
+          <TabsTrigger value="subscription" className="flex items-center gap-2">
+            <CreditCard className="h-4 w-4" />
+            <span className="hidden sm:inline">Assinatura</span>
           </TabsTrigger>
           <TabsTrigger value="notifications" className="flex items-center gap-2">
             <Bell className="h-4 w-4" />
@@ -324,6 +329,11 @@ const UserSettings = () => {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Tab: Assinatura */}
+        <TabsContent value="subscription" className="space-y-6">
+          <SubscriptionManager />
         </TabsContent>
 
         {/* Tab: Notificações */}

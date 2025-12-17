@@ -2,14 +2,19 @@
  * SubscriptionCard - Displays user's subscription details
  * 
  * Shows plan name, status, billing cycle, and period dates.
+ * Integrates with Stripe checkout for subscription management.
  * 
- * Requirements: 1.1, 1.2
+ * Requirements: 1.1, 1.2, 3.3, 3.4, 3.5
  */
 
+import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { CreditCard, Calendar, Clock, ArrowUpRight } from 'lucide-react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { CreditCard, Calendar, Clock, ArrowUpRight, Loader2, AlertTriangle, ExternalLink } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+import { stripeService } from '@/services/stripe'
 import type { UserSubscription } from '@/types/admin-management'
 
 interface SubscriptionCardProps {
@@ -59,6 +64,26 @@ function formatPrice(cents: number | undefined): string {
 }
 
 export function SubscriptionCard({ subscription, onUpgrade }: SubscriptionCardProps) {
+  const [loading, setLoading] = useState<string | null>(null)
+  const { toast } = useToast()
+
+  async function handleOpenBillingPortal() {
+    try {
+      setLoading('portal')
+      const { url } = await stripeService.openBillingPortal()
+      window.location.href = url
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Falha ao abrir portal'
+      toast({
+        title: 'Erro',
+        description: message,
+        variant: 'destructive',
+      })
+    } finally {
+      setLoading(null)
+    }
+  }
+
   if (!subscription) {
     return (
       <Card>
@@ -87,6 +112,7 @@ export function SubscriptionCard({ subscription, onUpgrade }: SubscriptionCardPr
   const statusVariant = STATUS_VARIANTS[status] || 'outline'
   const billingCycle = plan?.billingCycle || 'monthly'
   const billingLabel = BILLING_CYCLE_LABELS[billingCycle] || billingCycle
+  const cancelAtPeriodEnd = (subscription as { cancelAtPeriodEnd?: boolean }).cancelAtPeriodEnd
 
   return (
     <Card>
@@ -140,6 +166,24 @@ export function SubscriptionCard({ subscription, onUpgrade }: SubscriptionCardPr
           </div>
         )}
 
+        {cancelAtPeriodEnd && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              Sua assinatura será cancelada em {formatDate(subscription.currentPeriodEnd)}.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {status === 'past_due' && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              Pagamento pendente. Atualize seu método de pagamento.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {subscription.suspensionReason && status === 'suspended' && (
           <div className="p-3 bg-destructive/10 rounded-lg">
             <p className="text-sm text-destructive">
@@ -149,12 +193,29 @@ export function SubscriptionCard({ subscription, onUpgrade }: SubscriptionCardPr
           </div>
         )}
 
-        {onUpgrade && status !== 'suspended' && (
-          <Button variant="outline" onClick={onUpgrade} className="w-full">
-            <ArrowUpRight className="h-4 w-4 mr-2" />
-            Fazer Upgrade
-          </Button>
-        )}
+        <div className="flex gap-2 flex-wrap">
+          {status !== 'suspended' && (
+            <Button
+              variant="outline"
+              onClick={handleOpenBillingPortal}
+              disabled={loading === 'portal'}
+            >
+              {loading === 'portal' ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <ExternalLink className="h-4 w-4 mr-2" />
+              )}
+              Gerenciar Pagamento
+            </Button>
+          )}
+          
+          {onUpgrade && status !== 'suspended' && (
+            <Button variant="outline" onClick={onUpgrade}>
+              <ArrowUpRight className="h-4 w-4 mr-2" />
+              Fazer Upgrade
+            </Button>
+          )}
+        </div>
       </CardContent>
     </Card>
   )

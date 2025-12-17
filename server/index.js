@@ -50,6 +50,8 @@ const adminAuditRoutes = require('./routes/adminAuditRoutes');
 const adminReportRoutes = require('./routes/adminReportRoutes');
 const adminSettingsRoutes = require('./routes/adminSettingsRoutes');
 const adminApiSettingsRoutes = require('./routes/adminApiSettingsRoutes');
+const adminStripeRoutes = require('./routes/adminStripeRoutes');
+const stripeWebhookRoutes = require('./routes/stripeWebhookRoutes');
 // User Account Routes (subscription, quotas, features)
 const userSubscriptionRoutes = require('./routes/userSubscriptionRoutes');
 const userTableAccessRoutes = require('./routes/userTableAccessRoutes');
@@ -67,6 +69,7 @@ const accountRoleRoutes = require('./routes/accountRoleRoutes');
 const accountAuditRoutes = require('./routes/accountAuditRoutes');
 const agentAuthRoutes = require('./routes/agentAuthRoutes');
 const sessionAccountRoutes = require('./routes/sessionAccountRoutes');
+const resellerRoutes = require('./routes/resellerRoutes');
 
 // Importar sistema de monitoramento
 const { logger, requestLogger } = require('./utils/logger');
@@ -449,6 +452,7 @@ app.use('/api/admin/audit', adminAuditRoutes);
 app.use('/api/admin/reports', adminReportRoutes);
 app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/admin/api-settings', adminApiSettingsRoutes);
+app.use('/api/admin/stripe', adminStripeRoutes);
 // Generic admin routes
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/branding', brandingRoutes);
@@ -475,6 +479,9 @@ app.use('/api/user/bulk-campaigns', require('./routes/bulkCampaignRoutes'));
 
 // Rotas de Relatórios
 app.use('/api/user/reports', require('./routes/reportRoutes'));
+
+// Rotas de Revendedor (Stripe Connect)
+app.use('/api/reseller', resellerRoutes);
 
 // Rotas de Rascunhos
 app.use('/api/user/drafts', require('./routes/userDraftRoutes'));
@@ -504,6 +511,7 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/chat/inbox', chatInboxRoutes);
 app.use('/api/chat/webhook', chatWebhookRoutes);
 app.use('/api/webhook', require('./routes/webhookRoutes')); // Webhook events from WUZAPI
+app.use('/api/webhooks/stripe', stripeWebhookRoutes); // Stripe webhook (no auth - uses signature verification)
 app.use('/api/bot', botProxyRoutes); // Bot proxy endpoints for external integrations
 app.use('/api/tables', userTableAccessRoutes);
 app.use('/api/link-preview', linkPreviewRoutes);

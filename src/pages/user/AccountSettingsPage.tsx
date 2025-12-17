@@ -10,16 +10,19 @@ import { useState, useEffect } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { CreditCard, Gauge, Sparkles, Settings } from 'lucide-react'
+import { CreditCard, Gauge, Sparkles, Settings, Receipt } from 'lucide-react'
 import { SubscriptionCard } from '@/components/user/SubscriptionCard'
 import { QuotaUsageCard } from '@/components/user/QuotaUsageCard'
 import { FeaturesList } from '@/components/user/FeaturesList'
+import { BillingHistory } from '@/components/user/billing/BillingHistory'
+import { PlanUpgradeCard } from '@/components/user/PlanUpgradeCard'
 import { getAccountSummary, type AccountSummary } from '@/services/user-subscription'
 import { useToast } from '@/hooks/use-toast'
 
 export function AccountSettingsPage() {
   const [data, setData] = useState<AccountSummary | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [showUpgrade, setShowUpgrade] = useState(false)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -42,10 +45,7 @@ export function AccountSettingsPage() {
   }, [toast])
 
   const handleUpgrade = () => {
-    toast({
-      title: 'Upgrade',
-      description: 'Entre em contato com o suporte para fazer upgrade do seu plano.'
-    })
+    setShowUpgrade(true)
   }
 
   if (isLoading) {
@@ -137,9 +137,19 @@ export function AccountSettingsPage() {
             <Sparkles className="h-4 w-4" />
             Features
           </TabsTrigger>
+          <TabsTrigger value="billing" className="flex items-center gap-2">
+            <Receipt className="h-4 w-4" />
+            Histórico
+          </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="subscription">
+        <TabsContent value="subscription" className="space-y-4">
+          {showUpgrade && (
+            <PlanUpgradeCard 
+              onClose={() => setShowUpgrade(false)}
+              currentPlanId={data?.subscription?.planId}
+            />
+          )}
           <SubscriptionCard 
             subscription={data?.subscription || null} 
             onUpgrade={handleUpgrade}
@@ -155,6 +165,10 @@ export function AccountSettingsPage() {
             features={data?.features || []} 
             onUpgrade={handleUpgrade}
           />
+        </TabsContent>
+
+        <TabsContent value="billing">
+          <BillingHistory />
         </TabsContent>
       </Tabs>
     </div>

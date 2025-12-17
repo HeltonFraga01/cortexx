@@ -19,6 +19,7 @@ import BotQuotaConfigPage from '@/pages/admin/BotQuotaConfigPage';
 import { UserDetailPage } from '@/components/admin/UserDetailPage';
 import { AdminAuditLogList } from '@/components/admin/AdminAuditLogList';
 import { ReportGenerator } from '@/components/admin/ReportGenerator';
+import StripeAdminPage from '@/pages/admin/StripeAdminPage';
 
 const AdminDashboard = () => {
   return (
@@ -42,6 +43,7 @@ const AdminDashboard = () => {
         <Route path="/tables" element={<AvailableTablesList />} />
         <Route path="/multi-user" element={<MultiUserManagement />} />
         <Route path="/bot-quotas" element={<BotQuotaConfigPage />} />
+        <Route path="/stripe" element={<StripeAdminPage />} />
         <Route path="/settings" element={<AdminSettings />} />
       </Routes>
     </AdminLayout>
