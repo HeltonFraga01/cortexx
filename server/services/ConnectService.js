@@ -236,8 +236,8 @@ class ConnectService {
           },
           metadata,
         },
-        success_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/user/account?payment=success`,
-        cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/user/account?payment=canceled`,
+        success_url: `${process.env.FRONTEND_URL || 'http://localhost:8080'}/user/account?payment=success`,
+        cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:8080'}/user/account?payment=canceled`,
         metadata,
       });
 

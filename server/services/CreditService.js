@@ -68,7 +68,7 @@ class CreditService {
       }
 
       // Create checkout session
-      const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const baseUrl = process.env.FRONTEND_URL || 'http://localhost:8080';
       const session = await StripeService.createCheckoutSession({
         customerId,
         priceId: pkg.stripe_price_id,

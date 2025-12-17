@@ -52,10 +52,11 @@ export function SubscriptionManager() {
       setLoading(true)
       const [sub, availablePlans] = await Promise.all([
         stripeService.getSubscription(),
-        stripeService.getPlans()
+        stripeService.getAvailablePlans()
       ])
       setSubscription(sub)
-      setPlans(availablePlans.filter(p => p.status === 'active' && !p.isCreditPackage))
+      // Filter out credit packages (user plans endpoint already filters by active status)
+      setPlans(availablePlans.filter(p => !p.isCreditPackage) as unknown as Plan[])
     } catch (error) {
       toast({
         title: 'Erro',

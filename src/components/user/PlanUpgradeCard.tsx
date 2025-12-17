@@ -52,7 +52,7 @@ export function PlanUpgradeCard({ onClose, currentPlanId }: PlanUpgradeCardProps
     try {
       setIsLoading(true)
       const data = await stripeService.getAvailablePlans()
-      setPlans(data)
+      setPlans(data || [])
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Falha ao carregar planos'
       toast({
@@ -60,6 +60,7 @@ export function PlanUpgradeCard({ onClose, currentPlanId }: PlanUpgradeCardProps
         description: message,
         variant: 'destructive',
       })
+      setPlans([])
     } finally {
       setIsLoading(false)
     }

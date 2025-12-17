@@ -8,12 +8,25 @@
  */
 
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { requireUser: authenticate } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const StripeService = require('../services/StripeService');
 const SubscriptionService = require('../services/SubscriptionService');
 const SupabaseService = require('../services/SupabaseService');
 const { validateCheckoutSession, validateCreditPurchase } = require('../validators/stripeValidator');
+
+/**
+ * Convert userId to UUID format if needed (32-char hash to UUID)
+ * @param {string} userId - User ID (may be 32-char hash or UUID)
+ * @returns {string} UUID formatted user ID
+ */
+function toUuidFormat(userId) {
+  if (!userId) return userId;
+  if (userId.length === 32 && !userId.includes('-')) {
+    return `${userId.slice(0, 8)}-${userId.slice(8, 12)}-${userId.slice(12, 16)}-${userId.slice(16, 20)}-${userId.slice(20)}`;
+  }
+  return userId;
+}
 
 // ==================== Subscription Endpoints ====================
 
@@ -24,13 +37,13 @@ const { validateCheckoutSession, validateCreditPurchase } = require('../validato
 router.get('/subscription', authenticate, async (req, res) => {
   try {
     const subscriptionService = new SubscriptionService();
-    const subscription = await subscriptionService.getUserSubscription(req.user.id);
+    const subscription = await subscriptionService.getUserSubscription(req.session.userId);
     
     res.json({ success: true, data: subscription });
   } catch (error) {
     logger.error('Failed to get subscription', {
       error: error.message,
-      userId: req.user?.id,
+      userId: req.session?.userId,
       endpoint: '/api/user/subscription',
     });
     res.status(500).json({ error: error.message });
@@ -63,10 +76,11 @@ router.post('/subscription/checkout', authenticate, async (req, res) => {
     }
 
     // Get or create Stripe customer
+    const uuidUserId = toUuidFormat(req.session.userId);
     const { data: account } = await SupabaseService.adminClient
       .from('accounts')
       .select('id, stripe_customer_id, name')
-      .eq('owner_user_id', req.user.id)
+      .eq('owner_user_id', uuidUserId)
       .single();
 
     let customerId = account?.stripe_customer_id;
@@ -74,9 +88,9 @@ router.post('/subscription/checkout', authenticate, async (req, res) => {
     if (!customerId) {
       // Create Stripe customer
       const customer = await StripeService.createCustomer(
-        req.user.email || `user-${req.user.id}@wuzapi.local`,
-        account?.name || `User ${req.user.id}`,
-        { userId: req.user.id, accountId: account?.id }
+        `user-${req.session.userId}@wuzapi.local`,
+        account?.name || `User ${req.session.userId}`,
+        { userId: req.session.userId, accountId: account?.id }
       );
       customerId = customer.id;
 
@@ -90,22 +104,22 @@ router.post('/subscription/checkout', authenticate, async (req, res) => {
     }
 
     // Create checkout session
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:8080';
     const session = await StripeService.createCheckoutSession({
       customerId,
       priceId: plan.stripePriceId,
       mode: 'subscription',
-      successUrl: `${baseUrl}/user/settings?subscription=success`,
-      cancelUrl: `${baseUrl}/user/settings?subscription=canceled`,
+      successUrl: `${baseUrl}/user/account?subscription=success`,
+      cancelUrl: `${baseUrl}/user/account?subscription=canceled`,
       metadata: {
-        userId: req.user.id,
+        userId: req.session.userId,
         accountId: account?.id,
         planId,
       },
     });
 
     logger.info('Checkout session created', {
-      userId: req.user?.id,
+      userId: req.session?.userId,
       planId,
       sessionId: session.id,
       endpoint: '/api/user/subscription/checkout',
@@ -115,7 +129,7 @@ router.post('/subscription/checkout', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to create checkout session', {
       error: error.message,
-      userId: req.user?.id,
+      userId: req.session?.userId,
       endpoint: '/api/user/subscription/checkout',
     });
     res.status(500).json({ error: error.message });
@@ -134,50 +148,111 @@ router.post('/subscription/change', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Plan ID is required' });
     }
 
-    // Get current subscription
-    const subscriptionService = new SubscriptionService();
-    const currentSub = await subscriptionService.getUserSubscription(req.user.id);
-    
-    if (!currentSub || !currentSub.stripeSubscriptionId) {
-      // No active subscription, create new checkout
-      return res.redirect(307, '/api/user/subscription/checkout');
-    }
-
-    // Get new plan
+    // Get new plan first
     const PlanService = require('../services/PlanService');
     const planService = new PlanService();
     const plan = await planService.getPlanById(planId);
     
-    if (!plan || !plan.stripePriceId) {
-      return res.status(400).json({ error: 'Invalid plan or plan not synced with Stripe' });
+    if (!plan) {
+      return res.status(404).json({ error: 'Plan not found' });
     }
 
-    // Create checkout session for plan change with proration
+    if (!plan.stripePriceId) {
+      return res.status(400).json({ error: 'Plan not synced with Stripe' });
+    }
+
+    // Get current subscription
+    const subscriptionService = new SubscriptionService();
+    const currentSub = await subscriptionService.getUserSubscription(req.session.userId);
+
+    // Get or create Stripe customer
+    const uuidUserId = toUuidFormat(req.session.userId);
     const { data: account } = await SupabaseService.adminClient
       .from('accounts')
-      .select('stripe_customer_id')
-      .eq('owner_user_id', req.user.id)
+      .select('id, stripe_customer_id, name')
+      .eq('owner_user_id', uuidUserId)
       .single();
 
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    let customerId = account?.stripe_customer_id;
+
+    if (!customerId) {
+      // Create Stripe customer
+      const customer = await StripeService.createCustomer(
+        `user-${req.session.userId}@wuzapi.local`,
+        account?.name || `User ${req.session.userId}`,
+        { userId: req.session.userId, accountId: account?.id }
+      );
+      customerId = customer.id;
+
+      // Save customer ID
+      if (account?.id) {
+        await SupabaseService.adminClient
+          .from('accounts')
+          .update({ stripe_customer_id: customerId })
+          .eq('id', account.id);
+      }
+    }
+
+    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:8080';
+    
+    // If user has active Stripe subscription, update it; otherwise create new checkout
+    if (currentSub?.stripeSubscriptionId) {
+      // TODO: Implement subscription update with proration
+      // For now, create a new checkout session
+      const session = await StripeService.createCheckoutSession({
+        customerId,
+        priceId: plan.stripePriceId,
+        mode: 'subscription',
+        successUrl: `${baseUrl}/user/account?subscription=changed`,
+        cancelUrl: `${baseUrl}/user/account?subscription=canceled`,
+        metadata: {
+          userId: req.session.userId,
+          accountId: account?.id,
+          planId,
+          previousPlanId: currentSub?.planId,
+          type: 'plan_change',
+        },
+      });
+
+      logger.info('Plan change checkout session created', {
+        userId: req.session?.userId,
+        planId,
+        previousPlanId: currentSub?.planId,
+        sessionId: session.id,
+        endpoint: '/api/user/subscription/change',
+      });
+
+      return res.json({ success: true, data: { url: session.url, sessionId: session.id } });
+    }
+
+    // No active Stripe subscription - create new checkout session
     const session = await StripeService.createCheckoutSession({
-      customerId: account?.stripe_customer_id,
+      customerId,
       priceId: plan.stripePriceId,
       mode: 'subscription',
-      successUrl: `${baseUrl}/user/settings?subscription=changed`,
-      cancelUrl: `${baseUrl}/user/settings?subscription=canceled`,
+      successUrl: `${baseUrl}/user/account?subscription=success`,
+      cancelUrl: `${baseUrl}/user/account?subscription=canceled`,
       metadata: {
-        userId: req.user.id,
+        userId: req.session.userId,
+        accountId: account?.id,
         planId,
-        previousPlanId: currentSub.planId,
+        type: 'new_subscription',
       },
+    });
+
+    logger.info('Subscription checkout session created (from change)', {
+      userId: req.session?.userId,
+      planId,
+      sessionId: session.id,
+      endpoint: '/api/user/subscription/change',
     });
 
     res.json({ success: true, data: { url: session.url, sessionId: session.id } });
   } catch (error) {
     logger.error('Failed to change plan', {
       error: error.message,
-      userId: req.user?.id,
+      stack: error.stack,
+      userId: req.session?.userId,
       endpoint: '/api/user/subscription/change',
     });
     res.status(500).json({ error: error.message });
@@ -191,7 +266,7 @@ router.post('/subscription/change', authenticate, async (req, res) => {
 router.post('/subscription/cancel', authenticate, async (req, res) => {
   try {
     const subscriptionService = new SubscriptionService();
-    const subscription = await subscriptionService.getUserSubscription(req.user.id);
+    const subscription = await subscriptionService.getUserSubscription(req.session.userId);
     
     if (!subscription) {
       return res.status(404).json({ error: 'No active subscription found' });
@@ -203,7 +278,7 @@ router.post('/subscription/cancel', authenticate, async (req, res) => {
     }
 
     // Update local status
-    await subscriptionService.updateSubscriptionStatus(req.user.id, 'cancelled');
+    await subscriptionService.updateSubscriptionStatus(req.session.userId, 'cancelled');
 
     // Update cancel_at_period_end flag
     await SupabaseService.adminClient
@@ -212,7 +287,7 @@ router.post('/subscription/cancel', authenticate, async (req, res) => {
       .eq('id', subscription.id);
 
     logger.info('Subscription canceled', {
-      userId: req.user?.id,
+      userId: req.session?.userId,
       subscriptionId: subscription.id,
       endpoint: '/api/user/subscription/cancel',
     });
@@ -221,7 +296,7 @@ router.post('/subscription/cancel', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to cancel subscription', {
       error: error.message,
-      userId: req.user?.id,
+      userId: req.session?.userId,
       endpoint: '/api/user/subscription/cancel',
     });
     res.status(500).json({ error: error.message });
@@ -235,7 +310,7 @@ router.post('/subscription/cancel', authenticate, async (req, res) => {
 router.post('/subscription/reactivate', authenticate, async (req, res) => {
   try {
     const subscriptionService = new SubscriptionService();
-    const subscription = await subscriptionService.getUserSubscription(req.user.id);
+    const subscription = await subscriptionService.getUserSubscription(req.session.userId);
     
     if (!subscription) {
       return res.status(404).json({ error: 'No subscription found' });
@@ -247,7 +322,7 @@ router.post('/subscription/reactivate', authenticate, async (req, res) => {
     }
 
     // Update local status
-    await subscriptionService.updateSubscriptionStatus(req.user.id, 'active');
+    await subscriptionService.updateSubscriptionStatus(req.session.userId, 'active');
 
     // Clear cancel_at_period_end flag
     await SupabaseService.adminClient
@@ -256,7 +331,7 @@ router.post('/subscription/reactivate', authenticate, async (req, res) => {
       .eq('id', subscription.id);
 
     logger.info('Subscription reactivated', {
-      userId: req.user?.id,
+      userId: req.session?.userId,
       subscriptionId: subscription.id,
       endpoint: '/api/user/subscription/reactivate',
     });
@@ -265,7 +340,7 @@ router.post('/subscription/reactivate', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to reactivate subscription', {
       error: error.message,
-      userId: req.user?.id,
+      userId: req.session?.userId,
       endpoint: '/api/user/subscription/reactivate',
     });
     res.status(500).json({ error: error.message });
@@ -281,10 +356,11 @@ router.post('/subscription/reactivate', authenticate, async (req, res) => {
 router.get('/credits', authenticate, async (req, res) => {
   try {
     // Get account
+    const uuidUserId = toUuidFormat(req.session.userId);
     const { data: account } = await SupabaseService.adminClient
       .from('accounts')
       .select('id, reseller_credit_balance')
-      .eq('owner_user_id', req.user.id)
+      .eq('owner_user_id', uuidUserId)
       .single();
 
     // Get credit transactions to calculate balance
@@ -311,7 +387,7 @@ router.get('/credits', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to get credit balance', {
       error: error.message,
-      userId: req.user?.id,
+      userId: req.session?.userId,
       endpoint: '/api/user/credits',
     });
     res.status(500).json({ error: error.message });
@@ -324,9 +400,6 @@ router.get('/credits', authenticate, async (req, res) => {
  */
 router.get('/credits/packages', authenticate, async (req, res) => {
   try {
-    const PlanService = require('../services/PlanService');
-    const planService = new PlanService();
-    
     // Get credit packages (plans with is_credit_package = true)
     const { data: packages } = await SupabaseService.adminClient
       .from('plans')
@@ -348,7 +421,7 @@ router.get('/credits/packages', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to get credit packages', {
       error: error.message,
-      userId: req.user?.id,
+      userId: req.session?.userId,
       endpoint: '/api/user/credits/packages',
     });
     res.status(500).json({ error: error.message });
@@ -380,19 +453,20 @@ router.post('/credits/purchase', authenticate, async (req, res) => {
     }
 
     // Get or create customer
+    const uuidUserId = toUuidFormat(req.session.userId);
     const { data: account } = await SupabaseService.adminClient
       .from('accounts')
       .select('id, stripe_customer_id, name')
-      .eq('owner_user_id', req.user.id)
+      .eq('owner_user_id', uuidUserId)
       .single();
 
     let customerId = account?.stripe_customer_id;
 
     if (!customerId) {
       const customer = await StripeService.createCustomer(
-        req.user.email || `user-${req.user.id}@wuzapi.local`,
-        account?.name || `User ${req.user.id}`,
-        { userId: req.user.id, accountId: account?.id }
+        `user-${req.session.userId}@wuzapi.local`,
+        account?.name || `User ${req.session.userId}`,
+        { userId: req.session.userId, accountId: account?.id }
       );
       customerId = customer.id;
 
@@ -405,15 +479,15 @@ router.post('/credits/purchase', authenticate, async (req, res) => {
     }
 
     // Create checkout session for one-time payment
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:8080';
     const session = await StripeService.createCheckoutSession({
       customerId,
       priceId: pkg.stripe_price_id,
       mode: 'payment',
-      successUrl: `${baseUrl}/user/settings?credits=success`,
-      cancelUrl: `${baseUrl}/user/settings?credits=canceled`,
+      successUrl: `${baseUrl}/user/account?credits=success`,
+      cancelUrl: `${baseUrl}/user/account?credits=canceled`,
       metadata: {
-        userId: req.user.id,
+        userId: req.session.userId,
         accountId: account?.id,
         packageId: validated.packageId,
         creditAmount: pkg.credit_amount,
@@ -423,7 +497,7 @@ router.post('/credits/purchase', authenticate, async (req, res) => {
     });
 
     logger.info('Credit purchase checkout created', {
-      userId: req.user?.id,
+      userId: req.session?.userId,
       packageId: validated.packageId,
       sessionId: session.id,
       endpoint: '/api/user/credits/purchase',
@@ -433,7 +507,7 @@ router.post('/credits/purchase', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to create credit purchase checkout', {
       error: error.message,
-      userId: req.user?.id,
+      userId: req.session?.userId,
       endpoint: '/api/user/credits/purchase',
     });
     
@@ -457,10 +531,11 @@ router.get('/billing/history', authenticate, async (req, res) => {
     const limit = 12;
 
     // Get customer ID
+    const uuidUserId = toUuidFormat(req.session.userId);
     const { data: account } = await SupabaseService.adminClient
       .from('accounts')
       .select('stripe_customer_id')
-      .eq('owner_user_id', req.user.id)
+      .eq('owner_user_id', uuidUserId)
       .single();
 
     if (!account?.stripe_customer_id) {
@@ -484,7 +559,7 @@ router.get('/billing/history', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to get billing history', {
       error: error.message,
-      userId: req.user?.id,
+      userId: req.session?.userId,
       endpoint: '/api/user/billing/history',
     });
     res.status(500).json({ error: error.message });
@@ -498,27 +573,28 @@ router.get('/billing/history', authenticate, async (req, res) => {
 router.post('/billing/portal', authenticate, async (req, res) => {
   try {
     // Get customer ID
+    const uuidUserId = toUuidFormat(req.session.userId);
     const { data: account } = await SupabaseService.adminClient
       .from('accounts')
       .select('stripe_customer_id')
-      .eq('owner_user_id', req.user.id)
+      .eq('owner_user_id', uuidUserId)
       .single();
 
     if (!account?.stripe_customer_id) {
       return res.status(400).json({ error: 'No billing account found' });
     }
 
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:8080';
     const session = await StripeService.createBillingPortalSession(
       account.stripe_customer_id,
-      `${baseUrl}/user/settings`
+      `${baseUrl}/user/account`
     );
 
     res.json({ success: true, data: { url: session.url } });
   } catch (error) {
     logger.error('Failed to create billing portal session', {
       error: error.message,
-      userId: req.user?.id,
+      userId: req.session?.userId,
       endpoint: '/api/user/billing/portal',
     });
     res.status(500).json({ error: error.message });

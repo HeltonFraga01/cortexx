@@ -94,9 +94,9 @@ function setupRoutes(app) {
     routeCount: contactImportRoutes.stack ? contactImportRoutes.stack.length : 0 
   });
   app.use('/api/user/contacts', contactImportRoutes);
+  app.use('/api/user/plans', userPlanRoutes); // Available plans for upgrade - MUST come BEFORE generic user routes
   app.use('/api/user', userSubscriptionRoutes); // subscription, quotas, features
   app.use('/api/user', userBillingRoutes); // Stripe billing routes
-  app.use('/api/user/plans', userPlanRoutes); // Available plans for upgrade
   app.use('/api/reseller', resellerRoutes); // Reseller/Connect routes
   app.use('/api/user/drafts', userDraftRoutes);
   // IMPORTANT: userBotTestRoutes MUST come BEFORE userBotRoutes

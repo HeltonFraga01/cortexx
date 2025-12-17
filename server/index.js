@@ -54,6 +54,8 @@ const adminStripeRoutes = require('./routes/adminStripeRoutes');
 const stripeWebhookRoutes = require('./routes/stripeWebhookRoutes');
 // User Account Routes (subscription, quotas, features)
 const userSubscriptionRoutes = require('./routes/userSubscriptionRoutes');
+const userPlanRoutes = require('./routes/userPlanRoutes');
+const userBillingRoutes = require('./routes/userBillingRoutes');
 const userTableAccessRoutes = require('./routes/userTableAccessRoutes');
 const userCustomThemesRoutes = require('./routes/userCustomThemesRoutes');
 const contactImportRoutes = require('./routes/contactImportRoutes');
@@ -499,7 +501,9 @@ app.use('/api/user/outgoing-webhooks', require('./routes/userWebhookRoutes'));
 app.use('/api/user/custom-themes', userCustomThemesRoutes);
 
 // User Account Routes (subscription, quotas, features)
+app.use('/api/user/plans', userPlanRoutes); // Available plans for upgrade - MUST come BEFORE generic user routes
 app.use('/api/user', userSubscriptionRoutes);
+app.use('/api/user', userBillingRoutes); // Stripe billing routes
 
 // Rotas de Teste (desenvolvimento)
 if (process.env.NODE_ENV !== 'production') {
