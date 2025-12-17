@@ -11,7 +11,7 @@ const router = express.Router()
 const { logger } = require('../utils/logger')
 const ChatService = require('../services/ChatService')
 const { validatePhoneWithAPI } = require('../services/PhoneValidationService')
-const SupabaseService = require('../services/SupabaseService')
+const supabaseService = require('../services/SupabaseService')
 
 // Middleware to verify user token
 const verifyUserToken = async (req, res, next) => {
@@ -52,11 +52,11 @@ router.get('/conversations', verifyUserToken, async (req, res) => {
     const { status, hasUnread, assignedBotId, labelId, search, inboxId, limit = 50, offset = 0 } = req.query
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     
     const filters = {}
     if (status) filters.status = status
@@ -100,7 +100,7 @@ router.post('/conversations/start', verifyUserToken, async (req, res) => {
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
@@ -110,7 +110,7 @@ router.post('/conversations/start', verifyUserToken, async (req, res) => {
     // Create JID format for WhatsApp
     const contactJid = `${normalizedPhone}@s.whatsapp.net`
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const conversation = await chatService.getOrCreateConversation(
       req.userToken,
       contactJid,
@@ -139,11 +139,11 @@ router.get('/conversations/:id', verifyUserToken, async (req, res) => {
     const { id } = req.params
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const conversation = await chatService.getConversation(req.userToken, id)
 
     if (!conversation) {
@@ -167,11 +167,11 @@ router.patch('/conversations/:id', verifyUserToken, async (req, res) => {
     const { status, assignedBotId, isMuted } = req.body
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     
     const updates = {}
     if (status) updates.status = status
@@ -202,11 +202,11 @@ router.delete('/conversations/:id', verifyUserToken, async (req, res) => {
     const { id } = req.params
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     await chatService.deleteConversation(req.userToken, id)
 
     res.json({ success: true, message: 'Conversa excluída com sucesso' })
@@ -225,11 +225,11 @@ router.post('/conversations/:id/read', verifyUserToken, async (req, res) => {
     const { id } = req.params
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     await chatService.markConversationAsRead(req.userToken, id)
 
     res.json({ success: true, message: 'Conversation marked as read' })
@@ -341,11 +341,11 @@ router.post('/conversations/:id/fetch-avatar', verifyUserToken, async (req, res)
     const { id } = req.params
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const conversation = await chatService.getConversation(req.userToken, id)
     
     if (!conversation) {
@@ -353,7 +353,12 @@ router.post('/conversations/:id/fetch-avatar', verifyUserToken, async (req, res)
     }
 
     // Extract phone from JID (use camelCase since transformConversation returns camelCase)
-    const contactJid = conversation.contactJid
+    // Also check for snake_case version since raw DB data might use contact_jid
+    const contactJid = conversation.contactJid || conversation.contact_jid
+    
+    if (!contactJid) {
+      return res.status(400).json({ success: false, error: 'Contact JID not found in conversation' })
+    }
     
     // Skip special JIDs that don't have avatars
     if (contactJid.includes('status@') || 
@@ -407,7 +412,7 @@ router.post('/conversations/:id/fetch-avatar', verifyUserToken, async (req, res)
           success: true,
           data: {
             avatarUrl: avatarUrl,
-            conversationId: parseInt(id, 10)
+            conversationId: id
           }
         })
       } else {
@@ -449,21 +454,21 @@ router.post('/conversations/:id/refresh-group-name', verifyUserToken, async (req
     const { id } = req.params
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const conversation = await chatService.getConversation(req.userToken, id)
     
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversation not found' })
     }
 
-    const contactJid = conversation.contactJid
+    const contactJid = conversation.contactJid || conversation.contact_jid
     
     // Only works for group JIDs
-    if (!contactJid.endsWith('@g.us')) {
+    if (!contactJid || !contactJid.endsWith('@g.us')) {
       return res.json({
         success: true,
         data: null,
@@ -508,7 +513,7 @@ router.post('/conversations/:id/refresh-group-name', verifyUserToken, async (req
           success: true,
           data: {
             groupName: groupName,
-            conversationId: parseInt(id, 10)
+            conversationId: id
           }
         })
       } else {
@@ -550,13 +555,14 @@ router.get('/conversations/:id/messages', verifyUserToken, async (req, res) => {
     const { limit = 50, before, after } = req.query
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
-    const conversationId = parseInt(id, 10)
-    const result = await chatService.getMessages(req.userToken, conversationId, {
+    const chatService = new ChatService()
+    // ID is a UUID string, not an integer
+    const conversationId = id
+    const result = await chatService.getMessages(conversationId, req.userToken, {
       limit: parseInt(limit, 10),
       before: before
     })
@@ -592,11 +598,11 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     
     // Get conversation to get the contact JID
     const conversation = await chatService.getConversation(req.userToken, id)
@@ -604,13 +610,19 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
       return res.status(404).json({ success: false, error: 'Conversation not found' })
     }
 
+    // Get contactJid (check both camelCase and snake_case)
+    const contactJid = conversation.contactJid || conversation.contact_jid
+    if (!contactJid) {
+      return res.status(400).json({ success: false, error: 'Contact JID not found in conversation' })
+    }
+
     // Detectar se é um grupo (JID termina com @g.us)
-    const isGroup = conversation.contactJid.endsWith('@g.us')
+    const isGroup = contactJid.endsWith('@g.us')
     
     // Extract phone number from JID (remove @s.whatsapp.net) or use JID for groups
     const phone = isGroup 
-      ? conversation.contactJid 
-      : conversation.contactJid.replace('@s.whatsapp.net', '')
+      ? contactJid 
+      : contactJid.replace('@s.whatsapp.net', '')
     
     // Generate a unique message ID
     const messageId = `${Date.now()}_${Math.random().toString(36).substring(2, 15)}`
@@ -637,7 +649,7 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
     
     if (isGroup) {
       // Para grupos, usar o JID diretamente (não precisa validar com /user/check)
-      validatedPhone = conversation.contactJid
+      validatedPhone = contactJid
       
       logger.info('Sending message to group', {
         groupJid: validatedPhone,
@@ -655,10 +667,7 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
         })
         
         // Update message status to failed
-        await db.query(
-          'UPDATE chat_messages SET status = ? WHERE id = ?',
-          ['failed', message.id]
-        )
+        await supabaseService.update('chat_messages', message.id, { status: 'failed' })
         message.status = 'failed'
         
         return res.status(400).json({
@@ -696,7 +705,7 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
         if (replyToMessageId) {
           payload.ContextInfo = {
             StanzaId: replyToMessageId,
-            Participant: conversation.contactJid
+            Participant: contactJid
           }
         }
         
@@ -825,10 +834,7 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
     const newStatus = wuzapiSuccess ? 'sent' : 'failed'
     
     // Update message status in database
-    await db.query(
-      'UPDATE chat_messages SET status = ? WHERE id = ?',
-      [newStatus, message.id]
-    )
+    await supabaseService.update('chat_messages', message.id, { status: newStatus })
     
     // Update the message object to return
     message.status = newStatus
@@ -863,11 +869,11 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
 router.get('/labels', verifyUserToken, async (req, res) => {
   try {
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const labels = await chatService.getLabels(req.userToken)
 
     res.json({ success: true, data: labels })
@@ -890,11 +896,11 @@ router.post('/labels', verifyUserToken, async (req, res) => {
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const label = await chatService.createLabel(req.userToken, { name, color })
 
     res.status(201).json({ success: true, data: label })
@@ -914,11 +920,11 @@ router.put('/labels/:id', verifyUserToken, async (req, res) => {
     const { name, color } = req.body
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const label = await chatService.updateLabel(req.userToken, id, { name, color })
 
     res.json({ success: true, data: label })
@@ -937,11 +943,11 @@ router.delete('/labels/:id', verifyUserToken, async (req, res) => {
     const { id } = req.params
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     await chatService.deleteLabel(req.userToken, id)
 
     res.json({ success: true, message: 'Label deleted' })
@@ -965,11 +971,11 @@ router.post('/conversations/:id/labels', verifyUserToken, async (req, res) => {
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     await chatService.assignLabel(req.userToken, id, labelId)
 
     res.json({ success: true, message: 'Label assigned' })
@@ -988,11 +994,11 @@ router.delete('/conversations/:id/labels/:labelId', verifyUserToken, async (req,
     const { id, labelId } = req.params
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     await chatService.removeLabel(req.userToken, id, labelId)
 
     res.json({ success: true, message: 'Label removed' })
@@ -1013,11 +1019,11 @@ router.get('/canned-responses', verifyUserToken, async (req, res) => {
     const { search } = req.query
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const responses = await chatService.getCannedResponses(req.userToken, { search })
 
     res.json({ success: true, data: responses })
@@ -1040,11 +1046,11 @@ router.post('/canned-responses', verifyUserToken, async (req, res) => {
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const response = await chatService.createCannedResponse(req.userToken, { shortcut, content })
 
     res.status(201).json({ success: true, data: response })
@@ -1064,11 +1070,11 @@ router.put('/canned-responses/:id', verifyUserToken, async (req, res) => {
     const { shortcut, content } = req.body
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const response = await chatService.updateCannedResponse(req.userToken, id, { shortcut, content })
 
     res.json({ success: true, data: response })
@@ -1087,11 +1093,11 @@ router.delete('/canned-responses/:id', verifyUserToken, async (req, res) => {
     const { id } = req.params
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     await chatService.deleteCannedResponse(req.userToken, id)
 
     res.json({ success: true, message: 'Canned response deleted' })
@@ -1117,14 +1123,14 @@ router.post('/conversations/:id/notes', verifyUserToken, async (req, res) => {
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     
     // Use token directly as userId (no local users table)
-    const note = await chatService.addPrivateNote(req.userToken, parseInt(id, 10), content)
+    const note = await chatService.addPrivateNote(req.userToken, id, content)
 
     res.status(201).json({ success: true, data: note })
   } catch (error) {
@@ -1142,14 +1148,14 @@ router.get('/conversations/:id/notes', verifyUserToken, async (req, res) => {
     const { id } = req.params
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     
     // Use token directly as userId (no local users table)
-    const notes = await chatService.getPrivateNotes(parseInt(id, 10), req.userToken)
+    const notes = await chatService.getPrivateNotes(id, req.userToken)
 
     res.json({ success: true, data: notes })
   } catch (error) {
@@ -1170,14 +1176,14 @@ router.post('/conversations/:id/assign-bot', verifyUserToken, async (req, res) =
     const { botId } = req.body
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     
     // Update conversation with bot assignment
-    const conversation = await chatService.updateConversation(req.userToken, parseInt(id, 10), {
+    const conversation = await chatService.updateConversation(req.userToken, id, {
       assignedBotId: botId || null
     })
 
@@ -1214,11 +1220,11 @@ router.post('/messages/:messageId/react', verifyUserToken, async (req, res) => {
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     
     // Use token directly as userId (no local users table)
     const reaction = await chatService.addReaction(
@@ -1256,11 +1262,11 @@ router.get('/search', verifyUserToken, async (req, res) => {
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const results = await chatService.searchMessages(req.userToken, q, { limit: parseInt(limit, 10) })
 
     res.json({ success: true, data: results })
@@ -1283,11 +1289,11 @@ router.get('/conversations/search', verifyUserToken, async (req, res) => {
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     
     // Use token directly as userId (no local users table)
     const results = await chatService.searchConversations(req.userToken, q, { limit: parseInt(limit, 10) })
@@ -1313,16 +1319,16 @@ router.get('/conversations/:id/messages/search', verifyUserToken, async (req, re
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     
     // Use token directly as userId (no local users table)
     // Note: This calls the class method searchMessages(conversationId, userId, query, options)
     const results = await chatService.searchMessagesInConversation(
-      parseInt(id, 10), 
+      id, 
       req.userToken, 
       q, 
       { limit: parseInt(limit, 10) }
@@ -1476,7 +1482,7 @@ router.get('/messages/:messageId/media', verifyUserToken, async (req, res) => {
     const { messageId } = req.params
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
@@ -1808,11 +1814,11 @@ router.get('/contacts/:jid/attributes', verifyUserToken, async (req, res) => {
     const { jid } = req.params
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -1854,11 +1860,11 @@ router.post('/contacts/:jid/attributes', verifyUserToken, async (req, res) => {
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -1915,11 +1921,11 @@ router.put('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res) =>
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -1944,7 +1950,7 @@ router.put('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res) =>
     )
 
     const updated = {
-      id: parseInt(id, 10),
+      id: id,
       name: existing.rows[0].name,
       value: value.trim(),
       updated_at: new Date().toISOString()
@@ -1967,11 +1973,11 @@ router.delete('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res)
     const { jid, id } = req.params
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -2011,11 +2017,11 @@ router.get('/contacts/:jid/notes', verifyUserToken, async (req, res) => {
     const { jid } = req.params
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -2051,11 +2057,11 @@ router.post('/contacts/:jid/notes', verifyUserToken, async (req, res) => {
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -2092,11 +2098,11 @@ router.delete('/contacts/:jid/notes/:id', verifyUserToken, async (req, res) => {
     const { jid, id } = req.params
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -2136,11 +2142,11 @@ router.get('/conversations/:id/info', verifyUserToken, async (req, res) => {
     const { id } = req.params
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const conversation = await chatService.getConversation(req.userToken, id)
     
     if (!conversation) {
@@ -2209,11 +2215,11 @@ router.get('/contacts/:jid/conversations', verifyUserToken, async (req, res) => 
     const { excludeId } = req.query
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -2266,21 +2272,21 @@ router.get('/conversations/:id/participants', verifyUserToken, async (req, res) 
     const { id } = req.params
     
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const conversation = await chatService.getConversation(req.userToken, id)
     
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversation not found' })
     }
 
-    const contactJid = conversation.contactJid
+    const contactJid = conversation.contactJid || conversation.contact_jid
     
     // Only works for group JIDs
-    if (!contactJid.endsWith('@g.us')) {
+    if (!contactJid || !contactJid.endsWith('@g.us')) {
       return res.json({ success: true, data: [], message: 'Not a group conversation' })
     }
     
@@ -2338,11 +2344,11 @@ router.get('/conversations/:id/participants', verifyUserToken, async (req, res) 
 router.get('/macros', verifyUserToken, async (req, res) => {
   try {
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -2394,11 +2400,11 @@ router.post('/macros/:id/execute', verifyUserToken, async (req, res) => {
     }
 
     // Using SupabaseService directly
-    if (!SupabaseService) {
+    if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService(SupabaseService)
+    const chatService = new ChatService()
     const userId = await chatService.getUserIdFromToken(req.userToken)
     
     if (!userId) {
@@ -2449,7 +2455,8 @@ router.post('/macros/:id/execute', verifyUserToken, async (req, res) => {
             // Get conversation to get contact JID
             const conversation = await chatService.getConversation(req.userToken, conversationId)
             if (conversation) {
-              const phone = conversation.contactJid.replace('@s.whatsapp.net', '')
+              const convContactJid = conversation.contactJid || conversation.contact_jid
+              const phone = convContactJid ? convContactJid.replace('@s.whatsapp.net', '') : ''
               const wuzapiBaseUrl = process.env.WUZAPI_BASE_URL || 'https://wzapi.wasend.com.br'
               
               await axios.post(`${wuzapiBaseUrl}/chat/send/text`, {

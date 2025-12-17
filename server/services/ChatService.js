@@ -18,10 +18,40 @@ const supabaseService = require('./SupabaseService');
 
 class ChatService {
   /**
+   * Get account ID (UUID) from WUZAPI token
+   * @param {string} userToken - WUZAPI token
+   * @returns {Promise<string|null>} Account UUID or null
+   */
+  async getAccountIdFromToken(userToken) {
+    try {
+      // Check if userToken is already a UUID
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(userToken)) {
+        return userToken;
+      }
+
+      // Look up account by wuzapi_token
+      const { data, error } = await supabaseService.queryAsAdmin('accounts', (query) =>
+        query.select('id').eq('wuzapi_token', userToken).single()
+      );
+
+      if (error || !data) {
+        logger.warn('Account not found for token', { token: userToken?.substring(0, 10) });
+        return null;
+      }
+
+      return data.id;
+    } catch (error) {
+      logger.error('Failed to get account ID from token', { error: error.message });
+      return null;
+    }
+  }
+
+  /**
    * Get all conversations for a user, ordered by most recent activity
    * Implements cursor-based pagination (Requirement 8.2)
    * 
-   * @param {string} userId - User ID (account owner)
+   * @param {string} userId - User ID (account owner) - can be WUZAPI token or UUID
    * @param {Object} filters - Filter options
    * @param {Object} pagination - Pagination options
    * @param {string} [token] - User JWT token for RLS
@@ -32,6 +62,12 @@ class ChatService {
     const { status = null, hasUnread = false, search = null, inboxId = null, assignedAgentId = null } = filters;
 
     try {
+      // Convert WUZAPI token to account UUID if needed
+      const accountId = await this.getAccountIdFromToken(userId);
+      if (!accountId) {
+        throw new Error('Account not found for the provided token');
+      }
+
       const queryFn = (query) => {
         let q = query.select(`
           *,
@@ -39,8 +75,8 @@ class ChatService {
           agents!conversations_assigned_agent_id_fkey(id, name, avatar_url)
         `);
 
-        // Filter by account (user_id in legacy schema maps to account owner)
-        q = q.eq('account_id', userId);
+        // Filter by account UUID
+        q = q.eq('account_id', accountId);
 
         // Exclude test conversations
         q = q.or('is_test.is.null,is_test.eq.false');
@@ -259,16 +295,22 @@ class ChatService {
   /**
    * Get a conversation by ID
    * @param {string} conversationId - Conversation ID (UUID)
-   * @param {string} userId - User ID (for authorization)
+   * @param {string} userId - User ID (for authorization) - can be WUZAPI token or UUID
    * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<Object|null>} Conversation or null
    */
   async getConversationById(conversationId, userId, token = null) {
     try {
+      // Convert WUZAPI token to account UUID if needed
+      const accountId = await this.getAccountIdFromToken(userId);
+      if (!accountId) {
+        return null;
+      }
+
       const queryFn = (query) => query
         .select('*')
         .eq('id', conversationId)
-        .eq('account_id', userId)
+        .eq('account_id', accountId)
         .single();
 
       const { data, error } = token
@@ -290,17 +332,34 @@ class ChatService {
   }
 
   /**
+   * Get a conversation by ID (wrapper for backward compatibility)
+   * @param {string} userId - User ID (WUZAPI token)
+   * @param {string} conversationId - Conversation ID
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<Object|null>} Conversation or null
+   */
+  async getConversation(userId, conversationId, token = null) {
+    return this.getConversationById(conversationId, userId, token);
+  }
+
+  /**
    * Get a conversation by contact JID
-   * @param {string} userId - User ID (account)
+   * @param {string} userId - User ID (account) - can be WUZAPI token or UUID
    * @param {string} contactJid - Contact JID
    * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<Object|null>} Conversation or null
    */
   async getConversationByJid(userId, contactJid, token = null) {
     try {
+      // Convert WUZAPI token to account UUID if needed
+      const accountId = await this.getAccountIdFromToken(userId);
+      if (!accountId) {
+        return null;
+      }
+
       const queryFn = (query) => query
         .select('*')
-        .eq('account_id', userId)
+        .eq('account_id', accountId)
         .eq('contact_jid', contactJid)
         .single();
 
@@ -323,7 +382,7 @@ class ChatService {
 
   /**
    * Create or get existing conversation for a contact
-   * @param {string} userId - User ID (account)
+   * @param {string} userId - User ID (account) - can be WUZAPI token or UUID
    * @param {string} contactJid - Contact JID
    * @param {Object} contactInfo - Contact information
    * @param {string} [token] - User JWT token for RLS
@@ -331,6 +390,12 @@ class ChatService {
    */
   async getOrCreateConversation(userId, contactJid, contactInfo = {}, token = null) {
     try {
+      // Convert WUZAPI token to account UUID if needed
+      const accountId = await this.getAccountIdFromToken(userId);
+      if (!accountId) {
+        throw new Error('Account not found for the provided token');
+      }
+
       // Check if conversation exists
       const existing = await this.getConversationByJid(userId, contactJid, token);
       if (existing) {
@@ -339,7 +404,7 @@ class ChatService {
 
       // Create new conversation
       const conversationData = {
-        account_id: userId,
+        account_id: accountId,
         contact_jid: contactJid,
         contact_name: contactInfo.name || contactJid.split('@')[0],
         contact_avatar_url: contactInfo.avatarUrl || null,
@@ -472,6 +537,46 @@ class ChatService {
   }
 
   /**
+   * Create a message record in the database
+   * @param {string} userId - User ID (WUZAPI token)
+   * @param {string} conversationId - Conversation ID (UUID)
+   * @param {Object} messageData - Message data
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<Object>} Created message
+   */
+  async createMessage(userId, conversationId, messageData, token = null) {
+    try {
+      const messageId = this.generateMessageId();
+      
+      const record = {
+        conversation_id: conversationId,
+        message_id: messageId,
+        direction: messageData.direction || 'outgoing',
+        message_type: messageData.messageType || 'text',
+        content: messageData.content || '',
+        media_url: messageData.mediaUrl || null,
+        media_filename: messageData.mediaFilename || null,
+        media_mime_type: messageData.mediaMimeType || null,
+        reply_to_message_id: messageData.replyToMessageId || null,
+        status: messageData.status || 'pending',
+        sender_type: 'user',
+        timestamp: new Date().toISOString()
+      };
+
+      const { data, error } = await supabaseService.insert('chat_messages', record, token);
+
+      if (error) {
+        throw error;
+      }
+
+      return data || { ...record, id: messageId };
+    } catch (error) {
+      logger.error('Failed to create message', { conversationId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
    * Update conversation's last message info
    * @param {string} conversationId - Conversation ID (UUID)
    * @param {string} preview - Message preview
@@ -539,7 +644,7 @@ class ChatService {
 
   /**
    * Search conversations by contact name or phone
-   * @param {string} userId - User ID (account)
+   * @param {string} userId - User ID (account) - can be WUZAPI token or UUID
    * @param {string} query - Search query
    * @param {Object} options - Query options
    * @param {string} [token] - User JWT token for RLS
@@ -553,11 +658,17 @@ class ChatService {
         return [];
       }
 
+      // Convert WUZAPI token to account UUID if needed
+      const accountId = await this.getAccountIdFromToken(userId);
+      if (!accountId) {
+        return [];
+      }
+
       const searchTerm = query.toLowerCase();
 
       const queryFn = (q) => q
         .select('id, contact_jid, contact_name, contact_avatar_url, last_message_at, last_message_preview, unread_count, status')
-        .eq('account_id', userId)
+        .eq('account_id', accountId)
         .or(`contact_name.ilike.%${searchTerm}%,contact_jid.ilike.%${searchTerm}%`)
         .order('last_message_at', { ascending: false })
         .limit(limit);
@@ -654,6 +765,340 @@ class ChatService {
       return data;
     } catch (error) {
       logger.error('Failed to update conversation status', { conversationId, error: error.message });
+      throw error;
+    }
+  }
+
+  // ==================== LABELS METHODS ====================
+
+  /**
+   * Get all labels for a user account
+   * @param {string} accountId - Account ID or WUZAPI token
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<Array>} Labels array
+   */
+  async getLabels(accountId, token = null) {
+    try {
+      // Convert WUZAPI token to account UUID if needed
+      const resolvedAccountId = await this.getAccountIdFromToken(accountId);
+      if (!resolvedAccountId) {
+        return [];
+      }
+
+      const queryFn = (query) => query
+        .select('*')
+        .eq('account_id', resolvedAccountId)
+        .order('title', { ascending: true });
+
+      const { data, error } = token
+        ? await supabaseService.queryAsUser(token, 'labels', queryFn)
+        : await supabaseService.queryAsAdmin('labels', queryFn);
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Labels retrieved', { accountId, count: (data || []).length });
+
+      return (data || []).map(label => ({
+        id: label.id,
+        name: label.title || label.name,
+        color: label.color || '#6366f1',
+        createdAt: label.created_at
+      }));
+    } catch (error) {
+      logger.error('Failed to get labels', { accountId, error: error.message });
+      return [];
+    }
+  }
+
+  /**
+   * Create a new label
+   * @param {string} accountId - Account ID or WUZAPI token
+   * @param {Object} data - Label data
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<Object>} Created label
+   */
+  async createLabel(accountId, data, token = null) {
+    try {
+      // Convert WUZAPI token to account UUID if needed
+      const resolvedAccountId = await this.getAccountIdFromToken(accountId);
+      if (!resolvedAccountId) {
+        throw new Error('Account not found for the provided token');
+      }
+
+      const { name, color = '#6366f1' } = data;
+
+      if (!name || name.trim().length === 0) {
+        throw new Error('Label name is required');
+      }
+
+      const labelData = {
+        account_id: resolvedAccountId,
+        title: name.trim(),
+        color
+      };
+
+      const { data: label, error } = await supabaseService.insert('labels', labelData, token);
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Label created', { accountId, labelId: label.id });
+
+      return {
+        id: label.id,
+        name: label.title || label.name,
+        color: label.color,
+        createdAt: label.created_at
+      };
+    } catch (error) {
+      logger.error('Failed to create label', { accountId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Update a label
+   * @param {string} accountId - Account ID
+   * @param {string} labelId - Label ID
+   * @param {Object} data - Update data
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<Object>} Updated label
+   */
+  async updateLabel(accountId, labelId, data, token = null) {
+    try {
+      const { name, color } = data;
+      const updates = {};
+
+      if (name !== undefined) {
+        if (!name || name.trim().length === 0) {
+          throw new Error('Label name cannot be empty');
+        }
+        updates.name = name.trim();
+      }
+      if (color !== undefined) {
+        updates.color = color;
+      }
+
+      if (Object.keys(updates).length === 0) {
+        throw new Error('No updates provided');
+      }
+
+      const { data: label, error } = await supabaseService.queryAsAdmin('labels', (query) =>
+        query.update(updates).eq('id', labelId).eq('account_id', accountId).select().single()
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Label updated', { accountId, labelId });
+
+      return {
+        id: label.id,
+        name: label.name,
+        color: label.color,
+        createdAt: label.created_at
+      };
+    } catch (error) {
+      logger.error('Failed to update label', { accountId, labelId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a label
+   * @param {string} accountId - Account ID
+   * @param {string} labelId - Label ID
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<void>}
+   */
+  async deleteLabel(accountId, labelId, token = null) {
+    try {
+      // First remove label from all conversations
+      await supabaseService.queryAsAdmin('conversation_labels', (query) =>
+        query.delete().eq('label_id', labelId)
+      );
+
+      // Then delete the label
+      const { error } = await supabaseService.queryAsAdmin('labels', (query) =>
+        query.delete().eq('id', labelId).eq('account_id', accountId)
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Label deleted', { accountId, labelId });
+    } catch (error) {
+      logger.error('Failed to delete label', { accountId, labelId, error: error.message });
+      throw error;
+    }
+  }
+
+  // ==================== CANNED RESPONSES METHODS ====================
+
+  /**
+   * Get all canned responses for a user account
+   * @param {string} accountId - Account ID
+   * @param {Object} options - Query options
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<Array>} Canned responses array
+   */
+  async getCannedResponses(accountId, options = {}, token = null) {
+    try {
+      const { search = null } = options;
+
+      const queryFn = (query) => {
+        let q = query.select('*').eq('account_id', accountId);
+
+        if (search) {
+          q = q.or(`shortcut.ilike.%${search}%,content.ilike.%${search}%`);
+        }
+
+        return q.order('shortcut', { ascending: true });
+      };
+
+      const { data, error } = token
+        ? await supabaseService.queryAsUser(token, 'canned_responses', queryFn)
+        : await supabaseService.queryAsAdmin('canned_responses', queryFn);
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Canned responses retrieved', { accountId, count: (data || []).length });
+
+      return (data || []).map(response => ({
+        id: response.id,
+        shortcut: response.shortcut,
+        content: response.content,
+        createdAt: response.created_at
+      }));
+    } catch (error) {
+      logger.error('Failed to get canned responses', { accountId, error: error.message });
+      return [];
+    }
+  }
+
+  /**
+   * Create a new canned response
+   * @param {string} accountId - Account ID
+   * @param {Object} data - Canned response data
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<Object>} Created canned response
+   */
+  async createCannedResponse(accountId, data, token = null) {
+    try {
+      const { shortcut, content } = data;
+
+      if (!shortcut || shortcut.trim().length === 0) {
+        throw new Error('Shortcut is required');
+      }
+      if (!content || content.trim().length === 0) {
+        throw new Error('Content is required');
+      }
+
+      const responseData = {
+        account_id: accountId,
+        shortcut: shortcut.trim(),
+        content: content.trim()
+      };
+
+      const { data: response, error } = await supabaseService.insert('canned_responses', responseData, token);
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Canned response created', { accountId, responseId: response.id });
+
+      return {
+        id: response.id,
+        shortcut: response.shortcut,
+        content: response.content,
+        createdAt: response.created_at
+      };
+    } catch (error) {
+      logger.error('Failed to create canned response', { accountId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Update a canned response
+   * @param {string} accountId - Account ID
+   * @param {string} responseId - Canned response ID
+   * @param {Object} data - Update data
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<Object>} Updated canned response
+   */
+  async updateCannedResponse(accountId, responseId, data, token = null) {
+    try {
+      const { shortcut, content } = data;
+      const updates = {};
+
+      if (shortcut !== undefined) {
+        if (!shortcut || shortcut.trim().length === 0) {
+          throw new Error('Shortcut cannot be empty');
+        }
+        updates.shortcut = shortcut.trim();
+      }
+      if (content !== undefined) {
+        if (!content || content.trim().length === 0) {
+          throw new Error('Content cannot be empty');
+        }
+        updates.content = content.trim();
+      }
+
+      if (Object.keys(updates).length === 0) {
+        throw new Error('No updates provided');
+      }
+
+      const { data: response, error } = await supabaseService.queryAsAdmin('canned_responses', (query) =>
+        query.update(updates).eq('id', responseId).eq('account_id', accountId).select().single()
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Canned response updated', { accountId, responseId });
+
+      return {
+        id: response.id,
+        shortcut: response.shortcut,
+        content: response.content,
+        createdAt: response.created_at
+      };
+    } catch (error) {
+      logger.error('Failed to update canned response', { accountId, responseId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a canned response
+   * @param {string} accountId - Account ID
+   * @param {string} responseId - Canned response ID
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<void>}
+   */
+  async deleteCannedResponse(accountId, responseId, token = null) {
+    try {
+      const { error } = await supabaseService.queryAsAdmin('canned_responses', (query) =>
+        query.delete().eq('id', responseId).eq('account_id', accountId)
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Canned response deleted', { accountId, responseId });
+    } catch (error) {
+      logger.error('Failed to delete canned response', { accountId, responseId, error: error.message });
       throw error;
     }
   }

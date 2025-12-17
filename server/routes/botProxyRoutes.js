@@ -339,7 +339,7 @@ router.post('/send/text', verifyUserToken, quotaMiddleware.messages, quotaMiddle
     // Send outgoing webhook if not skipped (Requirement 2.4)
     if (!skip_webhook) {
       try {
-        const outgoingWebhookService = new OutgoingWebhookService(SupabaseService);
+        const outgoingWebhookService = new OutgoingWebhookService();
         await outgoingWebhookService.sendWebhookEvent(userToken, 'message.sent', {
           type: 'Message',
           event: {
@@ -544,7 +544,7 @@ router.post('/send/image', verifyUserToken, quotaMiddleware.messages, quotaMiddl
 
     if (!skip_webhook) {
       try {
-        const outgoingWebhookService = new OutgoingWebhookService(SupabaseService);
+        const outgoingWebhookService = new OutgoingWebhookService();
         await outgoingWebhookService.sendWebhookEvent(userToken, 'message.sent', {
           type: 'Message',
           event: {
@@ -710,7 +710,7 @@ router.post('/send/audio', verifyUserToken, quotaMiddleware.messages, quotaMiddl
 
     if (!skip_webhook) {
       try {
-        const outgoingWebhookService = new OutgoingWebhookService(SupabaseService);
+        const outgoingWebhookService = new OutgoingWebhookService();
         await outgoingWebhookService.sendWebhookEvent(userToken, 'message.sent', {
           type: 'Message',
           event: {
@@ -884,7 +884,7 @@ router.post('/send/document', verifyUserToken, quotaMiddleware.messages, quotaMi
 
     if (!skip_webhook) {
       try {
-        const outgoingWebhookService = new OutgoingWebhookService(SupabaseService);
+        const outgoingWebhookService = new OutgoingWebhookService();
         await outgoingWebhookService.sendWebhookEvent(userToken, 'message.sent', {
           type: 'Message',
           event: {
@@ -1053,7 +1053,7 @@ router.post('/send/video', verifyUserToken, quotaMiddleware.messages, quotaMiddl
 
     if (!skip_webhook) {
       try {
-        const outgoingWebhookService = new OutgoingWebhookService(SupabaseService);
+        const outgoingWebhookService = new OutgoingWebhookService();
         await outgoingWebhookService.sendWebhookEvent(userToken, 'message.sent', {
           type: 'Message',
           event: {
@@ -1219,7 +1219,7 @@ router.post('/send/sticker', verifyUserToken, quotaMiddleware.messages, quotaMid
 
     if (!skip_webhook) {
       try {
-        const outgoingWebhookService = new OutgoingWebhookService(SupabaseService);
+        const outgoingWebhookService = new OutgoingWebhookService();
         await outgoingWebhookService.sendWebhookEvent(userToken, 'message.sent', {
           type: 'Message',
           event: {

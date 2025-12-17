@@ -24,7 +24,7 @@ const verifyUserToken = require('../middleware/verifyUserToken')
  */
 router.get('/', verifyUserToken, async (req, res) => {
   try {
-    const webhookService = new OutgoingWebhookService(SupabaseService)
+    const webhookService = new OutgoingWebhookService()
     
     const webhooks = await webhookService.getWebhooks(req.userId)
 
@@ -42,7 +42,7 @@ router.get('/', verifyUserToken, async (req, res) => {
 router.get('/:id', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
-    const webhookService = new OutgoingWebhookService(SupabaseService)
+    const webhookService = new OutgoingWebhookService()
     
     const webhook = await webhookService.getWebhookById(parseInt(id, 10), req.userId)
     
@@ -79,7 +79,7 @@ router.post('/', verifyUserToken, featureMiddleware.webhooks, quotaMiddleware.we
       return res.status(400).json({ success: false, error: 'At least one event type is required' })
     }
 
-    const webhookService = new OutgoingWebhookService(SupabaseService)
+    const webhookService = new OutgoingWebhookService()
     
     const webhook = await webhookService.configureWebhook(req.userId, {
       url,
@@ -103,7 +103,7 @@ router.put('/:id', verifyUserToken, async (req, res) => {
     const { id } = req.params
     const { url, events, isActive } = req.body
 
-    const webhookService = new OutgoingWebhookService(SupabaseService)
+    const webhookService = new OutgoingWebhookService()
     
     const webhook = await webhookService.updateWebhook(parseInt(id, 10), req.userId, {
       url,
@@ -130,7 +130,7 @@ router.delete('/:id', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
 
-    const webhookService = new OutgoingWebhookService(SupabaseService)
+    const webhookService = new OutgoingWebhookService()
     
     await webhookService.deleteWebhook(parseInt(id, 10), req.userId)
 
@@ -153,7 +153,7 @@ router.get('/:id/stats', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
 
-    const webhookService = new OutgoingWebhookService(SupabaseService)
+    const webhookService = new OutgoingWebhookService()
     
     const stats = await webhookService.getWebhookStats(parseInt(id, 10), req.userId)
 
@@ -176,7 +176,7 @@ router.post('/:id/test', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
 
-    const webhookService = new OutgoingWebhookService(SupabaseService)
+    const webhookService = new OutgoingWebhookService()
     
     // Get webhook to verify ownership
     const webhook = await webhookService.getWebhookById(parseInt(id, 10), req.userId)

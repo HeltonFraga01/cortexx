@@ -134,7 +134,7 @@ class ChatMessageHandler {
     this.chatService = new ChatService(SupabaseService)
     this.chatHandler = chatHandler // WebSocket handler for real-time updates
     this.presenceState = new Map() // contactJid -> { state, timestamp }
-    this.outgoingWebhookService = new OutgoingWebhookService(SupabaseService)
+    this.outgoingWebhookService = new OutgoingWebhookService()
     this.botService = new BotService(SupabaseService)
     this.groupNameResolver = new GroupNameResolver(SupabaseService, logger) // Group name resolution service
     

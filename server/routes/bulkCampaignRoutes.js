@@ -790,46 +790,50 @@ router.get('/history', verifyUserToken, async (req, res) => {
     }
 
     const { page, limit } = paginationValidation.sanitized;
-
-    const db = req.app.locals.db;
-
     const offset = (page - 1) * limit;
 
-    let sql = `
-      SELECT * FROM campaigns 
-      WHERE user_token = ?
-    `;
-
-    const params = [userToken];
-
+    // Build filters for SupabaseService
+    const filters = { user_token: userToken };
     if (instance) {
-      sql += ' AND instance = ?';
-      params.push(instance);
+      filters.instance = instance;
     }
 
-    sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), offset);
+    // Get campaigns using SupabaseService
+    const supabaseService = require('../services/SupabaseService');
+    
+    const { data: campaigns, error } = await supabaseService.queryAsAdmin('campaigns', (query) => {
+      let q = query.select('*').eq('user_token', userToken);
+      if (instance) {
+        q = q.eq('instance', instance);
+      }
+      return q.order('created_at', { ascending: false }).range(offset, offset + parseInt(limit) - 1);
+    });
 
-    const { rows } = await db.query(sql, params);
-
-    // Contar total
-    let countSql = 'SELECT COUNT(*) as total FROM campaigns WHERE user_token = ?';
-    const countParams = [userToken];
-
-    if (instance) {
-      countSql += ' AND instance = ?';
-      countParams.push(instance);
+    if (error) {
+      throw new Error(`Failed to fetch campaigns: ${error.message}`);
     }
 
-    const { rows: countRows } = await db.query(countSql, countParams);
-    const total = countRows[0].total;
+    // Get total count
+    const { data: countData, error: countError } = await supabaseService.queryAsAdmin('campaigns', (query) => {
+      let q = query.select('*', { count: 'exact', head: true }).eq('user_token', userToken);
+      if (instance) {
+        q = q.eq('instance', instance);
+      }
+      return q;
+    });
 
-    const campaigns = rows.map(campaign => {
+    // Handle empty results gracefully
+    const total = countError ? 0 : (countData?.length || 0);
+    const rows = campaigns || [];
+
+    const formattedCampaigns = rows.map(campaign => {
       // Parse sending_window se existir
       let sendingWindow = null;
       if (campaign.sending_window) {
         try {
-          sendingWindow = JSON.parse(campaign.sending_window);
+          sendingWindow = typeof campaign.sending_window === 'string' 
+            ? JSON.parse(campaign.sending_window) 
+            : campaign.sending_window;
         } catch {
           sendingWindow = null;
         }
@@ -841,16 +845,16 @@ router.get('/history', verifyUserToken, async (req, res) => {
         instance: campaign.instance,
         status: campaign.status,
         messageType: campaign.message_type,
-        totalContacts: campaign.total_contacts,
-        sentCount: campaign.sent_count,
-        failedCount: campaign.failed_count,
-        successRate: campaign.total_contacts > 0
-          ? ((campaign.sent_count / campaign.total_contacts) * 100).toFixed(2)
+        totalContacts: campaign.total_contacts || 0,
+        sentCount: campaign.sent_count || 0,
+        failedCount: campaign.failed_count || 0,
+        successRate: (campaign.total_contacts || 0) > 0
+          ? (((campaign.sent_count || 0) / campaign.total_contacts) * 100).toFixed(2)
           : 0,
         createdAt: campaign.created_at,
         startedAt: campaign.started_at,
         completedAt: campaign.completed_at,
-        isScheduled: campaign.is_scheduled === 1,
+        isScheduled: campaign.is_scheduled === true || campaign.is_scheduled === 1,
         scheduledAt: campaign.scheduled_at,
         delayMin: campaign.delay_min,
         delayMax: campaign.delay_max,
@@ -860,20 +864,25 @@ router.get('/history', verifyUserToken, async (req, res) => {
 
     res.json({
       success: true,
-      campaigns,
+      campaigns: formattedCampaigns,
+      total: rows.length,
+      items: formattedCampaigns,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
-        total,
-        totalPages: Math.ceil(total / parseInt(limit))
+        total: rows.length,
+        totalPages: Math.ceil(rows.length / parseInt(limit)) || 1
       }
     });
 
   } catch (error) {
     logger.error('Erro ao listar histórico:', error.message);
     res.status(500).json({
+      success: false,
       error: 'Erro ao listar histórico',
-      message: error.message
+      message: error.message,
+      total: 0,
+      items: []
     });
   }
 });

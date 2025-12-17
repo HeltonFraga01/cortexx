@@ -2,6 +2,7 @@
  * OutgoingWebhookService - Service for managing outgoing webhooks
  * 
  * Handles webhook configuration, delivery, and retry logic
+ * Refactored to use SupabaseService instead of SQLite
  * 
  * Requirements: 16.1-16.6
  */
@@ -10,17 +11,17 @@ const crypto = require('crypto')
 const axios = require('axios')
 const { logger } = require('../utils/logger')
 const { toBoolean } = require('../utils/responseTransformer')
+const supabaseService = require('./SupabaseService')
 
 class OutgoingWebhookService {
-  constructor(db) {
-    this.db = db
+  constructor() {
     this.MAX_RETRIES = 3
     this.RETRY_DELAYS = [1000, 2000, 4000] // Exponential backoff
   }
 
   /**
    * Configure a new webhook
-   * @param {number} userId - User ID
+   * @param {string} userId - User ID
    * @param {Object} data - Webhook configuration
    * @returns {Promise<Object>} Created webhook
    * 
@@ -44,31 +45,32 @@ class OutgoingWebhookService {
     // Generate secret if not provided
     const webhookSecret = secret || this.generateSecret()
 
-    const sql = `
-      INSERT INTO outgoing_webhooks (
-        user_id, url, events, secret, is_active, 
-        success_count, failure_count, created_at
-      ) VALUES (?, ?, ?, ?, 1, 0, 0, datetime('now'))
-    `
-
-    const { lastID } = await this.db.query(sql, [
-      userId,
+    const webhookData = {
+      user_id: userId,
       url,
-      JSON.stringify(events),
-      webhookSecret
-    ])
+      events: JSON.stringify(events),
+      secret: webhookSecret,
+      is_active: true,
+      success_count: 0,
+      failure_count: 0
+    }
 
-    const webhook = await this.getWebhookById(lastID, userId)
+    const { data: webhook, error } = await supabaseService.insert('outgoing_webhooks', webhookData)
 
-    logger.info('Webhook configured', { webhookId: lastID, userId, events })
+    if (error) {
+      logger.error('Failed to configure webhook', { userId, error: error.message })
+      throw new Error(`Failed to configure webhook: ${error.message}`)
+    }
 
-    return webhook
+    logger.info('Webhook configured', { webhookId: webhook.id, userId, events })
+
+    return this.formatWebhook(webhook)
   }
 
   /**
    * Update a webhook
-   * @param {number} webhookId - Webhook ID
-   * @param {number} userId - User ID
+   * @param {string} webhookId - Webhook ID
+   * @param {string} userId - User ID
    * @param {Object} data - Update data
    * @returns {Promise<Object>} Updated webhook
    */
@@ -88,44 +90,41 @@ class OutgoingWebhookService {
       }
     }
 
-    const updates = []
-    const params = []
+    const updates = {}
 
     if (url !== undefined) {
-      updates.push('url = ?')
-      params.push(url)
+      updates.url = url
     }
     if (events !== undefined) {
-      updates.push('events = ?')
-      params.push(JSON.stringify(events))
+      updates.events = JSON.stringify(events)
     }
     if (isActive !== undefined) {
-      updates.push('is_active = ?')
-      params.push(isActive ? 1 : 0)
+      updates.is_active = isActive
     }
 
-    if (updates.length === 0) {
+    if (Object.keys(updates).length === 0) {
       return webhook
     }
 
-    params.push(webhookId, userId)
+    // Use queryAsAdmin to update with user_id filter
+    const { data: updated, error } = await supabaseService.queryAsAdmin('outgoing_webhooks', (query) =>
+      query.update(updates).eq('id', webhookId).eq('user_id', userId).select().single()
+    )
 
-    const sql = `
-      UPDATE outgoing_webhooks SET ${updates.join(', ')}
-      WHERE id = ? AND user_id = ?
-    `
-
-    await this.db.query(sql, params)
+    if (error) {
+      logger.error('Failed to update webhook', { webhookId, userId, error: error.message })
+      throw new Error(`Failed to update webhook: ${error.message}`)
+    }
 
     logger.info('Webhook updated', { webhookId, userId })
 
-    return this.getWebhookById(webhookId, userId)
+    return this.formatWebhook(updated)
   }
 
   /**
    * Delete a webhook
-   * @param {number} webhookId - Webhook ID
-   * @param {number} userId - User ID
+   * @param {string} webhookId - Webhook ID
+   * @param {string} userId - User ID
    */
   async deleteWebhook(webhookId, userId) {
     const webhook = await this.getWebhookById(webhookId, userId)
@@ -134,23 +133,26 @@ class OutgoingWebhookService {
     }
 
     // Delete delivery logs first
-    await this.db.query(
-      'DELETE FROM webhook_deliveries WHERE webhook_id = ?',
-      [webhookId]
+    await supabaseService.queryAsAdmin('webhook_deliveries', (query) =>
+      query.delete().eq('webhook_id', webhookId)
     )
 
     // Delete webhook
-    await this.db.query(
-      'DELETE FROM outgoing_webhooks WHERE id = ? AND user_id = ?',
-      [webhookId, userId]
+    const { error } = await supabaseService.queryAsAdmin('outgoing_webhooks', (query) =>
+      query.delete().eq('id', webhookId).eq('user_id', userId)
     )
+
+    if (error) {
+      logger.error('Failed to delete webhook', { webhookId, userId, error: error.message })
+      throw new Error(`Failed to delete webhook: ${error.message}`)
+    }
 
     logger.info('Webhook deleted', { webhookId, userId })
   }
 
   /**
    * Send webhook event to all configured webhooks
-   * @param {number} userId - User ID
+   * @param {string} userId - User ID
    * @param {string} eventType - Event type
    * @param {Object} payload - Event payload
    * @returns {Promise<Array>} Delivery results
@@ -158,23 +160,27 @@ class OutgoingWebhookService {
    * Requirements: 16.3, 16.4
    */
   async sendWebhookEvent(userId, eventType, payload) {
-    // Get all active webhooks for this user that subscribe to this event
-    const sql = `
-      SELECT * FROM outgoing_webhooks 
-      WHERE user_id = ? AND is_active = 1
-    `
-    const { rows: webhooks } = await this.db.query(sql, [userId])
+    // Get all active webhooks for this user
+    const { data: webhooks, error } = await supabaseService.getMany(
+      'outgoing_webhooks',
+      { user_id: userId, is_active: true }
+    )
+
+    if (error) {
+      logger.error('Failed to get webhooks for event', { userId, error: error.message })
+      return []
+    }
 
     logger.info('Checking outgoing webhooks', {
       userId: userId?.substring(0, 10),
       eventType,
-      webhooksFound: webhooks.length
+      webhooksFound: (webhooks || []).length
     })
 
     const results = []
 
-    for (const webhook of webhooks) {
-      const events = JSON.parse(webhook.events || '[]')
+    for (const webhook of (webhooks || [])) {
+      const events = this.parseEvents(webhook.events)
       
       logger.debug('Webhook event check', {
         webhookId: webhook.id,
@@ -194,6 +200,7 @@ class OutgoingWebhookService {
 
     return results
   }
+
 
   /**
    * Deliver webhook with retry logic
@@ -306,51 +313,66 @@ class OutgoingWebhookService {
 
   /**
    * Log webhook delivery
-   * @param {number} webhookId - Webhook ID
+   * @param {string} webhookId - Webhook ID
    * @param {Object} data - Delivery data
    */
   async logDelivery(webhookId, data) {
-    const sql = `
-      INSERT INTO webhook_deliveries (
-        webhook_id, delivery_id, event_type, payload, status, success, attempts,
-        response_status, response_body, error, duration_ms, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    `
+    const deliveryData = {
+      webhook_id: webhookId,
+      delivery_id: data.deliveryId,
+      event_type: data.eventType,
+      payload: data.payload || {},
+      status: data.success ? 'success' : 'failed',
+      success: data.success,
+      attempts: data.attempts,
+      response_status: data.responseStatus,
+      response_body: data.responseBody,
+      error: data.error,
+      duration_ms: data.duration
+    }
 
-    await this.db.query(sql, [
-      webhookId,
-      data.deliveryId,
-      data.eventType,
-      JSON.stringify(data.payload || {}),
-      data.success ? 'success' : 'failed',
-      data.success ? 1 : 0,
-      data.attempts,
-      data.responseStatus,
-      data.responseBody,
-      data.error,
-      data.duration
-    ])
+    const { error } = await supabaseService.insert('webhook_deliveries', deliveryData)
+
+    if (error) {
+      logger.error('Failed to log webhook delivery', { webhookId, error: error.message })
+    }
   }
 
   /**
    * Update webhook statistics
-   * @param {number} webhookId - Webhook ID
+   * @param {string} webhookId - Webhook ID
    * @param {boolean} success - Whether delivery was successful
    */
   async updateWebhookStats(webhookId, success) {
-    const field = success ? 'success_count' : 'failure_count'
-    const sql = `
-      UPDATE outgoing_webhooks 
-      SET ${field} = ${field} + 1, last_delivery_at = datetime('now')
-      WHERE id = ?
-    `
-    await this.db.query(sql, [webhookId])
+    // Get current stats
+    const { data: webhook, error: getError } = await supabaseService.getById('outgoing_webhooks', webhookId)
+    
+    if (getError || !webhook) {
+      logger.error('Failed to get webhook for stats update', { webhookId })
+      return
+    }
+
+    const updates = {
+      last_delivery_at: new Date().toISOString()
+    }
+
+    if (success) {
+      updates.success_count = (webhook.success_count || 0) + 1
+    } else {
+      updates.failure_count = (webhook.failure_count || 0) + 1
+    }
+
+    const { error } = await supabaseService.update('outgoing_webhooks', webhookId, updates)
+
+    if (error) {
+      logger.error('Failed to update webhook stats', { webhookId, error: error.message })
+    }
   }
 
   /**
    * Get webhook statistics
-   * @param {number} webhookId - Webhook ID
-   * @param {number} userId - User ID
+   * @param {string} webhookId - Webhook ID
+   * @param {string} userId - User ID
    * @returns {Promise<Object>} Webhook stats
    * 
    * Requirements: 16.6
@@ -362,41 +384,47 @@ class OutgoingWebhookService {
     }
 
     // Get recent deliveries
-    const deliveriesSql = `
-      SELECT * FROM webhook_deliveries 
-      WHERE webhook_id = ?
-      ORDER BY created_at DESC
-      LIMIT 100
-    `
-    const { rows: deliveries } = await this.db.query(deliveriesSql, [webhookId])
+    const { data: deliveries, error } = await supabaseService.queryAsAdmin('webhook_deliveries', (query) =>
+      query
+        .select('*')
+        .eq('webhook_id', webhookId)
+        .order('created_at', { ascending: false })
+        .limit(100)
+    )
+
+    if (error) {
+      logger.error('Failed to get webhook deliveries', { webhookId, error: error.message })
+      throw new Error(`Failed to get webhook stats: ${error.message}`)
+    }
+
+    const deliveryList = deliveries || []
 
     // Calculate stats
-    const totalDeliveries = deliveries.length
-    const successfulDeliveries = deliveries.filter(d => d.success).length
+    const totalDeliveries = deliveryList.length
+    const successfulDeliveries = deliveryList.filter(d => d.success).length
     const failedDeliveries = totalDeliveries - successfulDeliveries
-    const avgDuration = deliveries.length > 0
-      ? deliveries.reduce((sum, d) => sum + (d.duration_ms || 0), 0) / deliveries.length
+    const avgDuration = deliveryList.length > 0
+      ? deliveryList.reduce((sum, d) => sum + (d.duration_ms || 0), 0) / deliveryList.length
       : 0
 
     return {
       webhook: {
         id: webhook.id,
         url: webhook.url,
-        events: JSON.parse(webhook.events || '[]'),
-        isActive: toBoolean(webhook.is_active),
-        createdAt: webhook.created_at,
-        lastDeliveryAt: webhook.last_delivery_at
+        events: webhook.events,
+        isActive: webhook.isActive,
+        createdAt: webhook.createdAt,
+        lastDeliveryAt: webhook.lastDeliveryAt
       },
       stats: {
-        totalSuccess: webhook.success_count,
-        totalFailure: webhook.failure_count,
+        totalSuccess: webhook.successCount || 0,
+        totalFailure: webhook.failureCount || 0,
         recentDeliveries: totalDeliveries,
         recentSuccess: successfulDeliveries,
         recentFailure: failedDeliveries,
         avgDurationMs: Math.round(avgDuration)
       },
-      // Requirements: 4.1 (websocket-data-transformation-fix) - use toBoolean for consistent boolean conversion
-      recentDeliveries: deliveries.slice(0, 10).map(d => ({
+      recentDeliveries: deliveryList.slice(0, 10).map(d => ({
         id: d.delivery_id,
         eventType: d.event_type,
         success: toBoolean(d.success),
@@ -413,33 +441,74 @@ class OutgoingWebhookService {
 
   /**
    * Get webhook by ID
-   * @param {number} webhookId - Webhook ID
-   * @param {number} userId - User ID
+   * @param {string} webhookId - Webhook ID
+   * @param {string} userId - User ID
    * @returns {Promise<Object|null>} Webhook or null
    */
   async getWebhookById(webhookId, userId) {
-    const sql = 'SELECT * FROM outgoing_webhooks WHERE id = ? AND user_id = ?'
-    const { rows } = await this.db.query(sql, [webhookId, userId])
-    return rows[0] || null
+    const { data: webhooks, error } = await supabaseService.queryAsAdmin('outgoing_webhooks', (query) =>
+      query.select('*').eq('id', webhookId).eq('user_id', userId)
+    )
+
+    if (error || !webhooks || webhooks.length === 0) {
+      return null
+    }
+
+    return this.formatWebhook(webhooks[0])
   }
 
   /**
    * Get all webhooks for a user
-   * @param {number} userId - User ID
+   * @param {string} userId - User ID
    * @returns {Promise<Array>} Webhooks
    */
   async getWebhooks(userId) {
-    const sql = `
-      SELECT * FROM outgoing_webhooks 
-      WHERE user_id = ?
-      ORDER BY created_at DESC
-    `
-    const { rows } = await this.db.query(sql, [userId])
-    return rows.map(w => ({
-      ...w,
-      events: JSON.parse(w.events || '[]'),
-      isActive: toBoolean(w.is_active)
-    }))
+    const { data: webhooks, error } = await supabaseService.queryAsAdmin('outgoing_webhooks', (query) =>
+      query.select('*').eq('user_id', userId).order('created_at', { ascending: false })
+    )
+
+    if (error) {
+      logger.error('Failed to get webhooks', { userId, error: error.message })
+      return []
+    }
+
+    return (webhooks || []).map(w => this.formatWebhook(w))
+  }
+
+  /**
+   * Format webhook from database
+   * @param {Object} webhook - Raw webhook from database
+   * @returns {Object} Formatted webhook
+   */
+  formatWebhook(webhook) {
+    return {
+      id: webhook.id,
+      userId: webhook.user_id,
+      url: webhook.url,
+      events: this.parseEvents(webhook.events),
+      secret: webhook.secret,
+      isActive: toBoolean(webhook.is_active),
+      successCount: webhook.success_count || 0,
+      failureCount: webhook.failure_count || 0,
+      lastDeliveryAt: webhook.last_delivery_at,
+      createdAt: webhook.created_at
+    }
+  }
+
+  /**
+   * Parse events from database (handles both string and array)
+   * @param {string|Array} events - Events from database
+   * @returns {Array} Parsed events array
+   */
+  parseEvents(events) {
+    if (Array.isArray(events)) {
+      return events
+    }
+    try {
+      return JSON.parse(events || '[]')
+    } catch {
+      return []
+    }
   }
 
   /**

@@ -263,7 +263,7 @@ router.get('/conversations/:id', requireAgentAuth(null), requirePermission('conv
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
     }
     
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
@@ -302,7 +302,7 @@ router.patch('/conversations/:id', requireAgentAuth(null), requirePermission('co
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -315,7 +315,7 @@ router.patch('/conversations/:id', requireAgentAuth(null), requirePermission('co
     if (isMuted !== undefined) updates.isMuted = isMuted;
     if (assignedBotId !== undefined) updates.assignedBotId = assignedBotId;
     
-    const updated = await chatService.updateConversation(userToken, parseInt(id, 10), updates);
+    const updated = await chatService.updateConversation(userToken, id, updates);
     
     res.json({ success: true, data: updated });
   } catch (error) {
@@ -344,7 +344,7 @@ router.post('/conversations/:id/read', requireAgentAuth(null), requirePermission
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -352,7 +352,7 @@ router.post('/conversations/:id/read', requireAgentAuth(null), requirePermission
       return res.status(403).json({ success: false, error: 'Acesso negado a esta conversa' });
     }
     
-    await chatService.markConversationAsRead(userToken, parseInt(id, 10));
+    await chatService.markConversationAsRead(userToken, id);
     
     res.json({ success: true });
   } catch (error) {
@@ -384,7 +384,7 @@ router.get('/conversations/:id/messages', requireAgentAuth(null), requirePermiss
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -392,7 +392,7 @@ router.get('/conversations/:id/messages', requireAgentAuth(null), requirePermiss
       return res.status(403).json({ success: false, error: 'Acesso negado a esta conversa' });
     }
     
-    const result = await chatService.getMessages(userToken, parseInt(id, 10), {
+    const result = await chatService.getMessages(id, userToken, {
       limit: parseInt(limit, 10),
       before,
       after
@@ -436,7 +436,7 @@ router.post('/conversations/:id/messages', requireAgentAuth(null), requirePermis
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -459,7 +459,7 @@ router.post('/conversations/:id/messages', requireAgentAuth(null), requirePermis
       : conversation.contactJid.replace('@s.whatsapp.net', '');
     
     // Create message with pending status
-    const message = await chatService.createMessage(userToken, parseInt(id, 10), {
+    const message = await chatService.createMessage(userToken, id, {
       direction: 'outgoing',
       messageType,
       content,
@@ -668,7 +668,7 @@ router.post('/conversations/:id/fetch-avatar', requireAgentAuth(null), requirePe
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -737,7 +737,7 @@ router.post('/conversations/:id/fetch-avatar', requireAgentAuth(null), requirePe
           success: true,
           data: {
             avatarUrl: avatarUrl,
-            conversationId: parseInt(id, 10)
+            conversationId: id
           }
         });
       } else {
@@ -815,7 +815,7 @@ router.post('/conversations/:id/labels', requireAgentAuth(null), requirePermissi
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -823,7 +823,7 @@ router.post('/conversations/:id/labels', requireAgentAuth(null), requirePermissi
       return res.status(403).json({ success: false, error: 'Acesso negado a esta conversa' });
     }
     
-    await chatService.assignLabel(userToken, parseInt(id, 10), labelId);
+    await chatService.assignLabel(userToken, id, labelId);
     
     res.json({ success: true });
   } catch (error) {
@@ -852,7 +852,7 @@ router.delete('/conversations/:id/labels/:labelId', requireAgentAuth(null), requ
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -860,7 +860,7 @@ router.delete('/conversations/:id/labels/:labelId', requireAgentAuth(null), requ
       return res.status(403).json({ success: false, error: 'Acesso negado a esta conversa' });
     }
     
-    await chatService.removeLabel(userToken, parseInt(id, 10), parseInt(labelId, 10));
+    await chatService.removeLabel(userToken, id, parseInt(labelId, 10));
     
     res.json({ success: true });
   } catch (error) {
@@ -1022,7 +1022,7 @@ router.get('/conversations/:id/info', requireAgentAuth(null), requirePermission(
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -1030,7 +1030,7 @@ router.get('/conversations/:id/info', requireAgentAuth(null), requirePermission(
       return res.status(403).json({ success: false, error: 'Acesso negado a esta conversa' });
     }
     
-    const info = await chatService.getConversationInfo(userToken, parseInt(id, 10));
+    const info = await chatService.getConversationInfo(userToken, id);
     
     res.json({ success: true, data: info });
   } catch (error) {
@@ -1072,7 +1072,7 @@ router.post('/conversations/:id/pickup', requireAgentAuth(null), requirePermissi
     }
     
     // Verify conversation exists and agent has access
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -1089,7 +1089,7 @@ router.post('/conversations/:id/pickup', requireAgentAuth(null), requirePermissi
     }
     
     // Pickup conversation
-    const success = await assignmentService.pickupConversation(parseInt(id, 10), agentId);
+    const success = await assignmentService.pickupConversation(id, agentId);
     
     if (!success) {
       return res.status(409).json({ 
@@ -1100,7 +1100,7 @@ router.post('/conversations/:id/pickup', requireAgentAuth(null), requirePermissi
     
     logger.info('Agent picked up conversation', { agentId, conversationId: id });
     
-    res.json({ success: true, data: { conversationId: parseInt(id, 10), agentId } });
+    res.json({ success: true, data: { conversationId: id, agentId } });
   } catch (error) {
     logger.error('Error picking up conversation', { error: error.message, agentId: req.agent?.id });
     res.status(500).json({ success: false, error: error.message });
@@ -1134,7 +1134,7 @@ router.post('/conversations/:id/transfer', requireAgentAuth(null), requirePermis
     }
     
     // Verify conversation exists and agent has access
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -1164,7 +1164,7 @@ router.post('/conversations/:id/transfer', requireAgentAuth(null), requirePermis
     const isOffline = targetAgent?.availability !== 'online';
     
     // Transfer conversation
-    await assignmentService.transferConversation(parseInt(id, 10), targetAgentId, agentId);
+    await assignmentService.transferConversation(id, targetAgentId, agentId);
     
     logger.info('Agent transferred conversation', { 
       agentId, 
@@ -1175,7 +1175,7 @@ router.post('/conversations/:id/transfer', requireAgentAuth(null), requirePermis
     res.json({ 
       success: true, 
       data: { 
-        conversationId: parseInt(id, 10), 
+        conversationId: id, 
         targetAgentId,
         warning: isOffline ? 'Agente destino está offline' : null
       } 
@@ -1208,7 +1208,7 @@ router.post('/conversations/:id/release', requireAgentAuth(null), requirePermiss
     }
     
     // Verify conversation exists and agent has access
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -1217,11 +1217,11 @@ router.post('/conversations/:id/release', requireAgentAuth(null), requirePermiss
     }
     
     // Release conversation (do NOT auto-assign)
-    await assignmentService.releaseConversation(parseInt(id, 10), agentId);
+    await assignmentService.releaseConversation(id, agentId);
     
     logger.info('Agent released conversation', { agentId, conversationId: id });
     
-    res.json({ success: true, data: { conversationId: parseInt(id, 10) } });
+    res.json({ success: true, data: { conversationId: id } });
   } catch (error) {
     logger.error('Error releasing conversation', { error: error.message, agentId: req.agent?.id });
     res.status(500).json({ success: false, error: error.message });
@@ -1249,7 +1249,7 @@ router.get('/conversations/:id/transferable-agents', requireAgentAuth(null), req
     }
     
     // Verify conversation exists and agent has access
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -1333,7 +1333,7 @@ router.post('/conversations/:id/assign-bot', requireAgentAuth(null), requirePerm
     }
     
     // Verify conversation exists and agent has access
-    const conversation = await chatService.getConversation(userToken, parseInt(id, 10));
+    const conversation = await chatService.getConversation(userToken, id);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -1358,7 +1358,7 @@ router.post('/conversations/:id/assign-bot', requireAgentAuth(null), requirePerm
     // Update conversation with bot assignment
     const updatedConversation = await chatService.updateConversation(
       userToken,
-      parseInt(id, 10),
+      id,
       { assignedBotId: botId }
     );
     

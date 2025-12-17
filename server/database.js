@@ -458,6 +458,97 @@ class Database {
     }
   }
 
+  // Message history methods
+  async getMessageHistory(userToken, limit = 50, offset = 0) {
+    try {
+      // First, get the account_id for this user token
+      const { data: accountData, error: accountError } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+        query.select('id').eq('wuzapi_token', userToken).single()
+      );
+
+      if (accountError || !accountData) {
+        logger.warn('Account not found for user token:', userToken.substring(0, 8) + '...');
+        return [];
+      }
+
+      const accountId = accountData.id;
+
+      // Fetch messages for this account
+      const { data, error } = await SupabaseService.queryAsAdmin('sent_messages', (query) =>
+        query
+          .select('*')
+          .eq('account_id', accountId)
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1)
+      );
+
+      if (error) {
+        logger.error('Error fetching message history:', error.message);
+        return [];
+      }
+
+      return data || [];
+    } catch (error) {
+      logger.error('Error in getMessageHistory:', error.message);
+      return [];
+    }
+  }
+
+  async getMessageCount(userToken, period = 'all') {
+    try {
+      // First, get the account_id for this user token
+      const { data: accountData, error: accountError } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+        query.select('id').eq('wuzapi_token', userToken).single()
+      );
+
+      if (accountError || !accountData) {
+        logger.warn('Account not found for user token in getMessageCount:', userToken.substring(0, 8) + '...');
+        return 0;
+      }
+
+      const accountId = accountData.id;
+
+      // Build query based on period
+      let queryBuilder;
+      if (period === 'today') {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayISO = today.toISOString();
+
+        const { count, error } = await SupabaseService.queryAsAdmin('sent_messages', (query) =>
+          query
+            .select('*', { count: 'exact', head: true })
+            .eq('account_id', accountId)
+            .gte('created_at', todayISO)
+        );
+
+        if (error) {
+          logger.error('Error counting messages for today:', error.message);
+          return 0;
+        }
+
+        return count || 0;
+      } else {
+        // Count all messages
+        const { count, error } = await SupabaseService.queryAsAdmin('sent_messages', (query) =>
+          query
+            .select('*', { count: 'exact', head: true })
+            .eq('account_id', accountId)
+        );
+
+        if (error) {
+          logger.error('Error counting all messages:', error.message);
+          return 0;
+        }
+
+        return count || 0;
+      }
+    } catch (error) {
+      logger.error('Error in getMessageCount:', error.message);
+      return 0;
+    }
+  }
+
   async close() {
     logger.info('Database connection closed (Supabase - no action needed)');
     return true;
