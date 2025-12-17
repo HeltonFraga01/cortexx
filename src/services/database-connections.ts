@@ -66,7 +66,7 @@ export interface NocoDBColumn {
 export interface DatabaseConnection {
   id?: number;
   name: string;
-  type: 'POSTGRES' | 'MYSQL' | 'NOCODB' | 'API' | 'SQLITE';
+  type: 'POSTGRES' | 'MYSQL' | 'NOCODB' | 'API';
   host: string;
   port: number;
   database: string;
@@ -329,34 +329,7 @@ export class DatabaseConnectionsService {
     }
   }
 
-  /**
-   * Testar conexão com SQLite
-   */
-  async testSQLiteConnection(connection: DatabaseConnection): Promise<{ success: boolean; error?: string }> {
-    try {
-      // Usar a rota de teste específica da conexão
-      if (!connection.id) {
-        return { success: false, error: 'ID da conexão não encontrado' };
-      }
 
-      const response = await backendApi.post(`/database-connections/${connection.id}/test`);
-
-      // Verificar se a resposta foi bem-sucedida
-      if (response.success) {
-        // Verificar o status dentro de data
-        const connectionStatus = response.data?.data?.status;
-        if (connectionStatus === 'connected') {
-          return { success: true };
-        } else {
-          return { success: false, error: response.data?.message || 'Banco SQLite não está acessível' };
-        }
-      } else {
-        return { success: false, error: response.data?.message || response.error || 'Banco SQLite não está acessível' };
-      }
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Erro ao conectar com SQLite' };
-    }
-  }
 
   /**
    * Testar e atualizar status de uma conexão
@@ -369,10 +342,8 @@ export class DatabaseConnectionsService {
 
       if (connection.type === 'NOCODB') {
         testResult = await this.testNocoDBConnection(connection);
-      } else if (connection.type === 'SQLITE') {
-        testResult = await this.testSQLiteConnection(connection);
       }
-      // Adicionar outros tipos de teste aqui no futuro
+      // Adicionar outros tipos de teste aqui no futuro (POSTGRES, MYSQL, API)
 
       const newStatus = testResult.success ? 'connected' : 'error';
       await this.updateConnectionStatus(connection.id, newStatus);

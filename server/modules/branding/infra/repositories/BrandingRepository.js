@@ -1,7 +1,7 @@
 /**
  * BrandingRepository - Acesso a dados de Branding
  * 
- * Abstrai a persistência SQLite.
+ * Abstrai a persistência no banco de dados (Supabase).
  * Retorna Entidades de Domínio, não linhas cruas do banco.
  */
 

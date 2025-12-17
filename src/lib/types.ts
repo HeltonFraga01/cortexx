@@ -239,7 +239,7 @@ export interface NocoDBColumn {
 export interface DatabaseConnection {
   id?: number;
   name: string;
-  type: 'POSTGRES' | 'MYSQL' | 'NOCODB' | 'API' | 'SQLITE';
+  type: 'POSTGRES' | 'MYSQL' | 'NOCODB' | 'API';
   host: string;
   port: number;
   database: string;

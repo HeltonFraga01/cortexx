@@ -126,12 +126,12 @@ docker exec $(docker ps -q -f name=cortexx) sh -c "
 
 ```bash
 # Ver todas as env vars do container
-docker exec $(docker ps -q -f name=cortexx) env | grep -E "NODE_ENV|PORT|SQLITE"
+docker exec $(docker ps -q -f name=cortexx) env | grep -E "NODE_ENV|PORT|SUPABASE"
 
 # Deve mostrar:
 # NODE_ENV=production
 # PORT=3001
-# SQLITE_DB_PATH=/app/data/cloudapi.db
+# SUPABASE_URL=https://seu-projeto.supabase.co
 ```
 
 ---

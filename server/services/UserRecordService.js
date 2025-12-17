@@ -6,7 +6,6 @@ const axios = require('axios');
  * 
  * Este serviço abstrai a lógica de busca de registros de usuários em:
  * - NocoDB
- * - SQLite
  * - Bancos relacionais (MySQL, PostgreSQL)
  */
 class UserRecordService {

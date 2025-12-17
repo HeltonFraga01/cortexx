@@ -1,6 +1,6 @@
 # WUZAPI Manager - Backend Server
 
-Backend em Node.js com Express e SQLite para gerenciar configurações de banco de dados do WUZAPI Manager.
+Backend em Node.js com Express e Supabase (PostgreSQL) para gerenciar configurações de banco de dados do WUZAPI Manager.
 
 ## 🚀 Instalação e Execução
 
@@ -37,13 +37,22 @@ O servidor rodará na porta **3001** por padrão.
 
 ## 🗄️ Banco de Dados
 
-O servidor usa **SQLite** com o arquivo `wuzapi.db` criado automaticamente na pasta `server/`.
+O servidor usa **Supabase** (PostgreSQL hospedado) como banco de dados principal.
+
+### Configuração do Supabase
+
+Configure as seguintes variáveis de ambiente:
+
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
 
 ### Estrutura da Tabela `database_connections`
 
 ```sql
 CREATE TABLE database_connections (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   type TEXT NOT NULL CHECK(type IN ('POSTGRES', 'MYSQL', 'NOCODB', 'API')),
   host TEXT NOT NULL,
@@ -57,30 +66,35 @@ CREATE TABLE database_connections (
   nocodb_token TEXT,
   nocodb_project_id TEXT,
   nocodb_table_id TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
 ## 🔧 Configuração
 
 ### Variáveis de Ambiente
-Crie um arquivo `.env` na pasta `server/` (opcional):
+Crie um arquivo `.env` na pasta `server/`:
 
 ```env
 PORT=3001
-DB_PATH=./wuzapi.db
+NODE_ENV=development
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+WUZAPI_BASE_URL=https://your-wuzapi-instance.com
+CORS_ORIGINS=http://localhost:5173
+SESSION_SECRET=your-session-secret
 ```
 
 ### CORS
-O servidor está configurado para aceitar requisições de qualquer origem. Em produção, configure adequadamente.
+O servidor está configurado para aceitar requisições das origens definidas em `CORS_ORIGINS`. Em produção, configure adequadamente.
 
 ## 📝 Logs
 
-O servidor registra todas as requisições no console:
+O servidor usa logging estruturado via `utils/logger.js`:
 ```
-2024-01-01T12:00:00.000Z - GET /api/database-connections
-2024-01-01T12:00:01.000Z - POST /api/database-connections
+2024-01-01T12:00:00.000Z [INFO] GET /api/database-connections
+2024-01-01T12:00:01.000Z [INFO] POST /api/database-connections
 ```
 
 ## 🛠️ Desenvolvimento
@@ -88,19 +102,23 @@ O servidor registra todas as requisições no console:
 ### Estrutura de Arquivos
 ```
 server/
-├── index.js          # Servidor Express principal
-├── database.js       # Classe para gerenciar SQLite
-├── package.json      # Dependências e scripts
-├── wuzapi.db         # Banco SQLite (criado automaticamente)
-└── README.md         # Esta documentação
+├── index.js              # Servidor Express principal
+├── database.js           # Camada de compatibilidade (usa SupabaseService)
+├── services/
+│   └── SupabaseService.js # Abstração do banco de dados
+├── routes/               # Endpoints HTTP
+├── middleware/           # Autenticação, CORS, etc.
+├── utils/                # Logger, validadores, etc.
+├── package.json          # Dependências e scripts
+└── README.md             # Esta documentação
 ```
 
-### Dependências
+### Dependências Principais
 - **express**: Framework web
-- **sqlite3**: Driver SQLite
+- **@supabase/supabase-js**: Cliente Supabase
 - **cors**: Middleware CORS
-- **body-parser**: Parser de requisições
-- **nodemon**: Auto-reload em desenvolvimento
+- **helmet**: Segurança HTTP
+- **winston**: Logging estruturado
 
 ## 🔒 Segurança
 
@@ -110,6 +128,7 @@ server/
 - Implemente autenticação/autorização
 - Valide todas as entradas
 - Use variáveis de ambiente para configurações sensíveis
+- Nunca exponha `SUPABASE_SERVICE_ROLE_KEY` no frontend
 
 ## 🐛 Troubleshooting
 
@@ -117,9 +136,9 @@ server/
 - Verifique se o servidor está rodando na porta 3001
 - Execute `npm run dev` na pasta `server/`
 
-### Erro de Permissão SQLite
-- Verifique permissões da pasta `server/`
-- O arquivo `wuzapi.db` deve ser criável/editável
+### Erro de Conexão Supabase
+- Verifique se `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` estão configurados
+- Verifique se o projeto Supabase está ativo
 
 ### Porta em Uso
 - Mude a porta no arquivo `.env` ou use:

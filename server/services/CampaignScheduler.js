@@ -183,7 +183,7 @@ class CampaignScheduler {
       logger.debug('Verificando campanhas agendadas');
 
       // Buscar campanhas agendadas para agora ou antes (incluindo não agendadas)
-      // Converter para ISO UTC para comparação correta no SQLite
+      // Converter para ISO UTC para comparação correta no PostgreSQL
       const now = new Date().toISOString();
       const sql = `
         SELECT * FROM campaigns 

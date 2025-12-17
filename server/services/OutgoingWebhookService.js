@@ -2,7 +2,7 @@
  * OutgoingWebhookService - Service for managing outgoing webhooks
  * 
  * Handles webhook configuration, delivery, and retry logic
- * Refactored to use SupabaseService instead of SQLite
+ * Uses SupabaseService for database operations
  * 
  * Requirements: 16.1-16.6
  */

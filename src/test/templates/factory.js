@@ -21,9 +21,9 @@ class TestDataFactory {
     return {
       id: `conn_${Date.now()}`,
       name: 'Test Connection',
-      type: 'SQLITE',
+      type: 'NOCODB',
       host: 'localhost',
-      database: 'test.db',
+      database: 'test_db',
       table_name: 'test_table',
       status: 'connected',
       assignedUsers: ['test-token'],

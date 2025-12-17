@@ -8,7 +8,7 @@ This document serves as a high-level map for AI agents working on the WUZAPI Man
 *   **Purpose:** Management system for WhatsApp Business instances via WUZAPI.
 *   **Architecture:** Monolithic repository with separated Frontend and Backend.
     *   **Frontend:** React 18, Vite, TypeScript, Tailwind CSS.
-    *   **Backend:** Node.js, Express, SQLite (embedded).
+    *   **Backend:** Node.js, Express, Supabase (PostgreSQL).
     *   **Deployment:** Docker Swarm + Traefik.
 
 ## 2. Directory Structure
@@ -20,7 +20,7 @@ This document serves as a high-level map for AI agents working on the WUZAPI Man
 
 ### Backend (`server/`)
 *   **Entry Point:** `index.js` (Main server setup, middleware, route mounting).
-*   **Database:** `database.js` (SQLite wrapper, monolithic class).
+*   **Database:** `services/SupabaseService.js` (Supabase abstraction layer).
 *   **Routes:** `routes/` (Modular route definitions).
 *   **Services:** `services/` (Business logic).
 *   **Middleware:** `middleware/` (Auth, logging, validation).
@@ -45,7 +45,7 @@ Always reference these files before proposing changes:
 
 ### Backend
 *   **Language:** JavaScript (CommonJS).
-*   **Database:** Raw SQL queries via `database.js` wrapper. **Always use parameterized queries.**
+*   **Database:** Supabase via `services/SupabaseService.js`. **Always use SupabaseService methods.**
 *   **Auth:** Token-based (Admin Token & User Token).
 *   **Logging:** Use `utils/logger.js`.
 

@@ -36,8 +36,13 @@ WUZAPI Manager: Plataforma de gerenciamento da API WhatsApp Business com suporte
 - **DEVE implementar paginação em todas as visualizações de lista**
 - Todas as operações limitadas ao token do usuário autenticado
 
+**Stripe (Sistema de Pagamentos):**
+- Backend: `server/services/StripeService.js`
+- Recursos: Assinaturas, checkout, webhooks de pagamento
+- Tabelas: `plans`, `user_subscriptions`, `user_quota_usage`
+- Webhooks: `checkout.session.completed`, `invoice.paid`, `customer.subscription.*`
+
 **Opcionais:**
-- Asaas (processamento de pagamentos)
 - Chatwoot (suporte ao cliente)
 - Typebot (fluxos de chatbot)
 
@@ -64,6 +69,12 @@ WUZAPI Manager: Plataforma de gerenciamento da API WhatsApp Business com suporte
 - Mapeamento de campos necessário para CRUD
 - **Todas as visualizações de lista DEVEM implementar paginação**
 - Todas as operações limitadas ao usuário autenticado
+
+**Sistema de Pagamentos (Stripe):**
+- Planos de assinatura com diferentes limites de recursos
+- Checkout integrado via Stripe
+- Controle de quotas (mensagens, bots, campanhas)
+- Webhooks para atualização automática de status
 
 ## Gerenciamento de Estado
 

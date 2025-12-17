@@ -5,7 +5,7 @@
  * @module validators/databaseConnectionValidator
  */
 
-const VALID_TYPES = ['POSTGRES', 'MYSQL', 'NOCODB', 'API', 'SQLITE'];
+const VALID_TYPES = ['POSTGRES', 'MYSQL', 'NOCODB', 'API'];
 const MIN_NAME_LENGTH = 1;
 const MAX_NAME_LENGTH = 100;
 const MIN_PORT = 1;
@@ -61,7 +61,7 @@ function isValidHost(host) {
  *
  * @param {Object} data - Connection data to validate
  * @param {string} data.name - Connection name (1-100 characters)
- * @param {string} data.type - Connection type (POSTGRES, MYSQL, NOCODB, API, SQLITE)
+ * @param {string} data.type - Connection type (POSTGRES, MYSQL, NOCODB, API)
  * @param {string} data.host - Host URL or localhost
  * @param {number} [data.port] - Port number (1-65535)
  * @returns {{ valid: boolean, errors: string[] }} Validation result

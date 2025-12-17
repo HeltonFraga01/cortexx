@@ -32,9 +32,10 @@ WUZAPI Manager is a multi-user platform for managing WhatsApp Business API with 
 │  └── server/services/SupabaseService.js (DB abstraction)    │
 │                                                             │
 │  External Integrations                                      │
+│  ├── Supabase (PostgreSQL Database + Auth)                  │
 │  ├── WUZAPI (WhatsApp Business API)                         │
-│  ├── NocoDB (External Database)                             │
-│  ├── Asaas (Payments - optional)                            │
+│  ├── Stripe (Payments & Subscriptions)                      │
+│  ├── NocoDB (External Database Integration)                 │
 │  ├── Chatwoot (Support - optional)                          │
 │  └── Typebot (Chatbot flows - optional)                     │
 │                                                             │

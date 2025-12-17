@@ -8,7 +8,7 @@ fileMatchPattern: 'server/**/*.js'
 ## Critical Rules
 
 **NEVER bypass these abstractions:**
-- Database: ALWAYS use `require('../database')`, NEVER `require('sqlite3')`
+- Database: ALWAYS use `require('../services/SupabaseService')` or `require('../database')` for compatibility layer
 - Logging: ALWAYS use `require('../utils/logger')`, NEVER `console.log/error`
 - WUZAPI: ALWAYS use `require('../utils/wuzapiClient')`, NEVER direct `fetch()`
 - Imports: ALWAYS use CommonJS `require()`, NEVER ES modules `import`
@@ -16,8 +16,8 @@ fileMatchPattern: 'server/**/*.js'
 
 **Security requirements:**
 - ALL async operations MUST have try-catch wrappers
-- ALL database queries MUST use parameterized statements (`db.prepare('... WHERE id = ?').get(id)`)
-- ALL user-scoped endpoints MUST filter by `req.user.id` in WHERE clause
+- ALL database queries MUST use SupabaseService methods (parameterized by default)
+- ALL user-scoped endpoints MUST filter by `req.user.id` or account_id
 - ALL admin endpoints MUST use both `authenticate` and `requireAdmin` middleware
 - ALL sensitive endpoints MUST apply rate limiting
 
@@ -29,12 +29,13 @@ Every route MUST follow this exact structure:
 const router = require('express').Router()
 const { authenticate } = require('../middleware/auth')
 const logger = require('../utils/logger')
-const db = require('../database')
+const SupabaseService = require('../services/SupabaseService')
 
 router.get('/endpoint', authenticate, async (req, res) => {
   try {
-    const result = await operation()
-    res.json({ success: true, data: result })
+    const { data, error } = await SupabaseService.getMany('table_name', { user_id: req.user.id })
+    if (error) throw error
+    res.json({ success: true, data })
   } catch (error) {
     logger.error('Operation failed', { 
       error: error.message, 
@@ -85,26 +86,30 @@ Extract business logic from routes into services:
 
 ```javascript
 // server/services/MessageService.js
-const db = require('../database')
+const SupabaseService = require('./SupabaseService')
 const logger = require('../utils/logger')
 const wuzapiClient = require('../utils/wuzapiClient')
 
 class MessageService {
   static async sendMessage(userId, phoneNumber, text) {
     // 1. Validate ownership
-    const phone = db.prepare(
-      'SELECT * FROM user_phones WHERE id = ? AND user_id = ?'
-    ).get(phoneNumber, userId)
+    const { data: phone, error } = await SupabaseService.getMany('user_phones', {
+      id: phoneNumber,
+      user_id: userId
+    })
     
-    if (!phone) throw new Error('Phone not found or unauthorized')
+    if (error || !phone?.length) throw new Error('Phone not found or unauthorized')
 
     // 2. Execute operation
     const result = await wuzapiClient.sendMessage({ phoneNumber, text })
     
     // 3. Log to database
-    db.prepare(
-      'INSERT INTO messages (user_id, phone_id, text, status) VALUES (?, ?, ?, ?)'
-    ).run(userId, phoneNumber, text, 'sent')
+    await SupabaseService.insert('messages', {
+      user_id: userId,
+      phone_id: phoneNumber,
+      text,
+      status: 'sent'
+    })
     
     // 4. Log operation
     logger.info('Message sent', { userId, phoneNumber })
@@ -118,7 +123,7 @@ module.exports = MessageService
 
 **Service rules:**
 - Use static methods for stateless operations
-- ALWAYS use `db.prepare()` with parameterized queries
+- ALWAYS use SupabaseService methods (queries are parameterized by default)
 - ALWAYS log operations with context
 - Throw descriptive errors (caught by route handler)
 - NEVER expose database directly to routes
@@ -163,34 +168,35 @@ router.post('/send', authenticate, async (req, res) => {
 })
 ```
 
-## Database Access
+## Database Access (Supabase)
 
-**ALWAYS use prepared statements:**
+**ALWAYS use SupabaseService methods:**
 ```javascript
-const db = require('../database')
+const SupabaseService = require('../services/SupabaseService')
 
-// ✅ Correct - parameterized query
-const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId)
-const users = db.prepare('SELECT * FROM users WHERE role = ?').all('admin')
-db.prepare('INSERT INTO logs (user_id, action) VALUES (?, ?)').run(userId, 'login')
+// ✅ Correct - using SupabaseService
+const { data: user, error } = await SupabaseService.getById('users', userId)
+const { data: users } = await SupabaseService.getMany('users', { role: 'admin' })
+await SupabaseService.insert('logs', { user_id: userId, action: 'login' })
+await SupabaseService.update('users', userId, { last_login: new Date().toISOString() })
 
-// ❌ Wrong - SQL injection vulnerability
-db.prepare(`SELECT * FROM users WHERE email = '${email}'`).get()
+// ❌ Wrong - direct Supabase client usage
+const { data } = await supabase.from('users').select('*')
 ```
 
 **User data scoping (CRITICAL):**
 ```javascript
 // ✅ Correct - filters by authenticated user
 router.get('/my-webhooks', authenticate, async (req, res) => {
-  const webhooks = db.prepare(
-    'SELECT * FROM webhooks WHERE user_id = ?'
-  ).all(req.user.id)
+  const { data: webhooks } = await SupabaseService.getMany('webhooks', {
+    user_id: req.user.id
+  })
   res.json({ success: true, data: webhooks })
 })
 
 // ❌ Wrong - returns ALL users' data (security violation)
 router.get('/webhooks', authenticate, async (req, res) => {
-  const webhooks = db.prepare('SELECT * FROM webhooks').all()
+  const { data: webhooks } = await SupabaseService.getMany('webhooks', {})
   res.json({ success: true, data: webhooks })
 })
 ```
@@ -290,20 +296,20 @@ router.post('/login', rateLimiter('login', 5, 15), async (req, res) => {
 ```javascript
 // ✅ Correct
 const express = require('express')
-const db = require('../database')
+const SupabaseService = require('../services/SupabaseService')
 const logger = require('../utils/logger')
 const MessageService = require('../services/MessageService')
 
 // ❌ Wrong - ES modules not supported
 import express from 'express'
-import db from '../database'
+import SupabaseService from '../services/SupabaseService'
 ```
 
 **Relative paths only - NO aliases:**
 ```javascript
 // ✅ Correct
 const logger = require('../utils/logger')
-const db = require('../database')
+const SupabaseService = require('../services/SupabaseService')
 const UserService = require('../services/UserService')
 
 // ❌ Wrong - @ alias not configured in backend
@@ -315,8 +321,8 @@ const logger = require('@/utils/logger')
 Before submitting backend code, verify:
 
 - [ ] All async operations wrapped in try-catch
-- [ ] All database queries use `db.prepare()` with parameterized statements
-- [ ] All user-scoped queries filter by `req.user.id`
+- [ ] All database queries use SupabaseService methods
+- [ ] All user-scoped queries filter by `req.user.id` or account_id
 - [ ] All errors logged with `logger.error()` including context
 - [ ] All responses use consistent shape `{ success, data?, error? }`
 - [ ] Auth middleware applied (unless explicitly public)
@@ -325,4 +331,4 @@ Before submitting backend code, verify:
 - [ ] Business logic extracted to service layer
 - [ ] CommonJS `require()` used (not ES `import`)
 - [ ] Relative paths used (not `@/` aliases)
-- [ ] No direct `sqlite3`, `console.log`, or `fetch()` calls
+- [ ] No direct Supabase client, `console.log`, or `fetch()` calls

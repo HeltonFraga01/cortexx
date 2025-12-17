@@ -19,7 +19,6 @@ class EnvironmentValidator {
       NODE_ENV: 'development',
       PORT: '3001',
       LOG_LEVEL: 'info',
-      SQLITE_DB_PATH: '../data/wuzapi.db',
       REQUEST_TIMEOUT: '10000'
     };
 
@@ -162,8 +161,8 @@ class EnvironmentValidator {
         timeout: process.env.REQUEST_TIMEOUT
       },
       database: {
-        path: process.env.SQLITE_DB_PATH,
-        walMode: process.env.SQLITE_WAL_MODE === 'true'
+        supabaseUrl: process.env.SUPABASE_URL ? 'configured' : 'not configured',
+        supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'not configured'
       },
       cors: {
         origins: process.env.CORS_ORIGINS?.split(',').map(o => o.trim())

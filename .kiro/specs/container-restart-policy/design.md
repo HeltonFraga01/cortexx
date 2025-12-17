@@ -116,7 +116,6 @@ Baseado na análise de prework, a maioria dos critérios de aceitação são ver
    - Log do sinal e timestamp
    - Iniciar shutdown gracioso
    - Fechar conexões HTTP
-   - Fechar conexão SQLite
    - Log da duração total do shutdown
    - Exit code 0 (sucesso)
 

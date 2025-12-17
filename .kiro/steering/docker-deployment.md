@@ -7,11 +7,11 @@ fileMatchPattern: ['Dockerfile*', 'docker-compose*.yml', '**/deploy*.sh', 'scrip
 
 ## Critical Constraints (NEVER VIOLATE)
 
-**SQLite**:
-- `replicas: 1` ONLY (multiple replicas cause database locks)
-- `SQLITE_WAL_MODE=true` REQUIRED
-- `node.role == manager` constraint REQUIRED
-- Volume at `/app/data` REQUIRED for persistence
+**Database (Supabase)**:
+- Database is hosted externally on Supabase (PostgreSQL)
+- No local database files needed
+- Environment variables for Supabase connection REQUIRED
+- `replicas` can be increased if needed (no local database locks)
 
 **Multi-Architecture**:
 - ALWAYS build for `linux/amd64,linux/arm64`
@@ -38,7 +38,7 @@ Or: `npm run deploy:official`
 
 | Stage | Purpose | Key Details |
 |-------|---------|------------|
-| base | Node 20 Alpine + build tools | python3, make, g++, sqlite |
+| base | Node 20 Alpine + build tools | python3, make, g++ |
 | frontend-deps | Install all deps | Including dev dependencies |
 | backend-deps | Install production deps | Production only |
 | frontend-builder | Build frontend | `npm run build:production` |
@@ -47,7 +47,7 @@ Or: `npm run deploy:official`
 **Production Stage**:
 - Backend node_modules (from stage 3)
 - Frontend dist (from stage 4)
-- Owned dirs: `/app/data`, `/app/logs`
+- Owned dirs: `/app/logs`
 - Health check: `node server/healthcheck.js`
 - Init: tini + dumb-init
 - CMD: `dumb-init node server/index.js`
@@ -57,7 +57,7 @@ Or: `npm run deploy:official`
 **Deploy**:
 ```yaml
 deploy:
-  replicas: 1  # ONLY 1 for SQLite
+  replicas: 1  # Can be increased since database is external (Supabase)
   placement:
     constraints: [node.role == manager]
   restart_policy:
@@ -71,13 +71,10 @@ deploy:
 ```yaml
 # Service volumes
 volumes:
-  - chatmodel-data:/app/data  # Database (required)
   - chatmodel-logs:/app/logs  # Logs (optional)
 
 # Volume definitions (at root level)
 volumes:
-  chatmodel-data:
-    external: true
   chatmodel-logs:
     external: true
 ```
@@ -97,17 +94,17 @@ healthcheck:
 - `PORT=3001`
 - `WUZAPI_BASE_URL` - WUZAPI endpoint
 - `CORS_ORIGINS` - Comma-separated origins
-- `SQLITE_DB_PATH=/app/data/wuzapi.db`
-- `SQLITE_WAL_MODE=true` REQUIRED
-- `SQLITE_CACHE_SIZE=4000`
+- `SUPABASE_URL` - Supabase project URL (REQUIRED)
+- `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key (REQUIRED)
+- `STRIPE_SECRET_KEY` - Stripe API key (for payments)
+- `STRIPE_WEBHOOK_SECRET` - Stripe webhook secret
 
 ## Validation Checklist
 
 **Health Check** (`GET /health`): Must return 200 with `{"status": "healthy", "database": {"status": "connected"}}`
 
 **Logs Must Show**:
-- SQLite initialized with WAL mode
-- Migrations executed successfully
+- Supabase connection established
 - Server listening on port 3001
 - No permission errors
 
@@ -117,19 +114,13 @@ healthcheck:
 - `GET /api/session/status` - Session API
 - `GET /api/admin/users` - Admin API (with token)
 
-**Verify Single Process**:
-```bash
-docker exec $(docker ps -q -f name=cortexx) ps aux
-# Must show ONLY 1 node process
-```
-
 ## Common Issues & Fixes
 
 | Error | Cause | Fix |
 |-------|-------|-----|
 | "exec format error" | Wrong architecture | Use `docker buildx` with `--platform linux/amd64,linux/arm64` |
-| "database is locked" | Multiple replicas or WAL disabled | Ensure `replicas: 1` and `SQLITE_WAL_MODE=true` |
-| "EACCES: permission denied" | Volume permissions | `docker exec ... chown -R nodejs:nodejs /app/data` |
+| "Supabase connection failed" | Missing or invalid credentials | Check `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` |
+| "EACCES: permission denied" | Volume permissions | `docker exec ... chown -R nodejs:nodejs /app/logs` |
 | Frontend not loading | Build missing | Verify `COPY --from=frontend-builder` in Dockerfile |
 | Health check fails | Timeout too short | Use `start_period: 90s` and `retries: 5` |
 | Container not restarting | Wrong restart policy | Use `condition: any` (not `on-failure`) |
@@ -150,7 +141,7 @@ docker exec $(docker ps -q -f name=cortexx) ps aux
 - Multi-arch image in registry
 - Health check returns 200 OK
 - Frontend loads, APIs respond
-- Only 1 SQLite connection (verify with `ps aux`)
+- Supabase connection working
 - No critical errors in logs
-- Volumes persisting data
+- Volumes persisting logs
 - Traefik routing + SSL/TLS working

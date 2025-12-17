@@ -262,8 +262,6 @@ router.get('/database-connections/:id/record', verifyUserToken, async (req, res)
     try {
       if (connection.type === 'NOCODB') {
         record = await db.fetchNocoDBUserRecord(connection, userLinkField, userToken);
-      } else if (connection.type === 'SQLITE') {
-        record = await db.fetchSQLiteUserRecord(connection, userLinkField, userToken);
       } else if (connection.type === 'MYSQL' || connection.type === 'POSTGRESQL' || connection.type === 'POSTGRES') {
         record = await db.fetchSQLUserRecord(connection, userLinkField, userToken);
       } else {

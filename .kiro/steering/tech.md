@@ -131,3 +131,5 @@ npm run generate <type> <name>  # Scaffold from templates
 - `SUPABASE_URL` - Supabase project URL
 - `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key
 - `LOG_LEVEL` - Logging level (debug/info/warn/error)
+- `STRIPE_SECRET_KEY` - Stripe API secret key (for payments)
+- `STRIPE_WEBHOOK_SECRET` - Stripe webhook signing secret

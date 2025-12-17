@@ -90,10 +90,20 @@ Ver pasta `_archived/` para specs completas.
 - **Taxa de Conclusão:** 89% (49/55)
 - **Specs Ativas:** 7% (4/55)
 
+## Nota sobre Migração de Banco de Dados
+
+Em Dezembro de 2025, o sistema foi migrado de **SQLite** para **Supabase (PostgreSQL)**. Specs arquivadas podem conter referências ao SQLite que não são mais aplicáveis.
+
+Para novas specs, sempre use:
+- `SupabaseService` para acesso ao banco de dados
+- Variáveis de ambiente `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY`
+
 ## Referências
 
 - **Convenções:** `.kiro/steering/tech.md`, `structure.md`, `product.md`
 - **Workflow:** Ver instruções no prompt do sistema
+- **Banco de Dados:** Supabase (PostgreSQL)
+- **Pagamentos:** Stripe (ver `docs/STRIPE_INTEGRATION.md`)
 
 ---
 

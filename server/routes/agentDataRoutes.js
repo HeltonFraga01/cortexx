@@ -756,8 +756,6 @@ router.get('/database/:connectionId/record/:recordId', requireAgentAuth(null), a
     let record = null;
     if (connection.type === 'NOCODB') {
       record = await db.getNocoDBRecordById(connection, recordId);
-    } else if (connection.type === 'SQLITE') {
-      record = await db.getSQLiteRecordById(connection, recordId);
     } else {
       record = await db.getExternalDBRecordById(connection, recordId);
     }
@@ -822,8 +820,6 @@ router.put('/database/:connectionId/record/:recordId', requireAgentAuth(null), a
     let updatedRecord = null;
     if (connection.type === 'NOCODB') {
       updatedRecord = await db.updateNocoDBRecord(connection, recordId, updateData);
-    } else if (connection.type === 'SQLITE') {
-      updatedRecord = await db.updateSQLiteRecord(connection, recordId, updateData);
     } else {
       updatedRecord = await db.updateExternalDBRecord(connection, recordId, updateData);
     }

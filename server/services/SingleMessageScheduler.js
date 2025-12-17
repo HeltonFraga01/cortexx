@@ -75,7 +75,7 @@ class SingleMessageScheduler {
       logger.debug('Verificando mensagens agendadas');
 
       // Buscar mensagens agendadas para agora ou antes
-      // Converter para ISO UTC para comparação correta no SQLite
+      // Converter para ISO UTC para comparação correta no PostgreSQL
       const now = new Date().toISOString();
       const sql = `
         SELECT * FROM scheduled_single_messages 

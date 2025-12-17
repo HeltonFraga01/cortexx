@@ -62,9 +62,9 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=sqlite-latest,enable={{is_default_branch}}
-            type=raw,value=sqlite-{{date 'YYYYMMDD-HHmmss'}}
-            type=sha,prefix=sqlite-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value={{date 'YYYYMMDD-HHmmss'}}
+            type=sha
 
       - name: 🚀 Build and push
         uses: docker/build-push-action@v5
@@ -88,11 +88,13 @@ jobs:
       - name: 🧪 Test image
         if: github.event_name != 'pull_request'
         run: |
-          docker pull ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:sqlite-latest
+          docker pull ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
           docker run -d --name test-container \
             -p 3001:3001 \
             -e WUZAPI_BASE_URL=https://wzapi.wasend.com.br \
-            ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:sqlite-latest
+            -e SUPABASE_URL=https://test.supabase.co \
+            -e SUPABASE_SERVICE_ROLE_KEY=test-key \
+            ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
           
           # Aguardar container iniciar
           sleep 30
@@ -113,7 +115,7 @@ jobs:
             ## 🐳 Docker Images
             
             Multi-architecture images available:
-            - `${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:sqlite-latest`
+            - `${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest`
             - `${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}`
             
             ### Supported Platforms
@@ -122,8 +124,11 @@ jobs:
             
             ### Quick Start
             ```bash
-            docker pull ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:sqlite-latest
-            docker run -d -p 3001:3001 -v $(pwd)/data:/app/data ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:sqlite-latest
+            docker pull ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+            docker run -d -p 3001:3001 \
+              -e SUPABASE_URL=https://your-project.supabase.co \
+              -e SUPABASE_SERVICE_ROLE_KEY=your-key \
+              ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
             ```
             
             ### Docker Swarm

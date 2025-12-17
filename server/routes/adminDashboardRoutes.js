@@ -112,7 +112,7 @@ router.get('/growth', requireAdmin, async (req, res) => {
   }
 });
 
-// Helper functions using SQLite prepare() syntax
+// Helper functions for dashboard statistics
 
 function getUserStats(db) {
   try {

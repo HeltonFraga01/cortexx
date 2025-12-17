@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `GenericTableView` component provides a complete UI for viewing and managing data in any SQLite table with permission-based access control.
+The `GenericTableView` component provides a complete UI for viewing and managing data in any database table with permission-based access control.
 
 ## Features
 

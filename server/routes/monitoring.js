@@ -333,26 +333,23 @@ function checkMemoryHealth() {
 
 function checkDatabaseHealth() {
   try {
-    const fs = require('fs');
-    const dbPath = process.env.SQLITE_DB_PATH || './data/wuzapi.db';
+    // Database is now Supabase (external PostgreSQL)
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     
-    const exists = fs.existsSync(dbPath);
-    if (!exists) {
+    if (!supabaseUrl || !supabaseKey) {
       return {
         healthy: false,
-        message: 'Database file not found',
-        path: dbPath
+        message: 'Supabase credentials not configured',
+        type: 'supabase'
       };
     }
     
-    const stats = fs.statSync(dbPath);
-    
     return {
       healthy: true,
-      message: 'Database accessible',
-      path: dbPath,
-      size: stats.size,
-      modified: stats.mtime
+      message: 'Supabase configured',
+      type: 'supabase',
+      url: supabaseUrl.replace(/\/\/.*@/, '//***@') // Mask credentials in URL if any
     };
     
   } catch (error) {

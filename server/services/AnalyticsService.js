@@ -46,7 +46,7 @@ class AnalyticsService {
     async getHourlyDeliveryStats(userToken) {
         try {
             // Agrupar envios por hora do dia (0-23)
-            // SQLite: strftime('%H', sent_at)
+            // PostgreSQL: EXTRACT(HOUR FROM sent_at)
             const sql = `
         SELECT 
           strftime('%H', sent_at) as hour,

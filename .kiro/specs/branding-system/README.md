@@ -48,7 +48,7 @@ Todas as funcionalidades descritas nesta spec foram implementadas e testadas nas
 ### 5. API e Persistência
 - ✅ Endpoints REST completos
 - ✅ Autenticação admin
-- ✅ Persistência em SQLite
+- ✅ Persistência em Supabase (PostgreSQL)
 - ✅ Cache e performance
 - ✅ Validação de dados
 

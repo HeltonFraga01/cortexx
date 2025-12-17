@@ -28,9 +28,9 @@ describe('Dynamic Sidebar Database Navigation - E2E', () => {
     {
       id: 2,
       name: 'MasterMegga',
-      type: 'SQLITE',
-      host: 'localhost',
-      database: 'test.db',
+      type: 'NOCODB',
+      host: 'https://nocodb.example.com',
+      database: 'test_db',
       table_name: 'users',
       user_link_field: 'user_token',
       status: 'connected',

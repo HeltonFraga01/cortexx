@@ -83,7 +83,8 @@ src/test/
 ### 1. Configurar Variáveis de Ambiente
 ```javascript
 process.env.NODE_ENV = 'test';
-process.env.SQLITE_DB_PATH = './test-database.db';
+process.env.SUPABASE_URL = 'https://test.supabase.co';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key';
 process.env.VITE_ADMIN_TOKEN = 'test-admin-token';
 ```
 

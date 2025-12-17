@@ -1,17 +1,17 @@
 /**
  * Response Transformer Utility
  * 
- * Centralized utility for transforming data between backend (SQLite) and frontend formats.
+ * Centralized utility for transforming data between backend (database) and frontend formats.
  * Handles:
  * - snake_case to camelCase key conversion
- * - SQLite boolean (0/1) to JavaScript boolean conversion
+ * - Database boolean (0/1) to JavaScript boolean conversion
  * - Entity-specific transformations
  * 
  * Requirements: 1.1, 1.2, 1.3, 1.4, 3.4, 3.5
  */
 
 /**
- * Convert SQLite boolean (0/1) to JavaScript boolean
+ * Convert database boolean (0/1) to JavaScript boolean
  * Handles edge cases: null, undefined, "0", "1", 0, 1, true, false
  * 
  * @param {any} value - Value to convert

@@ -312,44 +312,9 @@ class Database {
     return true;
   }
 
-  // NocoDB and external database methods
-  async fetchNocoDBUserRecord(connection, userLinkField, userToken) {
-    // Implement NocoDB fetch logic
-    logger.warn('fetchNocoDBUserRecord not fully implemented for Supabase');
-    return null;
-  }
-
-  async fetchSQLiteUserRecord(connection, userLinkField, userToken) {
-    // SQLite is no longer supported
-    logger.warn('SQLite connections are no longer supported');
-    return null;
-  }
-
-  async fetchSQLUserRecord(connection, userLinkField, userToken) {
-    // External SQL database fetch
-    logger.warn('fetchSQLUserRecord not fully implemented for Supabase');
-    return null;
-  }
-
-  async getUserTableData(userToken, connectionId) {
-    logger.warn('getUserTableData not fully implemented for Supabase');
-    return [];
-  }
-
-  async createUserTableRecord(userToken, connectionId, recordData) {
-    logger.warn('createUserTableRecord not fully implemented for Supabase');
-    return { id: null };
-  }
-
-  async updateUserTableRecord(userToken, connectionId, recordId, recordData) {
-    logger.warn('updateUserTableRecord not fully implemented for Supabase');
-    return { changes: 0 };
-  }
-
-  async deleteUserTableRecord(userToken, connectionId, recordId) {
-    logger.warn('deleteUserTableRecord not fully implemented for Supabase');
-    return { changes: 0 };
-  }
+  // Note: External database methods (NocoDB, SQL) have been moved to dedicated services.
+  // Use NocoDBService for NocoDB operations.
+  // Use SupabaseService for direct database operations.
 
   async getDatabaseStats() {
     // Return mock stats since we're using Supabase

@@ -2,7 +2,7 @@ const { logger } = require('../utils/logger');
 
 class ContactFetcherService {
     constructor(db) {
-        this.db = db; // SQLite local
+        this.db = db; // Database abstraction layer
     }
 
     /**

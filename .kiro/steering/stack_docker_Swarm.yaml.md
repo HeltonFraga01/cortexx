@@ -1,17 +1,19 @@
 ---
-inclusion: 
+inclusion: manual
+---
 
-# este modelo a baixo e a stack que funciona não inventar nada diferente a menos que seja necessario. 
-- não mudar nada do docker-Sarm.yaml
-- não mudar nada do docker-compose.yaml
-- não mudar nada do docker-compose.override.yaml
-- não mudar nada do docker-compose.prod.yaml
-- não mudar nada do docker-compose.prod.override.yaml
-- não mudar nada do docker-compose.prod.override.yaml
-- não mudar nada do docker-compose.prod.override.yaml
+# Docker Swarm Stack Configuration
 
+Este modelo é a stack que funciona - não inventar nada diferente a menos que seja necessário.
+
+**Regras:**
+- Não mudar nada do docker-compose.yaml sem necessidade
+- Não mudar nada do docker-compose.override.yaml
+- Não mudar nada do docker-compose.prod.yaml
 
 ---
+
+```yaml
 version: "3.8"
 
 services:
@@ -23,19 +25,19 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - WUZAPI_BASE_URL=https://wzapi.wasend.com.br
-      - WUZAPI_ADMIN_TOKEN=UeH7cZ2c1K3zVUBFi7SginSC
-      - SESSION_SECRET=XD6mESFW5itqQRurV81IQMMnr+bQuAlGs8xzPvr68Ts=
+      - WUZAPI_ADMIN_TOKEN=${WUZAPI_ADMIN_TOKEN}
+      - SESSION_SECRET=${SESSION_SECRET}
       - CORS_ORIGINS=https://cloudapi.wasend.com.br
       - WEBHOOK_BASE_URL=https://cloudapi.wasend.com.br
       - REQUEST_TIMEOUT=10000
       - TZ=America/Sao_Paulo
-      # SQLite Configuration
-      - SQLITE_DB_PATH=/app/data/cortexx.db
-      - SQLITE_WAL_MODE=true
-      - SQLITE_TIMEOUT=10000
-      - SQLITE_CACHE_SIZE=8000
-      - SQLITE_SYNCHRONOUS=NORMAL
-      - SQLITE_JOURNAL_MODE=WAL
+      # Supabase Configuration (PostgreSQL)
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      # Stripe Configuration (Payments)
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
       # Node.js Optimizations
       - NODE_OPTIONS=--max-old-space-size=1024
       - UV_THREADPOOL_SIZE=4
@@ -44,8 +46,8 @@ services:
       - S3_ENDPOINT=https://s3.wasend.com.br
       - S3_REGION=nyc3
       - S3_BUCKET=typebot
-      - S3_ACCESS_KEY_ID=9rn0futJO6Vpc3bJcvE6
-      - S3_SECRET_ACCESS_KEY=CH9ASlWy0PsK3ozFQyDessRpcWACC6NcBq5CW9P5
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
       - S3_FORCE_PATH_STYLE=true
       # S3 Upload Settings
       - S3_UPLOAD_MAX_SIZE=52428800
@@ -53,7 +55,7 @@ services:
     
     # Deployment configuration
     deploy:
-      replicas: 1  # CRITICAL: Only 1 replica for SQLite
+      replicas: 1  # Can be increased - database is external (Supabase)
       placement:
         constraints:
           - node.role == manager  # Run on manager node only
@@ -99,7 +101,6 @@ services:
     
     # Volumes
     volumes:
-      - cortexx-data:/app/data
       - cortexx-logs:/app/logs
     
     # Health check
@@ -115,20 +116,23 @@ services:
       - network_public
 
 networks:
-
   network_public:
     external: true
 
 volumes:
-  cortexx-data:
-    external: true
-    name: cortexx-data
   cortexx-logs:
     external: true
     name: cortexx-logs
+```
+
 ---
-<!------------------------------------------------------------------------------------
-   Add rules to this file or a short description and have Kiro refine them for you.
-   
-   Learn about inclusion modes: https://kiro.dev/docs/steering/#inclusion-modes
------------------------------------------------------------------------------------->
+
+## Notas Importantes
+
+1. **Banco de Dados**: O sistema usa Supabase (PostgreSQL hospedado externamente), não há necessidade de volumes para dados locais.
+
+2. **Variáveis de Ambiente Sensíveis**: Use Docker secrets ou variáveis de ambiente do host para valores sensíveis como tokens e chaves.
+
+3. **Escalabilidade**: Como o banco de dados é externo, é possível aumentar `replicas` se necessário.
+
+4. **Pagamentos**: Integração com Stripe configurada via variáveis de ambiente.

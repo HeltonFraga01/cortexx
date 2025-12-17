@@ -1,6 +1,6 @@
 /**
  * Database Retry Utility
- * Implements retry logic with exponential backoff for SQLite operations
+ * Implements retry logic with exponential backoff for database operations
  */
 
 const { logger } = require('./logger');
@@ -36,12 +36,13 @@ function isRetryableError(error) {
   if (!error) return false;
   
   const retryableCodes = [
-    'SQLITE_BUSY',
-    'SQLITE_LOCKED',
-    'SQLITE_PROTOCOL',
-    'SQLITE_IOERR',
     'ECONNRESET',
-    'ETIMEDOUT'
+    'ETIMEDOUT',
+    'ECONNREFUSED',
+    'PGRST301', // Supabase connection error
+    '57P01',    // PostgreSQL admin shutdown
+    '57P02',    // PostgreSQL crash shutdown
+    '57P03'     // PostgreSQL cannot connect now
   ];
   
   const retryableMessages = [

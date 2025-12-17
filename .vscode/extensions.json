@@ -11,10 +11,6 @@
     // Tailwind CSS
     "bradlc.vscode-tailwindcss",
     
-    // SQLite
-    "alexcvzz.vscode-sqlite",
-    "qwtel.sqlite-viewer",
-    
     // Docker
     "ms-azuretools.vscode-docker",
     

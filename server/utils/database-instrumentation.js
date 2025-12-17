@@ -1,6 +1,6 @@
 /**
  * Instrumentação para operações de banco de dados
- * Adiciona métricas e logging para queries SQLite
+ * Adiciona métricas e logging para queries de banco de dados
  */
 
 const { logger } = require('./logger');

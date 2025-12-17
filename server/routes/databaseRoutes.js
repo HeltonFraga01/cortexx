@@ -327,23 +327,7 @@ router.post('/:id/test', async (req, res) => {
       });
     }
 
-    // Para SQLite local, sempre retorna sucesso se o banco existe
-    if (connection.type === 'SQLITE') {
-      // Atualizar status para connected
-      await db.updateConnectionStatus(id, 'connected');
-      
-      return res.json({
-        success: true,
-        message: 'Conexão SQLite testada com sucesso',
-        data: {
-          status: 'connected',
-          type: connection.type,
-          database: connection.database
-        }
-      });
-    }
-    
-    // Para outros tipos de banco, retornar que o teste não está implementado ainda
+    // Para tipos de banco não implementados, retornar mensagem apropriada
     res.json({
       success: true,
       message: 'Teste de conexão não implementado para este tipo de banco',

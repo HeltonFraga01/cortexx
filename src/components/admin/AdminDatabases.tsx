@@ -273,9 +273,9 @@ const AdminDatabases = () => {
             <div>
               <h4 className="font-medium mb-2">Tipos de Conexão Suportados</h4>
               <ul className="text-sm text-muted-foreground space-y-1">
-                <li>• SQLite - Banco local integrado</li>
-                <li>• MySQL - Banco relacional</li>
                 <li>• NocoDB - Interface visual para bancos</li>
+                <li>• PostgreSQL - Banco relacional avançado</li>
+                <li>• MySQL - Banco relacional</li>
                 <li>• API REST - Endpoints personalizados</li>
               </ul>
             </div>

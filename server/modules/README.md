@@ -19,7 +19,7 @@ modules/
 │   │   ├── domain/             # Entidades e Tipos do Domínio
 │   │   └── errors/             # Erros específicos do módulo
 │   ├── infra/                  # Camada de Infraestrutura (Saída)
-│   │   ├── repositories/       # Implementação do acesso ao SQLite
+│   │   ├── repositories/       # Implementação do acesso ao banco de dados
 │   │   └── mappers/            # Conversão Linha BD <-> Entidade Domínio
 │   └── index.js                # API Pública do Módulo
 ```
