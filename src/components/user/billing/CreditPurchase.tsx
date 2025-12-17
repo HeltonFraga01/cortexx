@@ -134,7 +134,7 @@ export function CreditPurchase({ open, onOpenChange, onPurchaseComplete }: Credi
                     )}
                   </div>
                   <CardDescription>
-                    {pkg.creditAmount.toLocaleString('pt-BR')} créditos
+                    {pkg.creditAmount.toLocaleString('pt-BR')} tokens
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -144,16 +144,16 @@ export function CreditPurchase({ open, onOpenChange, onPurchaseComplete }: Credi
                     </span>
                   </div>
                   <div className="text-sm text-muted-foreground">
-                    R$ {getPricePerCredit(pkg)} por crédito
+                    R$ {getPricePerCredit(pkg)} por token
                   </div>
                   <ul className="space-y-2 text-sm">
                     <li className="flex items-center gap-2">
                       <Check className="h-4 w-4 text-green-500" />
-                      Créditos não expiram
+                      Tokens não expiram
                     </li>
                     <li className="flex items-center gap-2">
                       <Check className="h-4 w-4 text-green-500" />
-                      Uso imediato após compra
+                      Usados após esgotar o plano
                     </li>
                     {isBestValue && (
                       <li className="flex items-center gap-2">
@@ -195,10 +195,10 @@ export function CreditPurchase({ open, onOpenChange, onPurchaseComplete }: Credi
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Coins className="h-5 w-5" />
-              Comprar Créditos
+              Comprar Tokens Extras
             </DialogTitle>
             <DialogDescription>
-              Escolha um pacote de créditos para continuar usando os recursos do sistema.
+              Tokens extras são usados quando os tokens do seu plano acabam. Não expiram.
             </DialogDescription>
           </DialogHeader>
           {content}

@@ -11,10 +11,12 @@ const crypto = require('crypto');
 const MultiUserAuditService = require('./MultiUserAuditService');
 const { ACTION_TYPES, RESOURCE_TYPES } = require('./MultiUserAuditService');
 const wuzapiClient = require('../utils/wuzapiClient');
+const SupabaseService = require('./SupabaseService');
 
 class InboxService {
   constructor(db, auditService = null) {
     this.db = db;
+    this.supabase = SupabaseService;
     this.auditService = auditService || new MultiUserAuditService(db);
   }
 
@@ -35,11 +37,9 @@ class InboxService {
    */
   async countInboxes(accountId) {
     try {
-      const result = await this.db.query(
-        'SELECT COUNT(*) as count FROM inboxes WHERE account_id = ?',
-        [accountId]
-      );
-      return result.rows[0]?.count || 0;
+      const { count, error } = await this.supabase.count('inboxes', { account_id: accountId });
+      if (error) throw error;
+      return count || 0;
     } catch (error) {
       logger.error('Failed to count inboxes', { error: error.message, accountId });
       throw error;
@@ -176,36 +176,32 @@ class InboxService {
       // Extract maxConversationsPerAgent from config for dedicated column
       const maxConversationsPerAgent = data.autoAssignmentConfig?.maxConversationsPerAgent ?? null;
 
-      const sql = `
-        INSERT INTO inboxes (
-          id, account_id, name, description, channel_type, 
-          phone_number, enable_auto_assignment, auto_assignment_config,
-          max_conversations_per_agent,
-          greeting_enabled, greeting_message, 
-          wuzapi_token, wuzapi_user_id, wuzapi_connected,
-          created_at, updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
-
-      await this.db.query(sql, [
+      const inboxData = {
         id,
-        accountId,
-        data.name,
-        data.description || null,
-        channelType,
-        data.phoneNumber || null,
-        data.enableAutoAssignment !== false ? 1 : 0,
-        JSON.stringify(data.autoAssignmentConfig || {}),
-        maxConversationsPerAgent,
-        data.greetingEnabled ? 1 : 0,
-        data.greetingMessage || null,
-        wuzapiToken,
-        wuzapiUserId,
-        0, // wuzapi_connected starts as false
-        now,
-        now
-      ]);
+        account_id: accountId,
+        name: data.name,
+        description: data.description || null,
+        channel_type: channelType,
+        phone_number: data.phoneNumber || null,
+        enable_auto_assignment: data.enableAutoAssignment !== false,
+        auto_assignment_config: data.autoAssignmentConfig || {},
+        max_conversations_per_agent: maxConversationsPerAgent,
+        greeting_enabled: data.greetingEnabled || false,
+        greeting_message: data.greetingMessage || null,
+        wuzapi_token: wuzapiToken,
+        wuzapi_user_id: wuzapiUserId,
+        wuzapi_connected: false,
+        created_at: now,
+        updated_at: now
+      };
+
+      const { error: insertError } = await this.supabase.queryAsAdmin('inboxes', (query) =>
+        query.insert(inboxData)
+      );
+
+      if (insertError) {
+        throw insertError;
+      }
 
       logger.info('Inbox created', { 
         inboxId: id, 
@@ -239,14 +235,13 @@ class InboxService {
    */
   async getInboxById(inboxId) {
     try {
-      const sql = 'SELECT * FROM inboxes WHERE id = ?';
-      const result = await this.db.query(sql, [inboxId]);
+      const { data, error } = await this.supabase.getById('inboxes', inboxId);
 
-      if (result.rows.length === 0) {
+      if (error || !data) {
         return null;
       }
 
-      return this.formatInbox(result.rows[0]);
+      return this.formatInbox(data);
     } catch (error) {
       logger.error('Failed to get inbox', { error: error.message, inboxId });
       throw error;
@@ -260,9 +255,12 @@ class InboxService {
    */
   async listInboxes(accountId) {
     try {
-      const sql = 'SELECT * FROM inboxes WHERE account_id = ? ORDER BY name';
-      const result = await this.db.query(sql, [accountId]);
-      return result.rows.map(row => this.formatInbox(row));
+      const { data, error } = await this.supabase.getMany('inboxes', { account_id: accountId }, {
+        orderBy: 'name',
+        ascending: true
+      });
+      if (error) throw error;
+      return (data || []).map(row => this.formatInbox(row));
     } catch (error) {
       logger.error('Failed to list inboxes', { error: error.message, accountId });
       throw error;
@@ -276,19 +274,25 @@ class InboxService {
    */
   async listInboxesWithStats(accountId) {
     try {
-      const sql = `
-        SELECT i.*, COUNT(im.agent_id) as member_count
-        FROM inboxes i
-        LEFT JOIN inbox_members im ON i.id = im.inbox_id
-        WHERE i.account_id = ?
-        GROUP BY i.id
-        ORDER BY i.name
-      `;
-      const result = await this.db.query(sql, [accountId]);
-      return result.rows.map(row => ({
-        ...this.formatInbox(row),
-        memberCount: row.member_count || 0
+      // First get all inboxes for the account
+      const { data: inboxes, error: inboxError } = await this.supabase.getMany('inboxes', { account_id: accountId }, {
+        orderBy: 'name',
+        ascending: true
+      });
+      
+      if (inboxError) throw inboxError;
+      if (!inboxes || inboxes.length === 0) return [];
+
+      // Get member counts for each inbox
+      const inboxesWithStats = await Promise.all(inboxes.map(async (inbox) => {
+        const { count, error: countError } = await this.supabase.count('inbox_members', { inbox_id: inbox.id });
+        return {
+          ...this.formatInbox(inbox),
+          memberCount: countError ? 0 : (count || 0)
+        };
       }));
+
+      return inboxesWithStats;
     } catch (error) {
       logger.error('Failed to list inboxes with stats', { error: error.message, accountId });
       throw error;
@@ -303,61 +307,49 @@ class InboxService {
    */
   async updateInbox(inboxId, data) {
     try {
-      const updates = [];
-      const params = [];
+      const updateData = {};
 
       if (data.name !== undefined) {
-        updates.push('name = ?');
-        params.push(data.name);
+        updateData.name = data.name;
       }
 
       if (data.description !== undefined) {
-        updates.push('description = ?');
-        params.push(data.description);
+        updateData.description = data.description;
       }
 
       if (data.phoneNumber !== undefined) {
-        updates.push('phone_number = ?');
-        params.push(data.phoneNumber);
+        updateData.phone_number = data.phoneNumber;
       }
 
       if (data.enableAutoAssignment !== undefined) {
-        updates.push('enable_auto_assignment = ?');
-        params.push(data.enableAutoAssignment ? 1 : 0);
+        updateData.enable_auto_assignment = data.enableAutoAssignment;
       }
 
       if (data.autoAssignmentConfig !== undefined) {
-        updates.push('auto_assignment_config = ?');
-        params.push(JSON.stringify(data.autoAssignmentConfig));
+        updateData.auto_assignment_config = data.autoAssignmentConfig;
         
         // Also update the dedicated column for max_conversations_per_agent
-        // This is used by ConversationAssignmentService for round-robin
         if (data.autoAssignmentConfig.maxConversationsPerAgent !== undefined) {
-          updates.push('max_conversations_per_agent = ?');
-          params.push(data.autoAssignmentConfig.maxConversationsPerAgent);
+          updateData.max_conversations_per_agent = data.autoAssignmentConfig.maxConversationsPerAgent;
         }
       }
 
       if (data.greetingEnabled !== undefined) {
-        updates.push('greeting_enabled = ?');
-        params.push(data.greetingEnabled ? 1 : 0);
+        updateData.greeting_enabled = data.greetingEnabled;
       }
 
       if (data.greetingMessage !== undefined) {
-        updates.push('greeting_message = ?');
-        params.push(data.greetingMessage);
+        updateData.greeting_message = data.greetingMessage;
       }
 
-      if (updates.length === 0) {
+      if (Object.keys(updateData).length === 0) {
         return this.getInboxById(inboxId);
       }
 
-      updates.push('updated_at = ?');
-      params.push(new Date().toISOString());
-      params.push(inboxId);
+      updateData.updated_at = new Date().toISOString();
 
-      const sql = `UPDATE inboxes SET ${updates.join(', ')} WHERE id = ?`;
-      await this.db.query(sql, params);
+      const { error } = await this.supabase.update('inboxes', inboxId, updateData);
+      if (error) throw error;
 
       logger.info('Inbox updated', { inboxId });
 
@@ -383,7 +375,9 @@ class InboxService {
       }
       
       // Members will be deleted via CASCADE
-      await this.db.query('DELETE FROM inboxes WHERE id = ?', [inboxId]);
+      const { error } = await this.supabase.delete('inboxes', inboxId);
+      if (error) throw error;
+      
       logger.info('Inbox deleted', { inboxId, hadWuzapi: !!(inbox?.wuzapiToken) });
 
       // Audit log
@@ -416,12 +410,23 @@ class InboxService {
       const id = this.generateId();
       const now = new Date().toISOString();
 
-      const sql = `
-        INSERT INTO inbox_members (id, inbox_id, agent_id, created_at)
-        VALUES (?, ?, ?, ?)
-      `;
+      const memberData = {
+        id,
+        inbox_id: inboxId,
+        agent_id: agentId,
+        created_at: now
+      };
 
-      await this.db.query(sql, [id, inboxId, agentId, now]);
+      const { error } = await this.supabase.queryAsAdmin('inbox_members', (query) =>
+        query.insert(memberData)
+      );
+
+      if (error) {
+        if (error.code === 'DUPLICATE_KEY' || error.message?.includes('duplicate')) {
+          throw new Error('AGENT_ALREADY_IN_INBOX');
+        }
+        throw error;
+      }
 
       logger.info('Agent assigned to inbox', { inboxId, agentId });
 
@@ -439,8 +444,8 @@ class InboxService {
 
       return { id, inboxId, agentId, createdAt: now };
     } catch (error) {
-      if (error.message.includes('UNIQUE constraint')) {
-        throw new Error('AGENT_ALREADY_IN_INBOX');
+      if (error.message === 'AGENT_ALREADY_IN_INBOX') {
+        throw error;
       }
       logger.error('Failed to assign agent to inbox', { error: error.message, inboxId, agentId });
       throw error;
@@ -481,8 +486,13 @@ class InboxService {
   async removeAgent(inboxId, agentId) {
     try {
       const inbox = await this.getInboxById(inboxId);
-      const sql = 'DELETE FROM inbox_members WHERE inbox_id = ? AND agent_id = ?';
-      await this.db.query(sql, [inboxId, agentId]);
+      
+      const { error } = await this.supabase.queryAsAdmin('inbox_members', (query) =>
+        query.delete().eq('inbox_id', inboxId).eq('agent_id', agentId)
+      );
+      
+      if (error) throw error;
+      
       logger.info('Agent removed from inbox', { inboxId, agentId });
 
       // Audit log
@@ -508,24 +518,39 @@ class InboxService {
    */
   async getInboxMembers(inboxId) {
     try {
-      const sql = `
-        SELECT a.id, a.email, a.name, a.avatar_url, a.role, a.availability, a.status, im.created_at as assigned_at
-        FROM inbox_members im
-        JOIN agents a ON im.agent_id = a.id
-        WHERE im.inbox_id = ?
-        ORDER BY a.name
-      `;
-      const result = await this.db.query(sql, [inboxId]);
-      return result.rows.map(row => ({
-        id: row.id,
-        email: row.email,
-        name: row.name,
-        avatarUrl: row.avatar_url,
-        role: row.role,
-        availability: row.availability,
-        status: row.status,
-        assignedAt: row.assigned_at
-      }));
+      // Get inbox members with agent details using a join
+      const { data, error } = await this.supabase.queryAsAdmin('inbox_members', (query) =>
+        query
+          .select(`
+            created_at,
+            agents (
+              id,
+              email,
+              name,
+              avatar_url,
+              role,
+              availability,
+              status
+            )
+          `)
+          .eq('inbox_id', inboxId)
+      );
+
+      if (error) throw error;
+
+      return (data || [])
+        .filter(row => row.agents) // Filter out any null agents
+        .map(row => ({
+          id: row.agents.id,
+          email: row.agents.email,
+          name: row.agents.name,
+          avatarUrl: row.agents.avatar_url,
+          role: row.agents.role,
+          availability: row.agents.availability,
+          status: row.agents.status,
+          assignedAt: row.created_at
+        }))
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     } catch (error) {
       logger.error('Failed to get inbox members', { error: error.message, inboxId });
       throw error;
@@ -540,9 +565,12 @@ class InboxService {
    */
   async checkAccess(agentId, inboxId) {
     try {
-      const sql = 'SELECT 1 FROM inbox_members WHERE inbox_id = ? AND agent_id = ?';
-      const result = await this.db.query(sql, [inboxId, agentId]);
-      return result.rows.length > 0;
+      const { count, error } = await this.supabase.count('inbox_members', { 
+        inbox_id: inboxId, 
+        agent_id: agentId 
+      });
+      if (error) throw error;
+      return (count || 0) > 0;
     } catch (error) {
       logger.error('Failed to check inbox access', { error: error.message, inboxId, agentId });
       throw error;
@@ -556,15 +584,22 @@ class InboxService {
    */
   async listAgentInboxes(agentId) {
     try {
-      const sql = `
-        SELECT i.*
-        FROM inboxes i
-        JOIN inbox_members im ON i.id = im.inbox_id
-        WHERE im.agent_id = ?
-        ORDER BY i.name
-      `;
-      const result = await this.db.query(sql, [agentId]);
-      return result.rows.map(row => this.formatInbox(row));
+      // Get inbox IDs for this agent
+      const { data: memberships, error: memberError } = await this.supabase.getMany('inbox_members', { agent_id: agentId });
+      if (memberError) throw memberError;
+      
+      if (!memberships || memberships.length === 0) return [];
+
+      const inboxIds = memberships.map(m => m.inbox_id);
+      
+      // Get inbox details
+      const { data: inboxes, error: inboxError } = await this.supabase.queryAsAdmin('inboxes', (query) =>
+        query.select('*').in('id', inboxIds).order('name')
+      );
+      
+      if (inboxError) throw inboxError;
+      
+      return (inboxes || []).map(row => this.formatInbox(row));
     } catch (error) {
       logger.error('Failed to get agent inboxes', { error: error.message, agentId });
       throw error;
@@ -580,17 +615,31 @@ class InboxService {
    */
   async getAvailableAgentsForAssignment(inboxId) {
     try {
-      const sql = `
-        SELECT a.id, a.name, a.availability
-        FROM inbox_members im
-        JOIN agents a ON im.agent_id = a.id
-        WHERE im.inbox_id = ? 
-          AND a.status = 'active' 
-          AND a.availability = 'online'
-        ORDER BY a.name
-      `;
-      const result = await this.db.query(sql, [inboxId]);
-      return result.rows;
+      // Get inbox members with agent details
+      const { data, error } = await this.supabase.queryAsAdmin('inbox_members', (query) =>
+        query
+          .select(`
+            agents (
+              id,
+              name,
+              availability,
+              status
+            )
+          `)
+          .eq('inbox_id', inboxId)
+      );
+
+      if (error) throw error;
+
+      // Filter for active and online agents
+      return (data || [])
+        .filter(row => row.agents && row.agents.status === 'active' && row.agents.availability === 'online')
+        .map(row => ({
+          id: row.agents.id,
+          name: row.agents.name,
+          availability: row.agents.availability
+        }))
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     } catch (error) {
       logger.error('Failed to get available agents', { error: error.message, inboxId });
       throw error;
@@ -612,13 +661,13 @@ class InboxService {
       description: row.description,
       channelType: row.channel_type,
       phoneNumber: row.phone_number,
-      enableAutoAssignment: row.enable_auto_assignment === 1,
+      enableAutoAssignment: row.enable_auto_assignment === true || row.enable_auto_assignment === 1,
       autoAssignmentConfig: this.parseJSON(row.auto_assignment_config, {}),
-      greetingEnabled: row.greeting_enabled === 1,
+      greetingEnabled: row.greeting_enabled === true || row.greeting_enabled === 1,
       greetingMessage: row.greeting_message,
       wuzapiToken: row.wuzapi_token,
       wuzapiUserId: row.wuzapi_user_id,
-      wuzapiConnected: row.wuzapi_connected === 1,
+      wuzapiConnected: row.wuzapi_connected === true || row.wuzapi_connected === 1,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };

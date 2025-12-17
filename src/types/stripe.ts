@@ -47,7 +47,35 @@ export interface PaymentMethod {
 
 // ==================== Credits ====================
 
+export interface TokenUsage {
+  used: number
+  limit: number
+  remaining: number
+}
+
+export interface PlanTokens {
+  daily: TokenUsage
+  monthly: TokenUsage
+  dailyResetAt: string | null
+  monthlyResetAt: string | null
+}
+
+export interface ExtraCredits {
+  available: number
+  pending: number
+  currency: string
+  lowBalanceThreshold: number
+  isLow: boolean
+}
+
 export interface CreditBalance {
+  planTokens: PlanTokens
+  extraCredits: ExtraCredits
+  totalAvailable: number
+}
+
+// Legacy type for backwards compatibility
+export interface LegacyCreditBalance {
   available: number
   pending: number
   currency: string

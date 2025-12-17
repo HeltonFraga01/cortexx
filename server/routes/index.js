@@ -48,6 +48,7 @@ const adminReportRoutes = require('./adminReportRoutes');
 const adminSettingsRoutes = require('./adminSettingsRoutes');
 const adminApiSettingsRoutes = require('./adminApiSettingsRoutes');
 const adminStripeRoutes = require('./adminStripeRoutes');
+const adminCreditPackagesRoutes = require('./adminCreditPackagesRoutes');
 const stripeWebhookRoutes = require('./stripeWebhookRoutes');
 
 logger.debug('contactImportRoutes loaded', { 
@@ -81,6 +82,7 @@ function setupRoutes(app) {
   app.use('/api/admin/settings', adminSettingsRoutes);
   app.use('/api/admin/api-settings', adminApiSettingsRoutes);
   app.use('/api/admin/stripe', adminStripeRoutes);
+  app.use('/api/admin/credit-packages', adminCreditPackagesRoutes);
   
   // Generic admin routes - MUST come AFTER specific routes
   app.use('/api/admin', adminRoutes);

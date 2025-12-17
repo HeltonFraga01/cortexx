@@ -1630,6 +1630,8 @@ router.post('/account-debug/migrate-inboxes', requireAuth, async (req, res) => {
  * POST /api/session/inboxes/default
  * Create or get the default inbox using user's WUZAPI token
  * This inbox represents the user's main WhatsApp connection
+ * 
+ * Note: Uses unique constraint on (account_id, wuzapi_token) to prevent race conditions
  */
 router.post('/inboxes/default', requireAuth, async (req, res) => {
   try {
@@ -1648,65 +1650,67 @@ router.post('/inboxes/default', requireAuth, async (req, res) => {
     }
     
     // Check if default inbox already exists (inbox with user's token)
-    const existingResult = await db.query(
-      'SELECT * FROM inboxes WHERE account_id = ? AND wuzapi_token = ?',
-      [account.id, userToken]
-    );
+    const existingInboxes = await inboxService.listInboxes(account.id);
+    const existingInbox = existingInboxes.find(inbox => inbox.wuzapiToken === userToken);
     
-    if (existingResult.rows.length > 0) {
-      const inbox = inboxService.formatInbox(existingResult.rows[0]);
+    if (existingInbox) {
       return res.json({
         success: true,
-        data: inbox,
+        data: existingInbox,
         isNew: false
       });
     }
     
-    // Create default inbox with user's token
-    const id = require('crypto').randomUUID();
-    const now = new Date().toISOString();
-    
-    const sql = `
-      INSERT INTO inboxes (
-        id, account_id, name, description, channel_type, 
-        enable_auto_assignment, auto_assignment_config,
-        greeting_enabled, greeting_message, 
-        wuzapi_token, wuzapi_user_id, wuzapi_connected,
-        created_at, updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-    
-    await db.query(sql, [
-      id,
-      account.id,
-      `WhatsApp ${userName}`,
-      'Caixa de entrada principal - conexão WhatsApp do usuário',
-      'whatsapp',
-      1, // enable_auto_assignment
-      JSON.stringify({}),
-      0, // greeting_enabled
-      null,
-      userToken, // Use user's existing token
-      req.session.userId, // wuzapi_user_id
-      0, // wuzapi_connected - will be updated when checking status
-      now,
-      now
-    ]);
-    
-    logger.info('Default inbox created for user', { 
-      inboxId: id, 
-      accountId: account.id, 
-      userId: req.session.userId 
-    });
-    
-    const inbox = await inboxService.getInboxById(id);
-    
-    res.status(201).json({
-      success: true,
-      data: inbox,
-      isNew: true
-    });
+    // Try to create default inbox with user's token
+    // The unique constraint on (account_id, wuzapi_token) prevents duplicates from race conditions
+    try {
+      const inbox = await inboxService.createInbox(account.id, {
+        name: `WhatsApp ${userName}`,
+        description: 'Caixa de entrada principal - conexão WhatsApp do usuário',
+        channelType: 'whatsapp',
+        enableAutoAssignment: true,
+        autoAssignmentConfig: {},
+        greetingEnabled: false,
+        greetingMessage: null,
+        wuzapiToken: userToken,
+        wuzapiUserId: req.session.userId
+      });
+      
+      logger.info('Default inbox created for user', { 
+        inboxId: inbox.id, 
+        accountId: account.id, 
+        userId: req.session.userId 
+      });
+      
+      res.status(201).json({
+        success: true,
+        data: inbox,
+        isNew: true
+      });
+    } catch (createError) {
+      // If creation failed due to unique constraint violation (race condition),
+      // fetch the existing inbox that was created by the concurrent request
+      if (createError.message?.includes('duplicate') || createError.code === '23505') {
+        logger.info('Default inbox creation race condition detected, fetching existing', {
+          accountId: account.id,
+          userId: req.session.userId
+        });
+        
+        const inboxesAfterRace = await inboxService.listInboxes(account.id);
+        const existingAfterRace = inboxesAfterRace.find(inbox => inbox.wuzapiToken === userToken);
+        
+        if (existingAfterRace) {
+          return res.json({
+            success: true,
+            data: existingAfterRace,
+            isNew: false
+          });
+        }
+      }
+      
+      // Re-throw if it's a different error
+      throw createError;
+    }
   } catch (error) {
     logger.error('Create default inbox failed', { error: error.message, userId: req.session?.userId });
     res.status(500).json({ error: error.message || 'Erro interno do servidor' });

@@ -8,11 +8,8 @@ import BrandingSettings from './BrandingSettings';
 import CustomLinksManager from './CustomLinksManager';
 import AdminAutomationSettings from './AdminAutomationSettings';
 import ApiSettingsForm from './ApiSettingsForm';
-import StripeSettings from './stripe/StripeSettings';
-import PlanSync from './stripe/PlanSync';
-import AffiliateConfig from './stripe/AffiliateConfig';
 
-import { Settings, Info, Bot, CreditCard } from 'lucide-react';
+import { Settings, Info, Bot } from 'lucide-react';
 
 const AdminSettings = () => {
   const brandingConfig = useBrandingConfig();
@@ -52,10 +49,6 @@ const AdminSettings = () => {
           <TabsTrigger value="automation">
             <Bot className="h-4 w-4 mr-2" />
             Automações
-          </TabsTrigger>
-          <TabsTrigger value="stripe">
-            <CreditCard className="h-4 w-4 mr-2" />
-            Stripe
           </TabsTrigger>
         </TabsList>
 
@@ -119,12 +112,6 @@ const AdminSettings = () => {
 
         <TabsContent value="automation">
           <AdminAutomationSettings />
-        </TabsContent>
-
-        <TabsContent value="stripe" className="space-y-6">
-          <StripeSettings />
-          <PlanSync />
-          <AffiliateConfig />
         </TabsContent>
       </Tabs>
     </div>

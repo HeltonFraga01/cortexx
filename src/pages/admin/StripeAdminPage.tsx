@@ -5,11 +5,12 @@
  */
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { CreditCard, Package, TrendingUp, Users } from 'lucide-react'
+import { CreditCard, Package, TrendingUp, Users, Coins } from 'lucide-react'
 import { StripeSettings } from '@/components/admin/stripe/StripeSettings'
 import { PlanSync } from '@/components/admin/stripe/PlanSync'
 import { PaymentAnalytics } from '@/components/admin/stripe/PaymentAnalytics'
 import { AffiliateConfig } from '@/components/admin/stripe/AffiliateConfig'
+import { CreditPackagesManager } from '@/components/admin/stripe/CreditPackagesManager'
 
 export function StripeAdminPage() {
   return (
@@ -29,6 +30,10 @@ export function StripeAdminPage() {
             <Package className="h-4 w-4" />
             Planos
           </TabsTrigger>
+          <TabsTrigger value="credits" className="flex items-center gap-2">
+            <Coins className="h-4 w-4" />
+            Créditos
+          </TabsTrigger>
           <TabsTrigger value="analytics" className="flex items-center gap-2">
             <TrendingUp className="h-4 w-4" />
             Analytics
@@ -45,6 +50,10 @@ export function StripeAdminPage() {
 
         <TabsContent value="plans">
           <PlanSync />
+        </TabsContent>
+
+        <TabsContent value="credits">
+          <CreditPackagesManager />
         </TabsContent>
 
         <TabsContent value="analytics">

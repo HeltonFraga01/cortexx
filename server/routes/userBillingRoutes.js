@@ -351,19 +351,21 @@ router.post('/subscription/reactivate', authenticate, async (req, res) => {
 
 /**
  * GET /api/user/credits
- * Get credit balance
+ * Get credit balance (plan tokens + extra credits)
  */
 router.get('/credits', authenticate, async (req, res) => {
   try {
+    const userId = req.session.userId;
+    const uuidUserId = toUuidFormat(userId);
+    
     // Get account
-    const uuidUserId = toUuidFormat(req.session.userId);
     const { data: account } = await SupabaseService.adminClient
       .from('accounts')
       .select('id, reseller_credit_balance')
       .eq('owner_user_id', uuidUserId)
       .single();
 
-    // Get credit transactions to calculate balance
+    // Get extra credits from transactions
     const { data: transactions } = await SupabaseService.adminClient
       .from('credit_transactions')
       .select('amount, balance_after')
@@ -371,17 +373,55 @@ router.get('/credits', authenticate, async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(1);
 
-    const balance = transactions?.[0]?.balance_after || 0;
-    const lowBalanceThreshold = 100; // Configurable
+    const extraCredits = transactions?.[0]?.balance_after || 0;
+    const lowBalanceThreshold = 100;
+
+    // Get plan token quotas using QuotaService
+    const QuotaService = require('../services/QuotaService');
+    const quotaService = new QuotaService();
+    
+    let planTokens = {
+      daily: { used: 0, limit: 0, remaining: 0 },
+      monthly: { used: 0, limit: 0, remaining: 0 },
+      dailyResetAt: null,
+      monthlyResetAt: null,
+    };
+
+    try {
+      const botQuotas = await quotaService.getBotQuotaUsage(userId);
+      planTokens = {
+        daily: {
+          used: botQuotas.botTokensDaily,
+          limit: botQuotas.maxBotTokensPerDay,
+          remaining: Math.max(0, botQuotas.maxBotTokensPerDay - botQuotas.botTokensDaily),
+        },
+        monthly: {
+          used: botQuotas.botTokensMonthly,
+          limit: botQuotas.maxBotTokensPerMonth,
+          remaining: Math.max(0, botQuotas.maxBotTokensPerMonth - botQuotas.botTokensMonthly),
+        },
+        dailyResetAt: botQuotas.dailyResetAt,
+        monthlyResetAt: botQuotas.monthlyResetAt,
+      };
+    } catch (quotaError) {
+      logger.warn('Failed to get plan token quotas', { error: quotaError.message, userId });
+    }
 
     res.json({
       success: true,
       data: {
-        available: balance,
-        pending: 0,
-        currency: 'BRL',
-        lowBalanceThreshold,
-        isLow: balance < lowBalanceThreshold,
+        // Plan tokens (included in subscription)
+        planTokens,
+        // Extra credits (purchased separately)
+        extraCredits: {
+          available: extraCredits,
+          pending: 0,
+          currency: 'BRL',
+          lowBalanceThreshold,
+          isLow: extraCredits > 0 && extraCredits < lowBalanceThreshold,
+        },
+        // Combined view
+        totalAvailable: planTokens.monthly.remaining + extraCredits,
       },
     });
   } catch (error) {

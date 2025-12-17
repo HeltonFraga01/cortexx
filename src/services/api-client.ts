@@ -185,16 +185,20 @@ export class BackendApiClient {
             message = data?.error || 'Dados inválidos enviados para o servidor';
             break;
           case 401:
-            // Não mostrar toast para 401 - deixar o componente/contexto de auth tratar
-            // Isso evita toasts duplicados quando a sessão expira
-            shouldShowToast = false;
+            // Mostrar toast para 401 para informar o usuário sobre sessão expirada
+            shouldShowToast = true;
             if (data?.code === 'TOKEN_MISSING') {
               message = 'Sessão expirada. Por favor, faça login novamente.';
             } else if (data?.code === 'AUTH_REQUIRED') {
-              message = 'Autenticação necessária. Por favor, faça login.';
+              message = 'Sessão expirada ou inválida. Por favor, faça login novamente.';
             } else {
-              message = data?.error || 'Não autorizado. Verifique suas credenciais.';
+              message = data?.error || 'Sessão expirada. Por favor, faça login novamente.';
             }
+            
+            // Disparar evento para que o AuthContext possa reagir
+            window.dispatchEvent(new CustomEvent('auth:session-expired', { 
+              detail: { code: data?.code, message } 
+            }));
             break;
           case 403:
             // Se for erro de CSRF, tentar renovar token

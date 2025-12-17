@@ -115,6 +115,19 @@ router.put('/',
   async (req, res) => {
     const startTime = Date.now();
     
+    // Log session state for debugging
+    logger.info('📝 Branding PUT request received', {
+      url: req.url,
+      method: req.method,
+      sessionId: req.sessionID,
+      hasSession: !!req.session,
+      userId: req.session?.userId,
+      role: req.session?.role,
+      hasUserToken: !!req.session?.userToken,
+      ip: req.ip,
+      userAgent: req.get('User-Agent')
+    });
+    
     try {
       // Session already validated by requireAdmin middleware
       const brandingData = req.body;
@@ -380,10 +393,12 @@ router.put('/',
           ip: req.ip
         });
 
+        // Retornar mensagem de erro mais descritiva
+        const errorMessage = validationError.message || 'Dados de configuração inválidos';
         return res.status(400).json({
           success: false,
-          error: 'Dados de configuração inválidos',
-          message: validationError.message,
+          error: errorMessage,
+          message: errorMessage,
           code: 400,
           timestamp: new Date().toISOString()
         });

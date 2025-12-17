@@ -132,6 +132,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     checkAuth();
   }, []);
 
+  // Escutar eventos de sessão expirada
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      console.warn('Session expired event received, clearing user state');
+      setUser(null);
+      // Redirecionar para login será feito pelo ProtectedRoute
+    };
+
+    window.addEventListener('auth:session-expired', handleSessionExpired);
+    
+    return () => {
+      window.removeEventListener('auth:session-expired', handleSessionExpired);
+    };
+  }, []);
+
   return (
     <AuthContext.Provider value={{
       user,

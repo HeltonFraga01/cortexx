@@ -46,12 +46,36 @@ class Database {
 
   // Branding config methods
   async getBrandingConfig() {
-    const { data, error } = await SupabaseService.getById('branding_config', 1);
-    if (error) {
-      logger.warn('Error fetching branding config:', error.message);
+    try {
+      // Try to get the first branding config (there should only be one)
+      const { data, error } = await SupabaseService.queryAsAdmin('branding_config', (query) =>
+        query.select('*').limit(1).single()
+      );
+      
+      if (error || !data) {
+        logger.warn('No branding config found, using defaults');
+        return this._getDefaultBrandingConfig();
+      }
+
+      // Map snake_case to camelCase
+      return {
+        id: data.id,
+        appName: data.app_name || 'WUZAPI',
+        logoUrl: data.logo_url || null,
+        primaryColor: data.primary_color || null,
+        secondaryColor: data.secondary_color || null,
+        customHomeHtml: data.custom_home_html || null,
+        supportPhone: data.support_phone || null,
+        ogImageUrl: data.og_image_url || null,
+        primaryForeground: data.primary_foreground || null,
+        secondaryForeground: data.secondary_foreground || null,
+        createdAt: data.created_at,
+        updatedAt: data.updated_at
+      };
+    } catch (error) {
+      logger.error('Error fetching branding config:', error.message);
       return this._getDefaultBrandingConfig();
     }
-    return data || this._getDefaultBrandingConfig();
   }
 
   _getDefaultBrandingConfig() {
@@ -62,8 +86,95 @@ class Database {
       primaryColor: null,
       secondaryColor: null,
       customHomeHtml: null,
-      supportPhone: null
+      supportPhone: null,
+      ogImageUrl: null,
+      primaryForeground: null,
+      secondaryForeground: null
     };
+  }
+
+  async updateBrandingConfig(brandingData) {
+    try {
+      // Validate required fields
+      if (!brandingData.appName || brandingData.appName.trim().length === 0) {
+        throw new Error('appName é obrigatório');
+      }
+
+      if (brandingData.appName.length > 50) {
+        throw new Error('appName deve ter no máximo 50 caracteres');
+      }
+
+      // Map camelCase to snake_case for Supabase
+      const updateData = {
+        app_name: brandingData.appName.trim(),
+        logo_url: brandingData.logoUrl || null,
+        primary_color: brandingData.primaryColor || null,
+        secondary_color: brandingData.secondaryColor || null,
+        custom_home_html: brandingData.customHomeHtml || null,
+        support_phone: brandingData.supportPhone || null,
+        og_image_url: brandingData.ogImageUrl || null,
+        primary_foreground: brandingData.primaryForeground || null,
+        secondary_foreground: brandingData.secondaryForeground || null,
+        updated_at: new Date().toISOString()
+      };
+
+      // Check if branding config exists
+      const existing = await this.getBrandingConfig();
+      
+      logger.info('Updating branding config', {
+        existingId: existing?.id,
+        appName: updateData.app_name,
+        hasCustomHtml: !!updateData.custom_home_html
+      });
+
+      let result;
+      if (existing && existing.id) {
+        // Update existing config
+        const { data, error } = await SupabaseService.update('branding_config', existing.id, updateData);
+        if (error) {
+          logger.error('Error updating branding config:', { error: error.message, id: existing.id });
+          throw new Error(error.message || 'Falha ao atualizar configuração de branding');
+        }
+        if (!data) {
+          logger.error('No data returned from branding config update', { id: existing.id });
+          throw new Error('Nenhum dado retornado após atualização');
+        }
+        result = data;
+        logger.info('Branding config updated successfully', { id: result.id });
+      } else {
+        // Create new config
+        const { data, error } = await SupabaseService.insert('branding_config', updateData);
+        if (error) {
+          logger.error('Error creating branding config:', { error: error.message });
+          throw new Error(error.message || 'Falha ao criar configuração de branding');
+        }
+        if (!data) {
+          logger.error('No data returned from branding config insert');
+          throw new Error('Nenhum dado retornado após criação');
+        }
+        result = data;
+        logger.info('Branding config created successfully', { id: result.id });
+      }
+
+      // Map snake_case back to camelCase for response
+      return {
+        id: result.id,
+        appName: result.app_name,
+        logoUrl: result.logo_url,
+        primaryColor: result.primary_color,
+        secondaryColor: result.secondary_color,
+        customHomeHtml: result.custom_home_html,
+        supportPhone: result.support_phone,
+        ogImageUrl: result.og_image_url,
+        primaryForeground: result.primary_foreground,
+        secondaryForeground: result.secondary_foreground,
+        createdAt: result.created_at,
+        updatedAt: result.updated_at
+      };
+    } catch (error) {
+      logger.error('Error in updateBrandingConfig:', error.message);
+      throw error;
+    }
   }
 
   // Connection methods - these should be migrated to use Supabase tables
