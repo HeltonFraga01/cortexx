@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS = {
 class AccountService {
   /**
    * Create a new account
+   * @param {string} tenantId - Tenant UUID (required for multi-tenancy)
    * @param {Object} data - Account creation data
    * @param {string} data.name - Account name
    * @param {string} data.ownerUserId - Owner user ID (from Supabase Auth)
@@ -32,8 +33,12 @@ class AccountService {
    * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<Object>} Created account
    */
-  async createAccount(data, token = null) {
+  async createAccount(tenantId, data, token = null) {
     try {
+      if (!tenantId) {
+        throw new Error('Tenant ID is required for account creation');
+      }
+
       const settings = {
         ...DEFAULT_SETTINGS,
         ...(data.settings || {})
@@ -43,6 +48,7 @@ class AccountService {
         name: data.name,
         owner_user_id: data.ownerUserId,
         wuzapi_token: data.wuzapiToken,
+        tenant_id: tenantId,
         timezone: data.timezone || 'America/Sao_Paulo',
         locale: data.locale || 'pt-BR',
         status: 'active',
@@ -55,22 +61,30 @@ class AccountService {
         throw error;
       }
 
-      logger.info('Account created', { accountId: account.id, name: data.name });
+      logger.info('Account created', { 
+        accountId: account.id, 
+        name: data.name, 
+        tenantId 
+      });
 
       return this.formatAccount(account);
     } catch (error) {
-      logger.error('Failed to create account', { error: error.message, data: { name: data.name } });
+      logger.error('Failed to create account', { 
+        error: error.message, 
+        data: { name: data.name, tenantId } 
+      });
       throw error;
     }
   }
 
   /**
-   * Get account by ID
+   * Get account by ID with tenant validation
    * @param {string} accountId - Account ID (UUID)
+   * @param {string} [tenantId] - Tenant ID for validation (optional)
    * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<Object|null>} Account or null if not found
    */
-  async getAccountById(accountId, token = null) {
+  async getAccountById(accountId, tenantId = null, token = null) {
     try {
       const { data: account, error } = await supabaseService.getById('accounts', accountId, token);
 
@@ -81,9 +95,23 @@ class AccountService {
         throw error;
       }
 
-      return account ? this.formatAccount(account) : null;
+      if (!account) {
+        return null;
+      }
+
+      // Validate tenant ownership if tenantId is provided
+      if (tenantId && account.tenant_id !== tenantId) {
+        logger.warn('Cross-tenant account access attempt', {
+          accountId,
+          requestTenantId: tenantId,
+          accountTenantId: account.tenant_id
+        });
+        return null; // Return null instead of throwing to prevent information disclosure
+      }
+
+      return this.formatAccount(account);
     } catch (error) {
-      logger.error('Failed to get account', { error: error.message, accountId });
+      logger.error('Failed to get account', { error: error.message, accountId, tenantId });
       throw error;
     }
   }
@@ -274,17 +302,23 @@ class AccountService {
   }
 
   /**
-   * List all accounts (admin only - bypasses RLS)
+   * List accounts with tenant filtering
+   * @param {string} [tenantId] - Tenant ID to filter by (required for tenant-scoped queries)
    * @param {Object} [filters] - Optional filters
    * @param {string} [filters.status] - Filter by status
    * @param {number} [filters.limit] - Limit results
    * @param {number} [filters.offset] - Offset for pagination
    * @returns {Promise<Object[]>} List of accounts
    */
-  async listAccounts(filters = {}) {
+  async listAccounts(tenantId = null, filters = {}) {
     try {
       const queryFn = (query) => {
         let q = query.select('*');
+
+        // Filter by tenant if provided
+        if (tenantId) {
+          q = q.eq('tenant_id', tenantId);
+        }
 
         if (filters.status) {
           q = q.eq('status', filters.status);
@@ -311,7 +345,7 @@ class AccountService {
 
       return (accounts || []).map(row => this.formatAccount(row));
     } catch (error) {
-      logger.error('Failed to list accounts', { error: error.message });
+      logger.error('Failed to list accounts', { error: error.message, tenantId });
       throw error;
     }
   }
@@ -327,6 +361,7 @@ class AccountService {
       name: row.name,
       ownerUserId: row.owner_user_id,
       wuzapiToken: row.wuzapi_token,
+      tenantId: row.tenant_id,
       timezone: row.timezone,
       locale: row.locale,
       status: row.status,

@@ -73,6 +73,12 @@ const agentAuthRoutes = require('./routes/agentAuthRoutes');
 const sessionAccountRoutes = require('./routes/sessionAccountRoutes');
 const resellerRoutes = require('./routes/resellerRoutes');
 
+// Superadmin Routes
+const superadminAuthRoutes = require('./routes/superadminAuthRoutes');
+const superadminTenantRoutes = require('./routes/superadminTenantRoutes');
+const superadminMetricsRoutes = require('./routes/superadminMetricsRoutes');
+const superadminImpersonationRoutes = require('./routes/superadminImpersonationRoutes');
+
 // Importar sistema de monitoramento
 const { logger, requestLogger } = require('./utils/logger');
 const { metrics } = require('./utils/metrics');
@@ -130,7 +136,9 @@ app.use((req, res, next) => {
     '/api/bot/send/sticker', // Bot proxy endpoint para envio de stickers
     '/api/agent/login', // Agent login endpoint (public)
     '/api/agent/register', // Agent registration endpoint (public)
-    '/api/agent/invitation' // Agent invitation validation endpoint (public)
+    '/api/agent/invitation', // Agent invitation validation endpoint (public)
+    '/api/superadmin/login', // Superadmin login endpoint (public)
+    '/api/superadmin/tenants/validate-subdomain' // Subdomain validation (read-only)
   ];
 
   // Verificar se a rota atual está na lista de exceções
@@ -527,6 +535,12 @@ app.use('/api/account/inboxes', accountInboxRoutes);
 app.use('/api/account/roles', accountRoleRoutes);
 app.use('/api/account/audit', accountAuditRoutes);
 app.use('/api/agent', agentAuthRoutes);
+
+// Superadmin Routes
+app.use('/api/superadmin', superadminAuthRoutes);
+app.use('/api/superadmin', superadminTenantRoutes);
+app.use('/api/superadmin', superadminMetricsRoutes);
+app.use('/api/superadmin', superadminImpersonationRoutes);
 
 // Agent Data Routes (for agent dashboard - agent token based)
 const agentDataRoutes = require('./routes/agentDataRoutes');

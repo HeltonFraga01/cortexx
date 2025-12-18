@@ -23,7 +23,7 @@ export const BrandingProvider: React.FC<BrandingProviderProps> = ({ children }) 
   const [error, setError] = useState<string | null>(null);
   const [previewColors, setPreviewColors] = useState<{ primary: string; secondary: string } | null>(null);
 
-  // Carrega a configuração inicial
+  // Carrega a configuração inicial (tenant-aware)
   const loadConfig = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -38,7 +38,8 @@ export const BrandingProvider: React.FC<BrandingProviderProps> = ({ children }) 
         }
       }
 
-      // Buscar configuração atualizada do backend (rota pública, não precisa de token)
+      // Buscar configuração atualizada do backend
+      // A rota resolve automaticamente o tenant pelo subdomain
       const response = await brandingService.getBrandingConfig();
 
       if (response.success && response.data) {
@@ -82,7 +83,7 @@ export const BrandingProvider: React.FC<BrandingProviderProps> = ({ children }) 
         return false;
       }
 
-      // Não precisa passar token, a rota usa sessão
+      // A rota usa sessão e resolve tenant automaticamente pelo subdomain
       const response = await brandingService.updateBrandingConfig(updates);
 
       if (response.success && response.data) {
@@ -258,10 +259,10 @@ export const BrandingProvider: React.FC<BrandingProviderProps> = ({ children }) 
     }
   }, [config.primaryColor, config.secondaryColor, config.primaryForeground, config.secondaryForeground]);
 
-  // Carrega configuração na inicialização
+  // Carrega configuração na inicialização (tenant-aware)
   useEffect(() => {
-    // Carregar branding sempre, independente de autenticação
-    // A rota pública /api/branding/public não requer autenticação
+    // Carregar branding do tenant atual baseado no subdomain
+    // A rota resolve automaticamente o tenant pelo hostname
     const timer = setTimeout(() => {
       // Pré-carregar configuração para melhor performance
       brandingService.preloadConfig().then(() => {

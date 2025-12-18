@@ -44,6 +44,55 @@ router.post('/login', async (req, res) => {
       });
     }
     
+    // Multi-tenant: Extract subdomain and resolve tenant context
+    // Requirements: 8.2 - Scope login to tenant context
+    let tenantContext = null;
+    const hostname = req.get('host') || req.hostname;
+    const subdomain = extractSubdomain(hostname);
+    
+    if (subdomain && subdomain !== 'www' && subdomain !== 'api' && subdomain !== 'superadmin') {
+      try {
+        const TenantService = require('../services/TenantService');
+        const tenantService = new TenantService();
+        const tenant = await tenantService.getBySubdomain(subdomain);
+        
+        if (tenant && tenant.status === 'active') {
+          tenantContext = {
+            tenantId: tenant.id,
+            subdomain: tenant.subdomain,
+            name: tenant.name
+          };
+          
+          logger.info('Tenant context resolved for login', {
+            subdomain,
+            tenantId: tenant.id,
+            tenantName: tenant.name,
+            role
+          });
+        } else if (tenant && tenant.status !== 'active') {
+          logger.warn('Login attempt on inactive tenant', {
+            subdomain,
+            tenantId: tenant.id,
+            tenantStatus: tenant.status,
+            ip: req.ip
+          });
+          
+          return res.status(403).json({
+            error: 'Tenant is not active',
+            code: 'TENANT_INACTIVE',
+            timestamp: new Date().toISOString()
+          });
+        }
+      } catch (error) {
+        logger.warn('Failed to resolve tenant context for login', {
+          subdomain,
+          hostname,
+          error: error.message,
+          ip: req.ip
+        });
+      }
+    }
+    
     // CRITICAL: Destroy any existing session before creating a new one
     // This prevents stale session data from causing authentication loops
     // when users log out and log in with different credentials
@@ -226,6 +275,20 @@ router.post('/login', async (req, res) => {
           req.session.role = role;
           req.session.createdAt = new Date().toISOString();
           req.session.lastActivity = new Date().toISOString();
+          
+          // Multi-tenant: Set tenant context in session
+          // Requirements: 8.2 - Validate credentials within tenant only
+          if (tenantContext) {
+            req.session.tenantId = tenantContext.tenantId;
+            req.session.tenantSubdomain = tenantContext.subdomain;
+            req.session.tenantName = tenantContext.name;
+            
+            logger.info('Tenant context added to session', {
+              userId: userData.id,
+              tenantId: tenantContext.tenantId,
+              subdomain: tenantContext.subdomain
+            });
+          }
           
           // Log the new session state
           logger.info('New session created after destroy', {
@@ -418,6 +481,21 @@ router.get('/status', async (req, res) => {
     });
   }
   
+  // Handle superadmin authentication status
+  if (req.session.role === 'superadmin') {
+    const superadminData = req.session.superadminData || {};
+    return res.json({
+      authenticated: true,
+      user: {
+        id: req.session.userId,
+        role: 'superadmin',
+        token: req.session.sessionToken || '',
+        name: superadminData.name || superadminData.email || 'Superadmin',
+        jid: null
+      }
+    });
+  }
+  
   // Buscar nome do usuário se for role user e não estiver em cache
   let userName = req.session.userName || req.session.userId;
   let userJid = req.session.userJid || null;
@@ -458,5 +536,26 @@ router.get('/status', async (req, res) => {
     }
   });
 });
+
+/**
+ * Helper function to extract subdomain from hostname
+ * @param {string} hostname - Full hostname
+ * @returns {string|null} Subdomain or null
+ */
+function extractSubdomain(hostname) {
+  if (!hostname) return null;
+
+  // Remove port if present
+  const cleanHostname = hostname.split(':')[0];
+  
+  // Split by dots
+  const parts = cleanHostname.split('.');
+  
+  // If less than 3 parts, no subdomain (e.g., localhost, example.com)
+  if (parts.length < 3) return null;
+  
+  // Return the first part as subdomain
+  return parts[0].toLowerCase();
+}
 
 module.exports = router;

@@ -23,14 +23,35 @@ class MockDatabase {
   async query(sql, params = []) {
     const sqlUpper = sql.trim().toUpperCase();
 
-    // Plan quotas query
-    if (sql.includes('FROM user_subscriptions s') && sql.includes('JOIN plans p')) {
+    // Plan quotas query - updated for tenant_plans
+    if (sql.includes('FROM user_subscriptions s') && sql.includes('JOIN tenant_plans tp')) {
       const userId = params[0];
       const sub = this.subscriptions.get(userId);
       if (!sub) return { rows: [] };
       const plan = this.plans.get(sub.planId);
       if (!plan) return { rows: [] };
-      return { rows: [plan] };
+      
+      // Convert plan structure to match new JSON-based quotas format
+      return { 
+        rows: [{
+          max_agents: plan.max_agents?.toString(),
+          max_connections: plan.max_connections?.toString(),
+          max_messages_per_day: plan.max_messages_per_day?.toString(),
+          max_messages_per_month: plan.max_messages_per_month?.toString(),
+          max_inboxes: plan.max_inboxes?.toString(),
+          max_teams: plan.max_teams?.toString(),
+          max_webhooks: plan.max_webhooks?.toString(),
+          max_campaigns: plan.max_campaigns?.toString(),
+          max_storage_mb: plan.max_storage_mb?.toString(),
+          max_bots: plan.max_bots?.toString(),
+          max_bot_calls_per_day: plan.max_bot_calls_per_day?.toString(),
+          max_bot_calls_per_month: plan.max_bot_calls_per_month?.toString(),
+          max_bot_messages_per_day: plan.max_bot_messages_per_day?.toString(),
+          max_bot_messages_per_month: plan.max_bot_messages_per_month?.toString(),
+          max_bot_tokens_per_day: plan.max_bot_tokens_per_day?.toString(),
+          max_bot_tokens_per_month: plan.max_bot_tokens_per_month?.toString()
+        }]
+      };
     }
 
     // Override queries
@@ -120,7 +141,14 @@ class MockDatabase {
       max_teams: quotas.maxTeams || 1,
       max_webhooks: quotas.maxWebhooks || 5,
       max_campaigns: quotas.maxCampaigns || 1,
-      max_storage_mb: quotas.maxStorageMb || 100
+      max_storage_mb: quotas.maxStorageMb || 100,
+      max_bots: quotas.maxBots || 3,
+      max_bot_calls_per_day: quotas.maxBotCallsPerDay || 100,
+      max_bot_calls_per_month: quotas.maxBotCallsPerMonth || 3000,
+      max_bot_messages_per_day: quotas.maxBotMessagesPerDay || 50,
+      max_bot_messages_per_month: quotas.maxBotMessagesPerMonth || 1500,
+      max_bot_tokens_per_day: quotas.maxBotTokensPerDay || 10000,
+      max_bot_tokens_per_month: quotas.maxBotTokensPerMonth || 300000
     });
   }
 

@@ -1,5 +1,5 @@
 import { Toaster } from "sonner";
-import { Provider as TooltipProvider } from "@radix-ui/react-tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { useEffect } from "react";
@@ -21,6 +21,8 @@ import AdminDashboard from "./pages/AdminDashboard";
 import UserDashboard from "./pages/UserDashboard";
 import AgentDashboard from "./pages/AgentDashboard";
 import NotFound from "./pages/NotFound";
+import SuperadminLogin from "./pages/superadmin/SuperadminLogin";
+import SuperadminRoutes from "./pages/superadmin/SuperadminRoutes";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -105,6 +107,15 @@ const App = () => {
                       <Route path="/login" element={<LoginPage />} />
                       <Route path="/dashboard" element={<LoginPage />} />
                       <Route path="/agent/login" element={<AgentLoginPage />} />
+                      <Route path="/superadmin/login" element={<SuperadminLogin />} />
+                      <Route
+                        path="/superadmin/*"
+                        element={
+                          <ProtectedRoute requiredRole="superadmin">
+                            <SuperadminRoutes />
+                          </ProtectedRoute>
+                        }
+                      />
                       <Route
                         path="/admin/*"
                         element={

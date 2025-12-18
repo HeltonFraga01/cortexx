@@ -14,21 +14,44 @@ class WebhookAccountRouter {
   }
 
   /**
-   * Get account by WUZAPI user token
+   * Get account by WUZAPI user token with tenant context
+   * Updated for multi-tenant architecture to include tenant information
    * 
    * @param {string} userToken - WUZAPI user token
-   * @returns {Promise<Object|null>} Account or null
+   * @returns {Promise<Object|null>} Account with tenant context or null
+   * Requirements: 12.3 - Route webhooks to correct account based on wuzapi_token mapping
    */
   async getAccountByToken(userToken) {
     try {
       const sql = `
-        SELECT id, name, owner_user_id, wuzapi_token, status
-        FROM accounts
-        WHERE wuzapi_token = ? AND status = 'active'
+        SELECT a.id, a.name, a.owner_user_id, a.wuzapi_token, a.status, a.tenant_id,
+               t.subdomain as tenant_subdomain, t.name as tenant_name, t.status as tenant_status
+        FROM accounts a
+        JOIN tenants t ON a.tenant_id = t.id
+        WHERE a.wuzapi_token = ? AND a.status = 'active' AND t.status = 'active'
       `;
       
       const { rows } = await this.db.query(sql, [userToken]);
-      return rows[0] || null;
+      
+      if (rows[0]) {
+        const account = rows[0];
+        return {
+          id: account.id,
+          name: account.name,
+          owner_user_id: account.owner_user_id,
+          wuzapi_token: account.wuzapi_token,
+          status: account.status,
+          tenant_id: account.tenant_id,
+          tenant: {
+            id: account.tenant_id,
+            subdomain: account.tenant_subdomain,
+            name: account.tenant_name,
+            status: account.tenant_status
+          }
+        };
+      }
+      
+      return null;
     } catch (error) {
       logger.error('Failed to get account by token', { error: error.message });
       return null;
@@ -88,13 +111,38 @@ class WebhookAccountRouter {
   }
 
   /**
-   * Route webhook event to account
+   * Validate tenant context for webhook routing
+   * Ensures webhook is being processed in the correct tenant context
+   * 
+   * @param {Object} account - Account with tenant information
+   * @param {string} [expectedTenantId] - Expected tenant ID (optional)
+   * @returns {boolean} True if tenant context is valid
+   */
+  validateTenantContext(account, expectedTenantId = null) {
+    if (!account || !account.tenant) {
+      return false;
+    }
+
+    // If no expected tenant ID provided, just check that tenant is active
+    if (!expectedTenantId) {
+      return account.tenant.status === 'active';
+    }
+
+    // Validate that account belongs to expected tenant
+    return account.tenant_id === expectedTenantId && account.tenant.status === 'active';
+  }
+
+  /**
+   * Route webhook event to account with tenant context
+   * Updated for multi-tenant architecture
    * 
    * @param {string} userToken - WUZAPI user token
    * @param {Object} event - Webhook event
-   * @returns {Promise<Object>} Routing result
+   * @param {string} [expectedTenantId] - Expected tenant ID for validation (optional)
+   * @returns {Promise<Object>} Routing result with tenant context
+   * Requirements: 12.3 - Route webhooks to correct account based on wuzapi_token mapping
    */
-  async routeWebhook(userToken, event) {
+  async routeWebhook(userToken, event, expectedTenantId = null) {
     try {
       // Get account by token
       const account = await this.getAccountByToken(userToken);
@@ -106,6 +154,20 @@ class WebhookAccountRouter {
         return { 
           routed: false, 
           reason: 'account_not_found' 
+        };
+      }
+
+      // Validate tenant context
+      if (!this.validateTenantContext(account, expectedTenantId)) {
+        logger.warn('Invalid tenant context for webhook', {
+          accountId: account.id,
+          accountTenantId: account.tenant_id,
+          expectedTenantId,
+          tenantStatus: account.tenant?.status
+        });
+        return {
+          routed: false,
+          reason: 'invalid_tenant_context'
         };
       }
 
@@ -136,6 +198,8 @@ class WebhookAccountRouter {
       logger.info('Webhook routed to account', {
         accountId: account.id,
         accountName: account.name,
+        tenantId: account.tenant_id,
+        tenantSubdomain: account.tenant?.subdomain,
         eventType: event.type,
         agentsToNotify: agentsToNotify.length
       });
@@ -144,8 +208,10 @@ class WebhookAccountRouter {
         routed: true,
         account: {
           id: account.id,
-          name: account.name
+          name: account.name,
+          tenant_id: account.tenant_id
         },
+        tenant: account.tenant,
         inboxId,
         assignedAgentId,
         agentsToNotify
@@ -164,11 +230,12 @@ class WebhookAccountRouter {
   }
 
   /**
-   * Log webhook event for audit
+   * Log webhook event for audit with tenant context
+   * Updated for multi-tenant architecture
    * 
    * @param {string} accountId - Account ID
    * @param {Object} event - Webhook event
-   * @param {Object} routingResult - Routing result
+   * @param {Object} routingResult - Routing result with tenant context
    */
   async logWebhookEvent(accountId, event, routingResult) {
     try {
@@ -189,7 +256,9 @@ class WebhookAccountRouter {
         JSON.stringify({
           eventType: event.type,
           routed: routingResult.routed,
-          agentsNotified: routingResult.agentsToNotify?.length || 0
+          agentsNotified: routingResult.agentsToNotify?.length || 0,
+          tenantId: routingResult.tenant?.id,
+          tenantSubdomain: routingResult.tenant?.subdomain
         })
       ]);
     } catch (error) {

@@ -265,10 +265,6 @@ export function useChatApi(): ChatApi {
         releaseConversation: releaseAgentConversation,
         getTransferableAgents: getTransferableAgents,
         
-        // Bots (agent mode - uses owner's bots)
-        getBots: getAgentBots,
-        assignBotToConversation: assignAgentBotToConversation,
-        
         isAgentMode: true
       }
     }

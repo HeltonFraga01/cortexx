@@ -10,6 +10,7 @@ const axios = require('axios')
 const router = express.Router()
 const { logger } = require('../utils/logger')
 const ChatService = require('../services/ChatService')
+const QuotaService = require('../services/QuotaService')
 const { validatePhoneWithAPI } = require('../services/PhoneValidationService')
 const supabaseService = require('../services/SupabaseService')
 
@@ -850,6 +851,44 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
         messageId: wuzapiResponse?.data?.Id,
         phone: validatedPhone 
       })
+
+      // Track message quota usage for multi-tenant architecture
+      // Requirements: 12.4 - Increment account's message quota on send
+      try {
+        const chatService = new ChatService()
+        const accountId = await chatService.getAccountIdFromToken(req.userToken)
+        
+        if (accountId) {
+          // Get account owner user ID for quota tracking
+          const { data: account, error: accountError } = await supabaseService.getById('accounts', accountId)
+          
+          if (!accountError && account?.owner_user_id) {
+            const quotaService = new QuotaService(supabaseService.db)
+            
+            // Increment daily and monthly message quotas
+            await quotaService.incrementUsage(account.owner_user_id, 'max_messages_per_day', 1)
+            await quotaService.incrementUsage(account.owner_user_id, 'max_messages_per_month', 1)
+            
+            logger.debug('Message quota incremented', {
+              accountId,
+              ownerId: account.owner_user_id,
+              conversationId: id
+            })
+          } else {
+            logger.warn('Could not find account owner for quota tracking', { accountId })
+          }
+        } else {
+          logger.warn('Could not resolve account ID from token for quota tracking', { 
+            tokenPrefix: req.userToken?.substring(0, 8) 
+          })
+        }
+      } catch (quotaError) {
+        // Don't fail the message send if quota tracking fails
+        logger.error('Failed to track message quota', { 
+          error: quotaError.message,
+          conversationId: id 
+        })
+      }
     }
 
     res.status(201).json({ success: true, data: message })

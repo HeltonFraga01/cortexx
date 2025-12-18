@@ -92,11 +92,32 @@ class AgentService {
    * @param {string} accountId - Account ID (UUID)
    * @param {Object} data - Invitation data
    * @param {string} createdBy - Agent ID who created the invitation
+   * @param {string} [sessionTenantId] - Tenant ID from session for validation
    * @param {string} [token] - User JWT token for RLS
    * @returns {Promise<Object>} Created invitation with token
    */
-  async createInvitation(accountId, data, createdBy, token = null) {
+  async createInvitation(accountId, data, createdBy, sessionTenantId = null, token = null) {
     try {
+      // Validate that the account belongs to the session's tenant
+      if (sessionTenantId) {
+        const { data: account, error: accountError } = await supabaseService.getById('accounts', accountId, token);
+        if (accountError) {
+          throw accountError;
+        }
+        if (!account) {
+          throw new Error('Account not found');
+        }
+        if (account.tenant_id !== sessionTenantId) {
+          logger.warn('Cross-tenant agent invitation attempt', {
+            accountId,
+            accountTenantId: account.tenant_id,
+            sessionTenantId,
+            createdBy
+          });
+          throw new Error('Account does not belong to your tenant');
+        }
+      }
+
       const invitationToken = this.generateInvitationToken();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + INVITATION_EXPIRY_MS);
@@ -117,11 +138,20 @@ class AgentService {
         throw error;
       }
 
-      logger.info('Invitation created', { invitationId: invitation.id, accountId, role: data.role || 'agent' });
+      logger.info('Invitation created', { 
+        invitationId: invitation.id, 
+        accountId, 
+        tenantId: sessionTenantId,
+        role: data.role || 'agent' 
+      });
 
       return this.formatInvitation(invitation);
     } catch (error) {
-      logger.error('Failed to create invitation', { error: error.message, accountId });
+      logger.error('Failed to create invitation', { 
+        error: error.message, 
+        accountId,
+        tenantId: sessionTenantId
+      });
       throw error;
     }
   }

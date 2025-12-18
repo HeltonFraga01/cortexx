@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 interface User {
   id: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'user' | 'superadmin';
   token: string;
   name: string;
   jid?: string;
@@ -13,6 +13,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (token: string, role: 'admin' | 'user') => Promise<boolean>;
+  loginSuperadmin: (email: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
 }
@@ -57,6 +58,60 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setUser(null);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  /**
+   * Faz login de superadmin com email e senha
+   * O servidor valida as credenciais e cria uma sessão HTTP-only
+   * Retorna true se o login foi bem-sucedido, false caso contrário
+   */
+  const loginSuperadmin = async (email: string, password: string): Promise<boolean> => {
+    try {
+      const response = await fetch('/api/superadmin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+        credentials: 'include' // IMPORTANTE: Recebe cookies de sessão
+      });
+
+      if (!response.ok) {
+        return false;
+      }
+
+      const data = await response.json();
+      
+      if (!data.success) {
+        return false;
+      }
+      
+      // Map superadmin response to user format
+      const superadminData = data.data?.superadmin || data.user;
+      if (!superadminData) {
+        return false;
+      }
+      
+      setUser({
+        id: superadminData.id,
+        role: 'superadmin',
+        token: data.data?.sessionToken || '',
+        name: superadminData.name || superadminData.email,
+        jid: undefined
+      });
+
+      // Renovar token CSRF após login bem-sucedido
+      try {
+        const { backendApi } = await import('@/services/api-client');
+        await backendApi.refreshCsrfToken();
+      } catch (csrfError) {
+        console.error('Erro ao renovar CSRF (não crítico):', csrfError);
+        // Não falhar o login por causa do CSRF
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Superadmin login error:', error);
+      return false;
     }
   };
 
@@ -153,6 +208,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       isAuthenticated: !!user,
       isLoading,
       login,
+      loginSuperadmin,
       logout,
       checkAuth
     }}>

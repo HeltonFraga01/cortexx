@@ -73,23 +73,33 @@ class CorsHandler {
    * @private
    */
   _getDevelopmentConfig() {
+    const devDomain = process.env.DEV_BASE_DOMAIN || 'cortexx.local';
+    
     return {
-      origin: [
-        'http://localhost:3000',
-        'http://localhost:3001',
-        'http://localhost:3002',
-        'http://localhost:4173',
-        'http://localhost:5173',
-        'http://localhost:8080',
-        'http://localhost:8081',
-        'http://127.0.0.1:3000',
-        'http://127.0.0.1:3001',
-        'http://127.0.0.1:3002',
-        'http://127.0.0.1:4173',
-        'http://127.0.0.1:5173',
-        'http://127.0.0.1:8080',
-        'http://127.0.0.1:8081'
-      ],
+      origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl)
+        if (!origin) {
+          return callback(null, true);
+        }
+        
+        // Allow localhost variations
+        const localhostPatterns = [
+          /^http:\/\/localhost:\d+$/,
+          /^http:\/\/127\.0\.0\.1:\d+$/
+        ];
+        
+        // Allow development domain subdomains (e.g., *.cortexx.local)
+        const devDomainPattern = new RegExp(`^http:\\/\\/([a-z0-9-]+\\.)?${devDomain.replace('.', '\\.')}(:\\d+)?$`);
+        
+        const isAllowed = localhostPatterns.some(p => p.test(origin)) || devDomainPattern.test(origin);
+        
+        if (isAllowed) {
+          callback(null, true);
+        } else {
+          logger.debug('CORS origin not allowed in development', { origin });
+          callback(null, true); // Still allow in development for flexibility
+        }
+      },
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
       allowedHeaders: [
         'Content-Type', 
@@ -98,7 +108,8 @@ class CorsHandler {
         'Accept',
         'Origin',
         'token',
-        'CSRF-Token' // Header para proteção CSRF
+        'CSRF-Token',
+        'X-Tenant-Subdomain' // Header para simular subdomain em desenvolvimento
       ],
       credentials: true,
       optionsSuccessStatus: 200, // Para suporte a browsers legados
@@ -113,26 +124,57 @@ class CorsHandler {
    * @private
    */
   _getProductionConfig(corsOrigins) {
+    const baseDomain = process.env.BASE_DOMAIN || 'cortexx.online';
     let allowedOrigins = [];
+    let wildcardPatterns = [];
     
     if (corsOrigins) {
-      allowedOrigins = corsOrigins.split(',').map(origin => origin.trim());
+      corsOrigins.split(',').map(origin => origin.trim()).forEach(origin => {
+        if (origin.includes('*')) {
+          // Convert wildcard to regex pattern
+          // e.g., https://*.cortexx.online -> /^https:\/\/[a-z0-9-]+\.cortexx\.online$/
+          const pattern = origin
+            .replace(/\./g, '\\.')
+            .replace(/\*/g, '[a-z0-9-]+');
+          wildcardPatterns.push(new RegExp(`^${pattern}$`));
+        } else {
+          allowedOrigins.push(origin);
+        }
+      });
     }
     
-    // Se não há origens configuradas, bloquear todas as requisições cross-origin
-    if (allowedOrigins.length === 0) {
-      logger.warn('Nenhuma origem CORS configurada para produção - bloqueando requisições cross-origin');
-      allowedOrigins = false;
-    }
+    // Always allow the base domain and its subdomains
+    const baseDomainPattern = new RegExp(`^https:\\/\\/([a-z0-9-]+\\.)?${baseDomain.replace('.', '\\.')}$`);
+    wildcardPatterns.push(baseDomainPattern);
 
     return {
-      origin: allowedOrigins,
+      origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl)
+        if (!origin) {
+          return callback(null, true);
+        }
+        
+        // Check exact matches
+        if (allowedOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+        
+        // Check wildcard patterns
+        const matchesWildcard = wildcardPatterns.some(pattern => pattern.test(origin));
+        if (matchesWildcard) {
+          return callback(null, true);
+        }
+        
+        logger.warn('CORS origin blocked in production', { origin, allowedOrigins });
+        callback(new Error('Not allowed by CORS'));
+      },
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
       allowedHeaders: [
         'Content-Type', 
         'Authorization',
         'token',
-        'CSRF-Token' // Header para proteção CSRF
+        'CSRF-Token',
+        'X-Tenant-Subdomain'
       ],
       credentials: true,
       optionsSuccessStatus: 200,

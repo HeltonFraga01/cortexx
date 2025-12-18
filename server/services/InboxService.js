@@ -133,10 +133,20 @@ class InboxService {
    * @param {string} [data.greetingMessage] - Greeting message
    * @param {number} [data.maxInboxes] - Max inboxes allowed (for quota check)
    * @param {Object} [data.wuzapiConfig] - WUZAPI configuration (webhook, events)
+   * @param {string} [tenantId] - Tenant ID for validation (optional)
    * @returns {Promise<Object>} Created inbox
    */
-  async createInbox(accountId, data) {
+  async createInbox(accountId, data, tenantId = null) {
     try {
+      // Validate account belongs to tenant if tenantId is provided
+      if (tenantId) {
+        const account = await this.validateAccountTenant(accountId, tenantId);
+        if (!account) {
+          const error = new Error('CROSS_TENANT_ACCESS');
+          error.code = 'CROSS_TENANT_ACCESS';
+          throw error;
+        }
+      }
       // Check quota if maxInboxes is provided
       if (data.maxInboxes !== undefined && data.maxInboxes !== null) {
         const currentCount = await this.countInboxes(accountId);
@@ -221,7 +231,7 @@ class InboxService {
         details: { name: data.name, channelType, hasWuzapi: !!wuzapiToken }
       });
 
-      return this.getInboxById(id);
+      return this._getInboxByIdInternal(id);
     } catch (error) {
       logger.error('Failed to create inbox', { error: error.message, accountId });
       throw error;
@@ -229,11 +239,11 @@ class InboxService {
   }
 
   /**
-   * Get inbox by ID
+   * Get inbox by ID (internal method without tenant validation)
    * @param {string} inboxId - Inbox ID
    * @returns {Promise<Object|null>} Inbox or null
    */
-  async getInboxById(inboxId) {
+  async _getInboxByIdInternal(inboxId) {
     try {
       const { data, error } = await this.supabase.getById('inboxes', inboxId);
 
@@ -249,12 +259,56 @@ class InboxService {
   }
 
   /**
+   * Get inbox by ID
+   * @param {string} inboxId - Inbox ID
+   * @param {string} [tenantId] - Tenant ID for validation (optional)
+   * @returns {Promise<Object|null>} Inbox or null
+   */
+  async getInboxById(inboxId, tenantId = null) {
+    try {
+      const inbox = await this._getInboxByIdInternal(inboxId);
+      
+      if (!inbox) {
+        return null;
+      }
+
+      // Validate inbox belongs to tenant if tenantId is provided
+      if (tenantId) {
+        const account = await this.validateAccountTenant(inbox.accountId, tenantId);
+        if (!account) {
+          logger.warn('Cross-tenant inbox access attempt', {
+            inboxId,
+            requestTenantId: tenantId,
+            accountId: inbox.accountId
+          });
+          return null;
+        }
+      }
+
+      return inbox;
+    } catch (error) {
+      logger.error('Failed to get inbox', { error: error.message, inboxId });
+      throw error;
+    }
+  }
+
+  /**
    * List inboxes for an account
    * @param {string} accountId - Account ID
+   * @param {string} [tenantId] - Tenant ID for validation (optional)
    * @returns {Promise<Object[]>} List of inboxes
    */
-  async listInboxes(accountId) {
+  async listInboxes(accountId, tenantId = null) {
     try {
+      // Validate account belongs to tenant if tenantId is provided
+      if (tenantId) {
+        const account = await this.validateAccountTenant(accountId, tenantId);
+        if (!account) {
+          const error = new Error('CROSS_TENANT_ACCESS');
+          error.code = 'CROSS_TENANT_ACCESS';
+          throw error;
+        }
+      }
       const { data, error } = await this.supabase.getMany('inboxes', { account_id: accountId }, {
         orderBy: 'name',
         ascending: true
@@ -270,10 +324,20 @@ class InboxService {
   /**
    * List inboxes with member count
    * @param {string} accountId - Account ID
+   * @param {string} [tenantId] - Tenant ID for validation (optional)
    * @returns {Promise<Object[]>} List of inboxes with member count
    */
-  async listInboxesWithStats(accountId) {
+  async listInboxesWithStats(accountId, tenantId = null) {
     try {
+      // Validate account belongs to tenant if tenantId is provided
+      if (tenantId) {
+        const account = await this.validateAccountTenant(accountId, tenantId);
+        if (!account) {
+          const error = new Error('CROSS_TENANT_ACCESS');
+          error.code = 'CROSS_TENANT_ACCESS';
+          throw error;
+        }
+      }
       // First get all inboxes for the account
       const { data: inboxes, error: inboxError } = await this.supabase.getMany('inboxes', { account_id: accountId }, {
         orderBy: 'name',
@@ -303,10 +367,25 @@ class InboxService {
    * Update an inbox
    * @param {string} inboxId - Inbox ID
    * @param {Object} data - Update data
+   * @param {string} [tenantId] - Tenant ID for validation (optional)
    * @returns {Promise<Object>} Updated inbox
    */
-  async updateInbox(inboxId, data) {
+  async updateInbox(inboxId, data, tenantId = null) {
     try {
+      // Validate inbox belongs to tenant if tenantId is provided
+      if (tenantId) {
+        const inbox = await this._getInboxByIdInternal(inboxId);
+        if (!inbox) {
+          throw new Error('Inbox not found');
+        }
+        
+        const account = await this.validateAccountTenant(inbox.accountId, tenantId);
+        if (!account) {
+          const error = new Error('CROSS_TENANT_ACCESS');
+          error.code = 'CROSS_TENANT_ACCESS';
+          throw error;
+        }
+      }
       const updateData = {};
 
       if (data.name !== undefined) {
@@ -343,7 +422,7 @@ class InboxService {
       }
 
       if (Object.keys(updateData).length === 0) {
-        return this.getInboxById(inboxId);
+        return this._getInboxByIdInternal(inboxId);
       }
 
       updateData.updated_at = new Date().toISOString();
@@ -353,7 +432,7 @@ class InboxService {
 
       logger.info('Inbox updated', { inboxId });
 
-      return this.getInboxById(inboxId);
+      return this._getInboxByIdInternal(inboxId);
     } catch (error) {
       logger.error('Failed to update inbox', { error: error.message, inboxId });
       throw error;
@@ -363,11 +442,13 @@ class InboxService {
   /**
    * Delete an inbox
    * @param {string} inboxId - Inbox ID
+   * @param {string} [deletedBy] - Agent ID who deleted the inbox
+   * @param {string} [tenantId] - Tenant ID for validation (optional)
    * @returns {Promise<void>}
    */
-  async deleteInbox(inboxId, deletedBy = null) {
+  async deleteInbox(inboxId, deletedBy = null, tenantId = null) {
     try {
-      const inbox = await this.getInboxById(inboxId);
+      const inbox = await this.getInboxById(inboxId, tenantId);
       
       // Delete WUZAPI user if exists
       if (inbox?.wuzapiUserId || inbox?.wuzapiToken) {
@@ -403,10 +484,20 @@ class InboxService {
    * Assign an agent to an inbox
    * @param {string} inboxId - Inbox ID
    * @param {string} agentId - Agent ID
+   * @param {string} [tenantId] - Tenant ID for validation (optional)
    * @returns {Promise<Object>} Created membership
    */
-  async assignAgent(inboxId, agentId) {
+  async assignAgent(inboxId, agentId, tenantId = null) {
     try {
+      // Validate inbox belongs to tenant if tenantId is provided
+      if (tenantId) {
+        const inbox = await this.getInboxById(inboxId, tenantId);
+        if (!inbox) {
+          const error = new Error('CROSS_TENANT_ACCESS');
+          error.code = 'CROSS_TENANT_ACCESS';
+          throw error;
+        }
+      }
       const id = this.generateId();
       const now = new Date().toISOString();
 
@@ -431,7 +522,7 @@ class InboxService {
       logger.info('Agent assigned to inbox', { inboxId, agentId });
 
       // Audit log
-      const inbox = await this.getInboxById(inboxId);
+      const inbox = await this._getInboxByIdInternal(inboxId);
       if (inbox) {
         await this.auditService.logAction({
           accountId: inbox.accountId,
@@ -456,13 +547,14 @@ class InboxService {
    * Assign multiple agents to an inbox
    * @param {string} inboxId - Inbox ID
    * @param {string[]} agentIds - Agent IDs
+   * @param {string} [tenantId] - Tenant ID for validation (optional)
    * @returns {Promise<void>}
    */
-  async assignAgents(inboxId, agentIds) {
+  async assignAgents(inboxId, agentIds, tenantId = null) {
     try {
       for (const agentId of agentIds) {
         try {
-          await this.assignAgent(inboxId, agentId);
+          await this.assignAgent(inboxId, agentId, tenantId);
         } catch (error) {
           if (error.message !== 'AGENT_ALREADY_IN_INBOX') {
             throw error;
@@ -481,11 +573,12 @@ class InboxService {
    * Remove an agent from an inbox
    * @param {string} inboxId - Inbox ID
    * @param {string} agentId - Agent ID
+   * @param {string} [tenantId] - Tenant ID for validation (optional)
    * @returns {Promise<void>}
    */
-  async removeAgent(inboxId, agentId) {
+  async removeAgent(inboxId, agentId, tenantId = null) {
     try {
-      const inbox = await this.getInboxById(inboxId);
+      const inbox = await this.getInboxById(inboxId, tenantId);
       
       const { error } = await this.supabase.queryAsAdmin('inbox_members', (query) =>
         query.delete().eq('inbox_id', inboxId).eq('agent_id', agentId)
@@ -514,10 +607,20 @@ class InboxService {
   /**
    * Get inbox members
    * @param {string} inboxId - Inbox ID
+   * @param {string} [tenantId] - Tenant ID for validation (optional)
    * @returns {Promise<Object[]>} List of members with agent info
    */
-  async getInboxMembers(inboxId) {
+  async getInboxMembers(inboxId, tenantId = null) {
     try {
+      // Validate inbox belongs to tenant if tenantId is provided
+      if (tenantId) {
+        const inbox = await this.getInboxById(inboxId, tenantId);
+        if (!inbox) {
+          const error = new Error('CROSS_TENANT_ACCESS');
+          error.code = 'CROSS_TENANT_ACCESS';
+          throw error;
+        }
+      }
       // Get inbox members with agent details using a join
       const { data, error } = await this.supabase.queryAsAdmin('inbox_members', (query) =>
         query
@@ -611,10 +714,20 @@ class InboxService {
   /**
    * Get available agents for auto assignment in an inbox
    * @param {string} inboxId - Inbox ID
+   * @param {string} [tenantId] - Tenant ID for validation (optional)
    * @returns {Promise<Object[]>} List of available agents
    */
-  async getAvailableAgentsForAssignment(inboxId) {
+  async getAvailableAgentsForAssignment(inboxId, tenantId = null) {
     try {
+      // Validate inbox belongs to tenant if tenantId is provided
+      if (tenantId) {
+        const inbox = await this.getInboxById(inboxId, tenantId);
+        if (!inbox) {
+          const error = new Error('CROSS_TENANT_ACCESS');
+          error.code = 'CROSS_TENANT_ACCESS';
+          throw error;
+        }
+      }
       // Get inbox members with agent details
       const { data, error } = await this.supabase.queryAsAdmin('inbox_members', (query) =>
         query
@@ -647,6 +760,40 @@ class InboxService {
   }
 
   // ==================== HELPERS ====================
+
+  /**
+   * Validate that an account belongs to the specified tenant
+   * @param {string} accountId - Account ID
+   * @param {string} tenantId - Tenant ID
+   * @returns {Promise<Object|null>} Account if valid, null if cross-tenant access
+   */
+  async validateAccountTenant(accountId, tenantId) {
+    try {
+      const { data: account, error } = await this.supabase.getById('accounts', accountId);
+      
+      if (error || !account) {
+        return null;
+      }
+
+      if (account.tenant_id !== tenantId) {
+        logger.warn('Cross-tenant inbox access attempt', {
+          accountId,
+          requestTenantId: tenantId,
+          accountTenantId: account.tenant_id
+        });
+        return null;
+      }
+
+      return account;
+    } catch (error) {
+      logger.error('Failed to validate account tenant', { 
+        error: error.message, 
+        accountId, 
+        tenantId 
+      });
+      return null;
+    }
+  }
 
   /**
    * Format inbox row from database

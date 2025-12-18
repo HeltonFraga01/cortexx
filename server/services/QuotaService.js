@@ -593,19 +593,36 @@ class QuotaService {
 
   /**
    * Get plan quotas for a user
+   * Updated for multi-tenant architecture to use tenant_plans instead of global plans
    * @param {string} userId - User ID
-   * @returns {Promise<Object>} Plan quotas
+   * @returns {Promise<Object>} Plan quotas from tenant-specific plans
+   * Requirements: 11.1 - Use tenant_plans via subscription
    */
   async getPlanQuotas(userId) {
     try {
+      // Updated to use tenant_plans instead of global plans
+      // Query path: user_subscriptions -> accounts (via owner_user_id) -> tenant_plans (via tenant_id)
+      // This ensures quotas come from tenant-specific plans, not global ones
       const result = await this.db.query(
-        `SELECT p.max_agents, p.max_connections, p.max_messages_per_day, p.max_messages_per_month,
-                p.max_inboxes, p.max_teams, p.max_webhooks, p.max_campaigns, p.max_storage_mb,
-                p.max_bots, p.max_bot_calls_per_day, p.max_bot_calls_per_month,
-                p.max_bot_messages_per_day, p.max_bot_messages_per_month,
-                p.max_bot_tokens_per_day, p.max_bot_tokens_per_month
+        `SELECT tp.quotas->>'max_agents' as max_agents,
+                tp.quotas->>'max_connections' as max_connections, 
+                tp.quotas->>'max_messages_per_day' as max_messages_per_day,
+                tp.quotas->>'max_messages_per_month' as max_messages_per_month,
+                tp.quotas->>'max_inboxes' as max_inboxes,
+                tp.quotas->>'max_teams' as max_teams,
+                tp.quotas->>'max_webhooks' as max_webhooks,
+                tp.quotas->>'max_campaigns' as max_campaigns,
+                tp.quotas->>'max_storage_mb' as max_storage_mb,
+                tp.quotas->>'max_bots' as max_bots,
+                tp.quotas->>'max_bot_calls_per_day' as max_bot_calls_per_day,
+                tp.quotas->>'max_bot_calls_per_month' as max_bot_calls_per_month,
+                tp.quotas->>'max_bot_messages_per_day' as max_bot_messages_per_day,
+                tp.quotas->>'max_bot_messages_per_month' as max_bot_messages_per_month,
+                tp.quotas->>'max_bot_tokens_per_day' as max_bot_tokens_per_day,
+                tp.quotas->>'max_bot_tokens_per_month' as max_bot_tokens_per_month
          FROM user_subscriptions s
-         JOIN plans p ON s.plan_id = p.id
+         JOIN accounts a ON a.owner_user_id = s.user_id
+         JOIN tenant_plans tp ON s.plan_id = tp.id AND tp.tenant_id = a.tenant_id
          WHERE s.user_id = ?`,
         [userId]
       );
@@ -635,24 +652,25 @@ class QuotaService {
       }
 
       const row = result.rows[0];
+      // Parse values from JSON fields, with fallback to defaults
       return {
-        [QUOTA_TYPES.MAX_AGENTS]: row.max_agents,
-        [QUOTA_TYPES.MAX_CONNECTIONS]: row.max_connections,
-        [QUOTA_TYPES.MAX_MESSAGES_PER_DAY]: row.max_messages_per_day,
-        [QUOTA_TYPES.MAX_MESSAGES_PER_MONTH]: row.max_messages_per_month,
-        [QUOTA_TYPES.MAX_INBOXES]: row.max_inboxes,
-        [QUOTA_TYPES.MAX_TEAMS]: row.max_teams,
-        [QUOTA_TYPES.MAX_WEBHOOKS]: row.max_webhooks,
-        [QUOTA_TYPES.MAX_CAMPAIGNS]: row.max_campaigns,
-        [QUOTA_TYPES.MAX_STORAGE_MB]: row.max_storage_mb,
-        [QUOTA_TYPES.MAX_BOTS]: row.max_bots || 3,
+        [QUOTA_TYPES.MAX_AGENTS]: parseInt(row.max_agents) || 1,
+        [QUOTA_TYPES.MAX_CONNECTIONS]: parseInt(row.max_connections) || 1,
+        [QUOTA_TYPES.MAX_MESSAGES_PER_DAY]: parseInt(row.max_messages_per_day) || 100,
+        [QUOTA_TYPES.MAX_MESSAGES_PER_MONTH]: parseInt(row.max_messages_per_month) || 3000,
+        [QUOTA_TYPES.MAX_INBOXES]: parseInt(row.max_inboxes) || 1,
+        [QUOTA_TYPES.MAX_TEAMS]: parseInt(row.max_teams) || 1,
+        [QUOTA_TYPES.MAX_WEBHOOKS]: parseInt(row.max_webhooks) || 5,
+        [QUOTA_TYPES.MAX_CAMPAIGNS]: parseInt(row.max_campaigns) || 1,
+        [QUOTA_TYPES.MAX_STORAGE_MB]: parseInt(row.max_storage_mb) || 100,
+        [QUOTA_TYPES.MAX_BOTS]: parseInt(row.max_bots) || 3,
         // Bot usage quotas
-        [QUOTA_TYPES.MAX_BOT_CALLS_PER_DAY]: row.max_bot_calls_per_day || 100,
-        [QUOTA_TYPES.MAX_BOT_CALLS_PER_MONTH]: row.max_bot_calls_per_month || 3000,
-        [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_DAY]: row.max_bot_messages_per_day || 50,
-        [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_MONTH]: row.max_bot_messages_per_month || 1500,
-        [QUOTA_TYPES.MAX_BOT_TOKENS_PER_DAY]: row.max_bot_tokens_per_day || 10000,
-        [QUOTA_TYPES.MAX_BOT_TOKENS_PER_MONTH]: row.max_bot_tokens_per_month || 300000
+        [QUOTA_TYPES.MAX_BOT_CALLS_PER_DAY]: parseInt(row.max_bot_calls_per_day) || 100,
+        [QUOTA_TYPES.MAX_BOT_CALLS_PER_MONTH]: parseInt(row.max_bot_calls_per_month) || 3000,
+        [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_DAY]: parseInt(row.max_bot_messages_per_day) || 50,
+        [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_MONTH]: parseInt(row.max_bot_messages_per_month) || 1500,
+        [QUOTA_TYPES.MAX_BOT_TOKENS_PER_DAY]: parseInt(row.max_bot_tokens_per_day) || 10000,
+        [QUOTA_TYPES.MAX_BOT_TOKENS_PER_MONTH]: parseInt(row.max_bot_tokens_per_month) || 300000
       };
     } catch (error) {
       logger.error('Failed to get plan quotas', { error: error.message, userId });
@@ -746,6 +764,73 @@ class QuotaService {
     }
     
     return d;
+  }
+
+  /**
+   * Validate quotas against global platform limits
+   * Ensures tenant plan quotas do not exceed platform-wide maximums
+   * @param {Object} quotas - Quota values to validate
+   * @returns {Promise<Object>} { valid: boolean, violations: Array<{quotaType, value, maxAllowed}> }
+   * Requirements: 11.2, 13.2 - Validate quotas against global limits
+   */
+  async validateAgainstGlobalLimits(quotas) {
+    try {
+      // Define global platform limits (these would typically come from a global_settings table)
+      // For now, we'll use hardcoded values that represent reasonable platform maximums
+      const GLOBAL_LIMITS = {
+        [QUOTA_TYPES.MAX_AGENTS]: 1000,
+        [QUOTA_TYPES.MAX_CONNECTIONS]: 1000,
+        [QUOTA_TYPES.MAX_MESSAGES_PER_DAY]: 100000,
+        [QUOTA_TYPES.MAX_MESSAGES_PER_MONTH]: 3000000,
+        [QUOTA_TYPES.MAX_INBOXES]: 500,
+        [QUOTA_TYPES.MAX_TEAMS]: 100,
+        [QUOTA_TYPES.MAX_WEBHOOKS]: 100,
+        [QUOTA_TYPES.MAX_CAMPAIGNS]: 100,
+        [QUOTA_TYPES.MAX_STORAGE_MB]: 100000, // 100GB
+        [QUOTA_TYPES.MAX_BOTS]: 100,
+        [QUOTA_TYPES.MAX_BOT_CALLS_PER_DAY]: 100000,
+        [QUOTA_TYPES.MAX_BOT_CALLS_PER_MONTH]: 3000000,
+        [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_DAY]: 50000,
+        [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_MONTH]: 1500000,
+        [QUOTA_TYPES.MAX_BOT_TOKENS_PER_DAY]: 1000000,
+        [QUOTA_TYPES.MAX_BOT_TOKENS_PER_MONTH]: 30000000
+      };
+
+      const violations = [];
+
+      // Check each quota against global limits
+      for (const [quotaType, value] of Object.entries(quotas)) {
+        const globalLimit = GLOBAL_LIMITS[quotaType];
+        
+        if (globalLimit !== undefined && value > globalLimit) {
+          violations.push({
+            quotaType,
+            value,
+            maxAllowed: globalLimit
+          });
+        }
+      }
+
+      const valid = violations.length === 0;
+
+      if (!valid) {
+        logger.warn('Quota validation failed - exceeds global limits', { 
+          violations,
+          requestedQuotas: quotas
+        });
+      }
+
+      return {
+        valid,
+        violations
+      };
+    } catch (error) {
+      logger.error('Failed to validate against global limits', { 
+        error: error.message, 
+        quotas 
+      });
+      throw error;
+    }
   }
 
   /**

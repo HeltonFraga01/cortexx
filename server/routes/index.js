@@ -51,6 +51,20 @@ const adminStripeRoutes = require('./adminStripeRoutes');
 const adminCreditPackagesRoutes = require('./adminCreditPackagesRoutes');
 const stripeWebhookRoutes = require('./stripeWebhookRoutes');
 
+// Superadmin Routes
+const superadminAuthRoutes = require('./superadminAuthRoutes');
+const superadminTenantRoutes = require('./superadminTenantRoutes');
+const superadminMetricsRoutes = require('./superadminMetricsRoutes');
+const superadminImpersonationRoutes = require('./superadminImpersonationRoutes');
+
+// Tenant Admin Routes
+const tenantBrandingRoutes = require('./tenantBrandingRoutes');
+const tenantPlanRoutes = require('./tenantPlanRoutes');
+const tenantAccountRoutes = require('./tenantAccountRoutes');
+
+// Public Routes
+const publicRoutes = require('./publicRoutes');
+
 logger.debug('contactImportRoutes loaded', { 
   type: typeof contactImportRoutes, 
   routeCount: contactImportRoutes.stack ? contactImportRoutes.stack.length : 0 
@@ -63,6 +77,18 @@ logger.debug('contactImportRoutes loaded', {
 function setupRoutes(app) {
   // Public Routes (sem autenticação) - devem vir ANTES das rotas protegidas
   app.use('/api/branding', brandingRoutes);
+  app.use('/api/public', publicRoutes);
+  
+  // Superadmin Routes (mixed auth - login is public, others require auth)
+  app.use('/api/superadmin', superadminAuthRoutes);
+  app.use('/api/superadmin', superadminTenantRoutes);
+  app.use('/api/superadmin', superadminMetricsRoutes);
+  app.use('/api/superadmin', superadminImpersonationRoutes);
+  
+  // Tenant Admin Routes (require tenant admin auth and tenant context)
+  app.use('/api/tenant', tenantBrandingRoutes);
+  app.use('/api/tenant', tenantPlanRoutes);
+  app.use('/api/tenant', tenantAccountRoutes);
   
   // API Routes (protegidas)
   app.use('/api/session', sessionRoutes);

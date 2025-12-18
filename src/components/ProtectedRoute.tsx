@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  requiredRole?: 'admin' | 'user';
+  requiredRole?: 'admin' | 'user' | 'superadmin';
 }
 
 const ProtectedRoute = ({
@@ -22,12 +22,16 @@ const ProtectedRoute = ({
   }
 
   if (!user) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    // Redirecionar para login apropriado baseado na rota
+    const loginPath = location.pathname.startsWith('/superadmin') ? '/superadmin/login' : '/login';
+    return <Navigate to={loginPath} state={{ from: location }} replace />;
   }
 
   if (requiredRole && user.role !== requiredRole) {
     // Redirecionar para o dashboard apropriado baseado no role
-    const redirectPath = user.role === 'admin' ? '/admin' : '/user';
+    let redirectPath = '/user';
+    if (user.role === 'admin') redirectPath = '/admin';
+    if (user.role === 'superadmin') redirectPath = '/superadmin/dashboard';
     return <Navigate to={redirectPath} replace />;
   }
 

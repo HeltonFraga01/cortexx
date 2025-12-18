@@ -129,6 +129,23 @@ class SubscriptionService {
           throw new Error('Failed to create account for user.');
         }
       }
+
+      // Get account to validate tenant
+      const { data: account, error: accountError } = await SupabaseService.getById('accounts', accountId);
+      if (accountError) throw accountError;
+      if (!account) {
+        throw new Error('Account not found');
+      }
+
+      // Validate that the plan belongs to the account's tenant
+      const { data: plan, error: planError } = await SupabaseService.getById('tenant_plans', planId);
+      if (planError) throw planError;
+      if (!plan) {
+        throw new Error('Plan not found');
+      }
+      if (plan.tenant_id !== account.tenant_id) {
+        throw new Error('Plan does not belong to the account\'s tenant');
+      }
       
       const existingSubscription = await this.getUserSubscription(userId);
 
@@ -141,11 +158,17 @@ class SubscriptionService {
         });
         
         if (error) throw error;
-        logger.info('Plan assigned to existing subscription', { userId, accountId, planId, adminId });
+        logger.info('Plan assigned to existing subscription', { 
+          userId, 
+          accountId, 
+          planId, 
+          tenantId: account.tenant_id,
+          adminId 
+        });
       } else {
         // Create new subscription
         const id = this.generateId();
-        const periodEnd = this.calculatePeriodEnd(now, 'monthly');
+        const periodEnd = this.calculatePeriodEnd(now, plan.billing_cycle || 'monthly');
         
         const { error } = await SupabaseService.insert('user_subscriptions', {
           id,
@@ -159,7 +182,13 @@ class SubscriptionService {
         });
         
         if (error) throw error;
-        logger.info('New subscription created', { userId, accountId, planId, adminId });
+        logger.info('New subscription created', { 
+          userId, 
+          accountId, 
+          planId, 
+          tenantId: account.tenant_id,
+          adminId 
+        });
       }
 
       return this.getUserSubscription(userId);
@@ -179,18 +208,19 @@ class SubscriptionService {
         return null;
       }
       
-      // Get subscription with plan data using Supabase query builder
+      // Get subscription with tenant plan data using Supabase query builder
       const { data: subscriptions, error } = await SupabaseService.adminClient
         .from('user_subscriptions')
         .select(`
           *,
-          plans (
+          tenant_plans (
             id,
             name,
             price_cents,
             billing_cycle,
             quotas,
-            features
+            features,
+            tenant_id
           )
         `)
         .eq('account_id', accountId)
@@ -255,7 +285,7 @@ class SubscriptionService {
       }
 
       // Get new plan price
-      const { data: plan, error } = await SupabaseService.getById('plans', newPlanId);
+      const { data: plan, error } = await SupabaseService.getById('tenant_plans', newPlanId);
 
       if (error) throw error;
       if (!plan) {
@@ -373,7 +403,7 @@ class SubscriptionService {
   }
 
   formatSubscription(row, userId) {
-    const plan = row.plans;
+    const plan = row.tenant_plans;
     const quotas = plan?.quotas || {};
     
     return {
@@ -394,6 +424,7 @@ class SubscriptionService {
         name: plan.name,
         priceCents: plan.price_cents,
         billingCycle: plan.billing_cycle,
+        tenantId: plan.tenant_id,
         quotas: {
           maxAgents: quotas.max_agents || 1,
           maxConnections: quotas.max_connections || 1,
@@ -450,14 +481,19 @@ class SubscriptionService {
       const { data: account, error: accountError } = await SupabaseService.getById('accounts', accountId);
       if (accountError) throw accountError;
 
-      // Get plan with Stripe price ID
-      const planService = new PlanService();
-      const plan = await planService.getPlanById(planId);
+      // Get tenant plan with Stripe price ID
+      const { data: plan, error: planError } = await SupabaseService.getById('tenant_plans', planId);
+      if (planError) throw planError;
       if (!plan) {
         throw new Error('Plan not found');
       }
-      if (!plan.stripePriceId) {
+      if (!plan.stripe_price_id) {
         throw new Error('Plan is not synced with Stripe. Please sync the plan first.');
+      }
+
+      // Validate that the plan belongs to the account's tenant
+      if (plan.tenant_id !== account.tenant_id) {
+        throw new Error('Plan does not belong to the account\'s tenant');
       }
 
       // Get or create Stripe customer
@@ -480,14 +516,15 @@ class SubscriptionService {
       // Create Checkout Session
       const session = await StripeService.createCheckoutSession({
         customerId: stripeCustomerId,
-        priceId: plan.stripePriceId,
+        priceId: plan.stripe_price_id,
         mode: 'subscription',
         successUrl: `${successUrl}?session_id={CHECKOUT_SESSION_ID}`,
         cancelUrl,
         metadata: {
           userId,
           accountId,
-          planId
+          planId,
+          tenantId: account.tenant_id
         }
       });
 
@@ -542,7 +579,7 @@ class SubscriptionService {
 
       // Find plan by Stripe price ID
       const { data: plans, error: planError } = await SupabaseService.adminClient
-        .from('plans')
+        .from('tenant_plans')
         .select('id')
         .eq('stripe_price_id', stripePriceId)
         .limit(1);
