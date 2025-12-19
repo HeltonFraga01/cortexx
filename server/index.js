@@ -76,6 +76,8 @@ const resellerRoutes = require('./routes/resellerRoutes');
 // Superadmin Routes
 const superadminAuthRoutes = require('./routes/superadminAuthRoutes');
 const superadminTenantRoutes = require('./routes/superadminTenantRoutes');
+const superadminTenantAccountRoutes = require('./routes/superadminTenantAccountRoutes');
+const superadminTenantAgentRoutes = require('./routes/superadminTenantAgentRoutes');
 const superadminMetricsRoutes = require('./routes/superadminMetricsRoutes');
 const superadminImpersonationRoutes = require('./routes/superadminImpersonationRoutes');
 
@@ -537,8 +539,12 @@ app.use('/api/account/audit', accountAuditRoutes);
 app.use('/api/agent', agentAuthRoutes);
 
 // Superadmin Routes
+// IMPORTANT: More specific routes (with nested paths like /tenants/:id/accounts) 
+// MUST come BEFORE less specific routes (like /tenants/:id) to avoid route conflicts
 app.use('/api/superadmin', superadminAuthRoutes);
-app.use('/api/superadmin', superadminTenantRoutes);
+app.use('/api/superadmin', superadminTenantAccountRoutes); // Must come before superadminTenantRoutes
+app.use('/api/superadmin', superadminTenantAgentRoutes);   // Must come before superadminTenantRoutes
+app.use('/api/superadmin', superadminTenantRoutes);        // Has /tenants/:id catch-all
 app.use('/api/superadmin', superadminMetricsRoutes);
 app.use('/api/superadmin', superadminImpersonationRoutes);
 

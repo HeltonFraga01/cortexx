@@ -245,6 +245,55 @@ const userRecordRateLimiter = rateLimit({
   legacyHeaders: false
 });
 
+/**
+ * Rate limiter para superadmin login (muito restritivo)
+ * 
+ * Limites:
+ * - 5 tentativas por 15 minutos
+ * - Por IP
+ * 
+ * Previne:
+ * - Brute force attacks on superadmin accounts
+ * - Credential stuffing
+ * - Password spraying
+ * 
+ * Requirements: 4.4
+ */
+const superadminLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 5, // 5 tentativas
+  message: {
+    success: false,
+    error: 'Too many login attempts. Try again in 15 minutes',
+    code: 'RATE_LIMIT_EXCEEDED',
+    retryAfter: 15 * 60 // seconds
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  
+  // Handler customizado para logging de segurança
+  handler: (req, res) => {
+    logger.error('Rate limit exceeded - Superadmin login', {
+      ip: req.ip,
+      path: req.path,
+      email: req.body?.email,
+      userAgent: req.get('user-agent'),
+      timestamp: new Date().toISOString()
+    });
+    
+    res.status(429).json({
+      success: false,
+      error: 'Too many login attempts. Try again in 15 minutes',
+      code: 'RATE_LIMIT_EXCEEDED',
+      retryAfter: 15 * 60
+    });
+  },
+  
+  // Count all requests (both successful and failed)
+  // This is more secure for login endpoints
+  skipSuccessfulRequests: false
+});
+
 module.exports = {
   loginLimiter,
   apiLimiter,
@@ -253,5 +302,6 @@ module.exports = {
   tableReadRateLimiter,
   tableWriteRateLimiter,
   tableDeleteRateLimiter,
-  userRecordRateLimiter
+  userRecordRateLimiter,
+  superadminLoginLimiter
 };

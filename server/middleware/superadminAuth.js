@@ -13,13 +13,28 @@ const SuperadminService = require('../services/SuperadminService');
  */
 function requireSuperadmin(req, res, next) {
   try {
+    // Debug logging for session state
+    logger.debug('Superadmin auth check', {
+      path: req.path,
+      method: req.method,
+      hasSession: !!req.session,
+      sessionId: req.sessionID,
+      userId: req.session?.userId,
+      role: req.session?.role,
+      hasSessionToken: !!req.session?.sessionToken,
+      cookies: Object.keys(req.cookies || {}),
+      ip: req.ip
+    });
+
     // Check if user is authenticated
     if (!req.session || !req.session.userId) {
       logger.warn('Unauthenticated superadmin access attempt', {
         path: req.path,
         method: req.method,
         ip: req.ip,
-        userAgent: req.get('User-Agent')
+        userAgent: req.get('User-Agent'),
+        sessionId: req.sessionID,
+        hasSession: !!req.session
       });
       
       return res.status(401).json({

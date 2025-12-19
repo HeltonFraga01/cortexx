@@ -81,15 +81,13 @@ export interface WebhookConfig {
 
 export class WuzAPIService {
   private baseUrl: string;
-  private adminToken: string;
   private csrfToken: string | null = null;
 
   constructor() {
     // Sempre usar URL relativa - o backend cuida do proxy
     this.baseUrl = '/api';
-    // Admin token loaded from environment when needed
-    // Note: Most operations use HTTP-only session cookies
-    this.adminToken = import.meta.env.VITE_ADMIN_TOKEN || '';
+    // Note: Admin token is deprecated - all operations use HTTP-only session cookies
+    // VITE_ADMIN_TOKEN is no longer required
   }
 
   /**

@@ -9,39 +9,66 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBrandingConfig } from '@/hooks/useBranding';
 import ThemeToggle from '@/components/ui-custom/ThemeToggle';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Shield } from 'lucide-react';
 
 const LoginPage = () => {
-  const [adminToken, setAdminTokenInput] = useState('');
   const [userToken, setUserToken] = useState('');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   
-  const { login, user } = useAuth();
+  const { login, loginSuperadmin, user } = useAuth();
   const brandingConfig = useBrandingConfig();
   const navigate = useNavigate();
 
   useEffect(() => {
     if (user) {
-      const redirectPath = user.role === 'admin' ? '/admin' : '/user';
-      navigate(redirectPath);
+      if (user.role === 'superadmin') {
+        navigate('/superadmin/dashboard');
+      } else if (user.role === 'admin') {
+        navigate('/admin');
+      } else {
+        navigate('/user');
+      }
     }
   }, [user, navigate]);
 
-  const handleLogin = async (token: string, role: 'admin' | 'user') => {
-    if (!token.trim()) {
+  const handleUserLogin = async () => {
+    if (!userToken.trim()) {
       toast.error('Por favor, insira o token');
       return;
     }
 
     setIsLoading(true);
     try {
-      const success = await login(token, role);
+      const success = await login(userToken, 'user');
       if (success) {
         toast.success('Login realizado com sucesso!');
-        const redirectPath = role === 'admin' ? '/admin' : '/user';
-        navigate(redirectPath);
+        navigate('/user');
       } else {
         toast.error('Token inválido ou erro de conexão');
+      }
+    } catch (error) {
+      toast.error('Erro ao fazer login');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleAdminLogin = async () => {
+    if (!adminEmail.trim() || !adminPassword.trim()) {
+      toast.error('Por favor, insira email e senha');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const success = await loginSuperadmin(adminEmail, adminPassword);
+      if (success) {
+        toast.success('Login realizado com sucesso!');
+        navigate('/superadmin/dashboard');
+      } else {
+        toast.error('Credenciais inválidas');
       }
     } catch (error) {
       toast.error('Erro ao fazer login');
@@ -80,7 +107,7 @@ const LoginPage = () => {
           <CardHeader className="space-y-1">
             <CardTitle className="text-2xl">Login</CardTitle>
             <CardDescription>
-              Selecione o tipo de acesso e insira seu token
+              Selecione o tipo de acesso
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -98,12 +125,13 @@ const LoginPage = () => {
                     type="password"
                     value={userToken}
                     onChange={(e) => setUserToken(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleLogin(userToken, 'user')}
+                    onKeyDown={(e) => e.key === 'Enter' && handleUserLogin()}
+                    placeholder="Insira seu token de acesso"
                   />
                 </div>
                 <Button 
                   className="w-full" 
-                  onClick={() => handleLogin(userToken, 'user')}
+                  onClick={handleUserLogin}
                   disabled={isLoading}
                 >
                   {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -113,21 +141,36 @@ const LoginPage = () => {
               
               <TabsContent value="admin" className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="admin-token-input">Token de Administrador</Label>
+                  <Label htmlFor="admin-email">Email</Label>
                   <Input
-                    id="admin-token-input"
+                    id="admin-email"
+                    type="email"
+                    value={adminEmail}
+                    onChange={(e) => setAdminEmail(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAdminLogin()}
+                    placeholder="admin@exemplo.com"
+                    autoComplete="email"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="admin-password">Senha</Label>
+                  <Input
+                    id="admin-password"
                     type="password"
-                    value={adminToken}
-                    onChange={(e) => setAdminTokenInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleLogin(adminToken, 'admin')}
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAdminLogin()}
+                    placeholder="Sua senha"
+                    autoComplete="current-password"
                   />
                 </div>
                 <Button 
                   className="w-full" 
-                  onClick={() => handleLogin(adminToken, 'admin')}
+                  onClick={handleAdminLogin}
                   disabled={isLoading}
                 >
                   {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  <Shield className="mr-2 h-4 w-4" />
                   Entrar como Administrador
                 </Button>
               </TabsContent>

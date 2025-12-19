@@ -54,6 +54,8 @@ const stripeWebhookRoutes = require('./stripeWebhookRoutes');
 // Superadmin Routes
 const superadminAuthRoutes = require('./superadminAuthRoutes');
 const superadminTenantRoutes = require('./superadminTenantRoutes');
+const superadminTenantAccountRoutes = require('./superadminTenantAccountRoutes');
+const superadminTenantAgentRoutes = require('./superadminTenantAgentRoutes');
 const superadminMetricsRoutes = require('./superadminMetricsRoutes');
 const superadminImpersonationRoutes = require('./superadminImpersonationRoutes');
 
@@ -80,8 +82,12 @@ function setupRoutes(app) {
   app.use('/api/public', publicRoutes);
   
   // Superadmin Routes (mixed auth - login is public, others require auth)
+  // IMPORTANT: More specific routes (with nested paths like /tenants/:id/accounts) 
+  // MUST come BEFORE less specific routes (like /tenants/:id) to avoid route conflicts
   app.use('/api/superadmin', superadminAuthRoutes);
-  app.use('/api/superadmin', superadminTenantRoutes);
+  app.use('/api/superadmin', superadminTenantAccountRoutes); // Must come before superadminTenantRoutes
+  app.use('/api/superadmin', superadminTenantAgentRoutes);   // Must come before superadminTenantRoutes
+  app.use('/api/superadmin', superadminTenantRoutes);        // Has /tenants/:id catch-all
   app.use('/api/superadmin', superadminMetricsRoutes);
   app.use('/api/superadmin', superadminImpersonationRoutes);
   

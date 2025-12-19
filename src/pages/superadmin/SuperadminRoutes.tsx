@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import SuperadminLayout from '@/components/superadmin/SuperadminLayout';
 import SuperadminDashboard from './SuperadminDashboard';
 import TenantManagement from './TenantManagement';
+import TenantDetails from './TenantDetails';
 import SuperadminSettings from './SuperadminSettings';
 
 /**
@@ -15,7 +16,7 @@ const SuperadminRoutes = () => {
         <Route path="dashboard" element={<SuperadminDashboard />} />
         <Route path="tenants" element={<TenantManagement />} />
         <Route path="tenants/new" element={<TenantManagement />} />
-        <Route path="tenants/:id" element={<TenantManagement />} />
+        <Route path="tenants/:id" element={<TenantDetails />} />
         <Route path="settings" element={<SuperadminSettings />} />
         <Route path="*" element={<Navigate to="/superadmin/dashboard" replace />} />
       </Routes>

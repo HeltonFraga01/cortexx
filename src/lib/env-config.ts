@@ -13,7 +13,7 @@ export interface EnvConfig {
   
   // WuzAPI Configuration
   wuzapiBaseUrl: string
-  adminToken: string
+  adminToken: string | null // Optional - deprecated, use session-based auth
   
   // CORS Configuration
   corsAllowedOrigins: string[]
@@ -79,6 +79,7 @@ export function loadEnvConfig(): EnvConfig {
   
   // Required variables
   const nocodbToken = import.meta.env.VITE_NOCODB_TOKEN
+  // VITE_ADMIN_TOKEN is now optional - deprecated in favor of session-based auth
   const adminToken = import.meta.env.VITE_ADMIN_TOKEN
   
   // Validate required tokens
@@ -86,9 +87,8 @@ export function loadEnvConfig(): EnvConfig {
     missingVars.push('VITE_NOCODB_TOKEN')
   }
   
-  if (!adminToken || adminToken.trim() === '') {
-    missingVars.push('VITE_ADMIN_TOKEN')
-  }
+  // Note: VITE_ADMIN_TOKEN is no longer required
+  // Superadmin authentication now uses email/password with session cookies
   
   // Throw if any required vars are missing
   if (missingVars.length > 0) {
@@ -105,7 +105,8 @@ export function loadEnvConfig(): EnvConfig {
     
     // WuzAPI
     wuzapiBaseUrl: import.meta.env.VITE_WUZAPI_BASE_URL || 'https://wzapi.wasend.com.br',
-    adminToken: validateToken(adminToken, 'VITE_ADMIN_TOKEN'),
+    // adminToken is optional - deprecated in favor of session-based auth
+    adminToken: adminToken && adminToken.trim() !== '' ? adminToken.trim() : null,
     
     // CORS
     corsAllowedOrigins: parseOrigins(import.meta.env.VITE_CORS_ALLOWED_ORIGINS),
@@ -147,6 +148,7 @@ export function resetEnvConfig(): void {
 /**
  * Checks if all required environment variables are set
  * Returns validation result without throwing
+ * Note: VITE_ADMIN_TOKEN is no longer required - deprecated in favor of session-based auth
  */
 export function validateEnvConfig(): { valid: boolean; missing: string[] } {
   const missing: string[] = []
@@ -155,9 +157,8 @@ export function validateEnvConfig(): { valid: boolean; missing: string[] } {
     missing.push('VITE_NOCODB_TOKEN')
   }
   
-  if (!import.meta.env.VITE_ADMIN_TOKEN) {
-    missing.push('VITE_ADMIN_TOKEN')
-  }
+  // VITE_ADMIN_TOKEN is no longer required
+  // Superadmin authentication now uses email/password with session cookies
   
   return {
     valid: missing.length === 0,

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,14 +7,16 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { LoadingSkeleton } from '@/components/ui-custom/LoadingSkeleton';
 import { 
   Building2, 
   Plus, 
   Search, 
   Eye, 
-  Settings, 
+  Pencil,
+  MoreHorizontal,
   Trash2, 
   Power, 
   PowerOff,
@@ -23,7 +25,9 @@ import {
   Calendar,
   ExternalLink,
   AlertTriangle,
-  CheckCircle2
+  CheckCircle2,
+  UserCog,
+  ChevronDown
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -50,7 +54,7 @@ interface Tenant {
   lastActivity: string;
   createdAt: string;
   ownerSuperadminId: string;
-  settings: Record<string, any>;
+  settings: Record<string, unknown>;
   stripeConnectId?: string;
 }
 
@@ -58,12 +62,17 @@ interface CreateTenantData {
   name: string;
   subdomain: string;
   ownerEmail: string;
-  settings?: Record<string, any>;
+  settings?: Record<string, unknown>;
+}
+
+interface EditTenantData {
+  name: string;
+  status: 'active' | 'inactive' | 'suspended';
 }
 
 /**
  * Tenant Management Page
- * Requirements: 2.1, 2.2, 2.3, 2.4 - CRUD interface for tenants with validation
+ * Requirements: 2.1, 2.2, 2.3, 2.4, 3.1, 3.2, 3.3 - CRUD interface for tenants with validation
  */
 const TenantManagement = () => {
   const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -82,6 +91,16 @@ const TenantManagement = () => {
     isValid: boolean;
     message: string;
   }>({ isValid: true, message: '' });
+
+  // Edit modal state
+  const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editData, setEditData] = useState<EditTenantData>({ name: '', status: 'active' });
+  const [editLoading, setEditLoading] = useState(false);
+
+  // Delete confirmation state
+  const [deletingTenant, setDeletingTenant] = useState<Tenant | null>(null);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const navigate = useNavigate();
 
@@ -105,7 +124,20 @@ const TenantManagement = () => {
       const data = await response.json();
       
       if (data.success) {
-        setTenants(data.data || []);
+        const mappedTenants = (data.data || []).map((tenant: Record<string, unknown>) => ({
+          id: tenant.id,
+          name: tenant.name,
+          subdomain: tenant.subdomain,
+          status: tenant.status,
+          accountCount: tenant.account_count || 0,
+          mrr: tenant.mrr || 0,
+          lastActivity: tenant.last_activity || tenant.updated_at,
+          createdAt: tenant.created_at,
+          ownerSuperadminId: tenant.owner_superadmin_id,
+          settings: tenant.settings || {},
+          stripeConnectId: tenant.stripe_connect_id
+        }));
+        setTenants(mappedTenants);
       } else {
         throw new Error(data.error || 'Failed to load tenants');
       }
@@ -118,13 +150,13 @@ const TenantManagement = () => {
     }
   };
 
+
   const validateSubdomain = async (subdomain: string) => {
     if (!subdomain) {
       setSubdomainValidation({ isValid: false, message: 'Subdomain is required' });
       return;
     }
 
-    // Basic format validation
     const subdomainRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
     if (subdomain.length < 3 || subdomain.length > 63) {
       setSubdomainValidation({ isValid: false, message: 'Subdomain must be 3-63 characters long' });
@@ -136,7 +168,6 @@ const TenantManagement = () => {
       return;
     }
 
-    // Check availability
     try {
       const response = await fetch(`/api/superadmin/tenants/validate-subdomain`, {
         method: 'POST',
@@ -152,7 +183,7 @@ const TenantManagement = () => {
       } else {
         setSubdomainValidation({ isValid: false, message: data.data.error || 'Subdomain is not available' });
       }
-    } catch (error) {
+    } catch {
       setSubdomainValidation({ isValid: false, message: 'Failed to validate subdomain' });
     }
   };
@@ -163,7 +194,6 @@ const TenantManagement = () => {
       return;
     }
 
-    // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(newTenant.ownerEmail)) {
       toast.error('Please enter a valid email address');
@@ -202,6 +232,49 @@ const TenantManagement = () => {
     }
   };
 
+  const handleEditTenant = (tenant: Tenant) => {
+    setEditingTenant(tenant);
+    setEditData({ name: tenant.name, status: tenant.status });
+    setShowEditDialog(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingTenant || !editData.name.trim()) {
+      toast.error('Tenant name is required');
+      return;
+    }
+
+    try {
+      setEditLoading(true);
+      const csrfToken = await getCsrfToken();
+      const response = await fetch(`/api/superadmin/tenants/${editingTenant.id}`, {
+        method: 'PUT',
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(csrfToken && { 'CSRF-Token': csrfToken })
+        },
+        credentials: 'include',
+        body: JSON.stringify(editData)
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        toast.success('Tenant updated successfully');
+        setShowEditDialog(false);
+        setEditingTenant(null);
+        fetchTenants();
+      } else {
+        throw new Error(data.error || 'Failed to update tenant');
+      }
+    } catch (error) {
+      console.error('Error updating tenant:', error);
+      toast.error('Failed to update tenant');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
   const handleToggleTenantStatus = async (tenantId: string, currentStatus: string) => {
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
     const action = newStatus === 'active' ? 'activate' : 'deactivate';
@@ -231,10 +304,12 @@ const TenantManagement = () => {
     }
   };
 
-  const handleDeleteTenant = async (tenantId: string) => {
+  const handleDeleteTenant = async () => {
+    if (!deletingTenant) return;
+
     try {
       const csrfToken = await getCsrfToken();
-      const response = await fetch(`/api/superadmin/tenants/${tenantId}`, {
+      const response = await fetch(`/api/superadmin/tenants/${deletingTenant.id}`, {
         method: 'DELETE',
         headers: { 
           'Content-Type': 'application/json',
@@ -248,6 +323,8 @@ const TenantManagement = () => {
       
       if (data.success) {
         toast.success('Tenant deleted successfully');
+        setShowDeleteDialog(false);
+        setDeletingTenant(null);
         fetchTenants();
       } else {
         throw new Error(data.error || 'Failed to delete tenant');
@@ -273,9 +350,15 @@ const TenantManagement = () => {
       const data = await response.json();
       
       if (data.success) {
-        toast.success(`Now impersonating ${data.data.tenantName}`);
-        // Redirect to tenant admin panel
-        window.location.href = `https://${data.data.subdomain}.${window.location.hostname}/admin`;
+        const tenantName = data.data.tenant?.name || data.data.impersonation?.tenantName;
+        const subdomain = data.data.tenant?.subdomain || data.data.impersonation?.tenantSubdomain;
+        
+        toast.success(`Now impersonating ${tenantName}`);
+        if (window.location.hostname === 'localhost') {
+          toast.info(`Impersonation started for ${subdomain}. In production, you would be redirected to the tenant admin panel.`);
+        } else {
+          window.location.href = `https://${subdomain}.${window.location.hostname}/admin`;
+        }
       } else {
         throw new Error(data.error || 'Failed to start impersonation');
       }
@@ -289,7 +372,6 @@ const TenantManagement = () => {
     fetchTenants();
   }, []);
 
-  // Filter tenants based on search and status
   const filteredTenants = tenants.filter(tenant => {
     const matchesSearch = tenant.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          tenant.subdomain.toLowerCase().includes(searchTerm.toLowerCase());
@@ -324,6 +406,7 @@ const TenantManagement = () => {
     );
   }
 
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -352,7 +435,6 @@ const TenantManagement = () => {
                 <Label htmlFor="tenant-name">Tenant Name</Label>
                 <Input
                   id="tenant-name"
-                  placeholder="Acme Corporation"
                   value={newTenant.name}
                   onChange={(e) => setNewTenant({ ...newTenant, name: e.target.value })}
                 />
@@ -362,7 +444,6 @@ const TenantManagement = () => {
                 <div className="flex items-center space-x-2">
                   <Input
                     id="subdomain"
-                    placeholder="acme"
                     value={newTenant.subdomain}
                     onChange={(e) => {
                       const value = e.target.value.toLowerCase();
@@ -394,7 +475,7 @@ const TenantManagement = () => {
                 <Input
                   id="owner-email"
                   type="email"
-                  placeholder="admin@acme.com"
+                  placeholder="admin@example.com"
                   value={newTenant.ownerEmail}
                   onChange={(e) => setNewTenant({ ...newTenant, ownerEmail: e.target.value })}
                 />
@@ -404,16 +485,10 @@ const TenantManagement = () => {
               </div>
             </div>
             <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setShowCreateDialog(false)}
-              >
+              <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
                 Cancel
               </Button>
-              <Button
-                onClick={handleCreateTenant}
-                disabled={createLoading || !subdomainValidation.isValid}
-              >
+              <Button onClick={handleCreateTenant} disabled={createLoading || !subdomainValidation.isValid}>
                 {createLoading ? 'Creating...' : 'Create Tenant'}
               </Button>
             </DialogFooter>
@@ -522,69 +597,58 @@ const TenantManagement = () => {
                   </div>
                   
                   <div className="flex items-center space-x-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => navigate(`/superadmin/tenants/${tenant.id}`)}
-                    >
-                      <Eye className="h-4 w-4 mr-1" />
-                      View
-                    </Button>
-                    
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleImpersonateTenant(tenant.id)}
-                      disabled={tenant.status !== 'active'}
-                    >
-                      <Settings className="h-4 w-4 mr-1" />
-                      Manage
-                    </Button>
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleToggleTenantStatus(tenant.id, tenant.status)}
-                    >
-                      {tenant.status === 'active' ? (
-                        <>
-                          <PowerOff className="h-4 w-4 mr-1" />
-                          Deactivate
-                        </>
-                      ) : (
-                        <>
-                          <Power className="h-4 w-4 mr-1" />
-                          Activate
-                        </>
-                      )}
-                    </Button>
-
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
+                    {/* Dropdown Menu for Manage - Requirements 3.1 */}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
                         <Button variant="outline" size="sm">
-                          <Trash2 className="h-4 w-4 mr-1" />
-                          Delete
+                          <MoreHorizontal className="h-4 w-4 mr-1" />
+                          Manage
+                          <ChevronDown className="h-3 w-3 ml-1" />
                         </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete Tenant</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Are you sure you want to delete "{tenant.name}"? This action cannot be undone.
-                            All accounts, agents, inboxes, and data associated with this tenant will be permanently deleted.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => handleDeleteTenant(tenant.id)}
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                          >
-                            Delete Tenant
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleEditTenant(tenant)}>
+                          <Pencil className="h-4 w-4 mr-2" />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => navigate(`/superadmin/tenants/${tenant.id}`)}>
+                          <Eye className="h-4 w-4 mr-2" />
+                          View Details
+                        </DropdownMenuItem>
+                        <DropdownMenuItem 
+                          onClick={() => handleImpersonateTenant(tenant.id)}
+                          disabled={tenant.status !== 'active'}
+                        >
+                          <UserCog className="h-4 w-4 mr-2" />
+                          Impersonate
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => handleToggleTenantStatus(tenant.id, tenant.status)}>
+                          {tenant.status === 'active' ? (
+                            <>
+                              <PowerOff className="h-4 w-4 mr-2" />
+                              Deactivate
+                            </>
+                          ) : (
+                            <>
+                              <Power className="h-4 w-4 mr-2" />
+                              Activate
+                            </>
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem 
+                          onClick={() => {
+                            setDeletingTenant(tenant);
+                            setShowDeleteDialog(true);
+                          }}
+                          className="text-destructive focus:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </div>
               ))
@@ -592,6 +656,88 @@ const TenantManagement = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Edit Tenant Dialog - Requirements 3.2 */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Edit Tenant</DialogTitle>
+            <DialogDescription>
+              Update tenant information. Subdomain cannot be changed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="edit-name">Tenant Name</Label>
+              <Input
+                id="edit-name"
+                value={editData.name}
+                onChange={(e) => setEditData({ ...editData, name: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="edit-subdomain">Subdomain</Label>
+              <Input
+                id="edit-subdomain"
+                value={editingTenant?.subdomain || ''}
+                disabled
+                className="bg-muted"
+              />
+              <p className="text-xs text-muted-foreground">
+                Subdomain cannot be changed after creation
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="edit-status">Status</Label>
+              <Select 
+                value={editData.status} 
+                onValueChange={(value: 'active' | 'inactive' | 'suspended') => 
+                  setEditData({ ...editData, status: value })
+                }
+              >
+                <SelectTrigger id="edit-status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                  <SelectItem value="suspended">Suspended</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit} disabled={editLoading}>
+              {editLoading ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog - Requirements 3.4 */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Tenant</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{deletingTenant?.name}"? This action cannot be undone.
+              All accounts, agents, inboxes, and data associated with this tenant will be permanently deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeletingTenant(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteTenant}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete Tenant
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
