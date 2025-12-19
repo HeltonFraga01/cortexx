@@ -237,6 +237,120 @@ router.put('/tenants/:tenantId/accounts/:accountId', requireSuperadmin, auditSup
 });
 
 /**
+ * GET /api/superadmin/tenants/:tenantId/accounts/:accountId/owner
+ * Get the owner agent for an account
+ */
+router.get('/tenants/:tenantId/accounts/:accountId/owner', requireSuperadmin, async (req, res) => {
+  try {
+    const { tenantId, accountId } = req.params;
+
+    const owner = await superadminService.getAccountOwnerAgent(tenantId, accountId);
+
+    if (!owner) {
+      return res.status(404).json({
+        success: false,
+        error: 'No owner agent found for this account'
+      });
+    }
+
+    logger.info('Account owner retrieved by superadmin', {
+      superadminId: req.session.userId,
+      tenantId,
+      accountId,
+      ownerId: owner.id
+    });
+
+    res.json({
+      success: true,
+      data: owner
+    });
+  } catch (error) {
+    logger.error('Failed to get account owner', {
+      error: error.message,
+      superadminId: req.session?.userId,
+      tenantId: req.params?.tenantId,
+      accountId: req.params?.accountId
+    });
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * PUT /api/superadmin/tenants/:tenantId/accounts/:accountId/credentials
+ * Update account owner credentials (email and/or password)
+ */
+router.put('/tenants/:tenantId/accounts/:accountId/credentials', requireSuperadmin, auditSuperadminAction, async (req, res) => {
+  try {
+    const { tenantId, accountId } = req.params;
+    const { email, password } = req.body;
+
+    // Validate at least one field is provided
+    if (!email && !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'At least email or password must be provided'
+      });
+    }
+
+    // Validate email format if provided
+    if (email) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid email format'
+        });
+      }
+    }
+
+    // Validate password length if provided
+    if (password && password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password must be at least 8 characters'
+      });
+    }
+
+    const updatedOwner = await superadminService.updateAccountOwnerCredentials(
+      tenantId,
+      accountId,
+      { email, password },
+      req.session.userId
+    );
+
+    logger.info('Account owner credentials updated by superadmin', {
+      superadminId: req.session.userId,
+      tenantId,
+      accountId,
+      emailChanged: !!email,
+      passwordChanged: !!password
+    });
+
+    res.json({
+      success: true,
+      data: updatedOwner,
+      message: 'Credentials updated successfully'
+    });
+  } catch (error) {
+    logger.error('Failed to update account owner credentials', {
+      error: error.message,
+      superadminId: req.session?.userId,
+      tenantId: req.params?.tenantId,
+      accountId: req.params?.accountId
+    });
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
  * DELETE /api/superadmin/tenants/:tenantId/accounts/:accountId
  * Delete an account and cascade delete all related data
  * Requirements: 2.5 - Delete account with confirmation and cascade

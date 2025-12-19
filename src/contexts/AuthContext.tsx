@@ -14,6 +14,7 @@ interface AuthContextType {
   isLoading: boolean;
   login: (token: string, role: 'admin' | 'user') => Promise<boolean>;
   loginSuperadmin: (email: string, password: string) => Promise<boolean>;
+  loginAsAdmin: (agentData: { id: string; name: string; token: string }) => void;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
 }
@@ -158,6 +159,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   /**
+   * Login direto como admin (para agents com role owner/administrator)
+   * Usado quando um agent owner faz login e precisa acessar /admin
+   */
+  const loginAsAdmin = (agentData: { id: string; name: string; token: string }) => {
+    setUser({
+      id: agentData.id,
+      role: 'admin',
+      token: agentData.token,
+      name: agentData.name,
+    });
+  };
+
+  /**
    * Faz logout e destrói a sessão no servidor
    */
   const logout = async () => {
@@ -209,6 +223,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       isLoading,
       login,
       loginSuperadmin,
+      loginAsAdmin,
       logout,
       checkAuth
     }}>

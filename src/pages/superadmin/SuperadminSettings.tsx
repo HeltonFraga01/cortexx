@@ -248,11 +248,16 @@ const SuperadminSettings = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Settings</h1>
-        <p className="text-muted-foreground">
-          Platform configuration and account management
-        </p>
+      <div className="flex items-center gap-4">
+        <div className="p-3 rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 shadow-lg shadow-orange-500/20">
+          <Settings className="h-5 w-5 text-white" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+          <p className="text-muted-foreground">
+            Platform configuration and account management
+          </p>
+        </div>
       </div>
 
       {/* Password Change Section - Requirements 2.1, 2.5 */}
@@ -375,7 +380,7 @@ const SuperadminSettings = () => {
             <Button 
               onClick={handleChangePassword} 
               disabled={passwordLoading || !currentPassword || !newPassword || !confirmPassword}
-              className="w-fit"
+              className="w-fit bg-orange-500 hover:bg-orange-600 text-white"
             >
               {passwordLoading ? 'Changing...' : 'Change Password'}
             </Button>
@@ -398,7 +403,7 @@ const SuperadminSettings = () => {
             </div>
             <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
               <DialogTrigger asChild>
-                <Button>
+                <Button className="bg-orange-500 hover:bg-orange-600 text-white">
                   <Plus className="h-4 w-4 mr-2" />
                   Add Superadmin
                 </Button>
@@ -481,7 +486,11 @@ const SuperadminSettings = () => {
                   <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
                     Cancel
                   </Button>
-                  <Button onClick={handleCreateAccount} disabled={createLoading}>
+                  <Button 
+                    onClick={handleCreateAccount} 
+                    disabled={createLoading}
+                    className="bg-orange-500 hover:bg-orange-600 text-white"
+                  >
                     {createLoading ? 'Creating...' : 'Create Account'}
                   </Button>
                 </DialogFooter>
@@ -491,14 +500,28 @@ const SuperadminSettings = () => {
         </CardHeader>
         <CardContent>
           {accountsLoading ? (
-            <div className="text-center py-8 text-muted-foreground">
-              Loading accounts...
+            <div className="space-y-4">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="flex items-center justify-between p-4 border rounded-lg">
+                  <div className="space-y-2">
+                    <div className="flex items-center space-x-2">
+                      <div className="h-5 w-32 bg-muted animate-pulse rounded" />
+                      <div className="h-5 w-16 bg-muted animate-pulse rounded-full" />
+                    </div>
+                    <div className="h-4 w-48 bg-muted animate-pulse rounded" />
+                    <div className="h-3 w-64 bg-muted animate-pulse rounded" />
+                  </div>
+                  <div className="h-9 w-20 bg-muted animate-pulse rounded-md" />
+                </div>
+              ))}
             </div>
           ) : accounts.length === 0 ? (
-            <div className="text-center py-8">
-              <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-medium">No superadmin accounts</h3>
-              <p className="text-muted-foreground">
+            <div className="flex flex-col items-center justify-center py-12">
+              <div className="p-4 rounded-xl bg-muted mb-4">
+                <Users className="h-8 w-8 text-muted-foreground" />
+              </div>
+              <h3 className="text-lg font-medium text-foreground">No superadmin accounts</h3>
+              <p className="text-sm text-muted-foreground mt-1">
                 Create your first superadmin account to get started
               </p>
             </div>
@@ -512,7 +535,13 @@ const SuperadminSettings = () => {
                   <div className="flex flex-col">
                     <div className="flex items-center space-x-2">
                       <span className="font-medium">{account.name}</span>
-                      <Badge variant={account.status === 'active' ? 'default' : 'secondary'}>
+                      <Badge 
+                        className={
+                          account.status === 'active' 
+                            ? 'bg-green-500/10 text-green-600 border-green-500/20' 
+                            : 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20'
+                        }
+                      >
                         {account.status}
                       </Badge>
                       {account.requires_password_change && (

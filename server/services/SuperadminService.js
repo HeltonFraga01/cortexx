@@ -671,6 +671,21 @@ class SuperadminService {
   }
 
   /**
+   * Hash password using crypto.scrypt (same format as AgentService)
+   * @param {string} password - Plain text password
+   * @returns {Promise<string>} Hashed password in salt:key format
+   */
+  async hashPasswordForAgent(password) {
+    return new Promise((resolve, reject) => {
+      const salt = crypto.randomBytes(16).toString('hex');
+      crypto.scrypt(password, salt, 64, (err, derivedKey) => {
+        if (err) reject(err);
+        resolve(`${salt}:${derivedKey.toString('hex')}`);
+      });
+    });
+  }
+
+  /**
    * Check if subdomain is available
    * @param {string} subdomain - Subdomain to check
    * @returns {Promise<boolean>} True if available
@@ -1925,6 +1940,157 @@ class SuperadminService {
       throw error;
     }
   }
+  /**
+   * Get the owner agent for an account
+   * @param {string} tenantId - Tenant UUID
+   * @param {string} accountId - Account UUID
+   * @returns {Promise<Object|null>} Owner agent data or null
+   */
+  async getAccountOwnerAgent(tenantId, accountId) {
+    try {
+      // Verify account belongs to tenant
+      const account = await this.getTenantAccountById(tenantId, accountId);
+      if (!account) {
+        return null;
+      }
+
+      // Get the owner agent for this account
+      const { data: agent, error } = await this.supabase.adminClient
+        .from('agents')
+        .select('id, email, name, role, status, created_at')
+        .eq('account_id', accountId)
+        .eq('role', 'owner')
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No owner found, try to get any admin
+          const { data: adminAgent, error: adminError } = await this.supabase.adminClient
+            .from('agents')
+            .select('id, email, name, role, status, created_at')
+            .eq('account_id', accountId)
+            .eq('role', 'administrator')
+            .limit(1)
+            .single();
+
+          if (adminError || !adminAgent) {
+            return null;
+          }
+          return adminAgent;
+        }
+        throw new Error(`Failed to get owner agent: ${error.message}`);
+      }
+
+      return agent;
+    } catch (error) {
+      logger.error('Failed to get account owner agent', {
+        error: error.message,
+        tenantId,
+        accountId
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Update account owner credentials (email and/or password)
+   * @param {string} tenantId - Tenant UUID
+   * @param {string} accountId - Account UUID
+   * @param {Object} data - Credentials data
+   * @param {string} data.email - New email (optional)
+   * @param {string} data.password - New password (optional)
+   * @param {string} superadminId - Superadmin updating the credentials
+   * @returns {Promise<Object>} Updated owner agent data
+   */
+  async updateAccountOwnerCredentials(tenantId, accountId, data, superadminId) {
+    try {
+      const { email, password } = data;
+
+      // Verify account belongs to tenant
+      const account = await this.getTenantAccountById(tenantId, accountId);
+      if (!account) {
+        throw new Error('Account not found');
+      }
+
+      // Get the owner agent
+      const ownerAgent = await this.getAccountOwnerAgent(tenantId, accountId);
+      if (!ownerAgent) {
+        throw new Error('No owner agent found for this account');
+      }
+
+      const updates = {
+        updated_at: new Date().toISOString()
+      };
+
+      // Update email if provided
+      if (email && email !== ownerAgent.email) {
+        // Check if email already exists
+        const { data: existingAgent } = await this.supabase.adminClient
+          .from('agents')
+          .select('id')
+          .eq('email', email)
+          .neq('id', ownerAgent.id)
+          .single();
+
+        if (existingAgent) {
+          throw new Error('An agent with this email already exists');
+        }
+        updates.email = email;
+      }
+
+      // Update password if provided
+      if (password) {
+        if (password.length < 8) {
+          throw new Error('Password must be at least 8 characters');
+        }
+        // Use crypto.scrypt to match AgentService.hashPassword format
+        updates.password_hash = await this.hashPasswordForAgent(password);
+      }
+
+      // Update the agent
+      const { data: updatedAgent, error } = await this.supabase.adminClient
+        .from('agents')
+        .update(updates)
+        .eq('id', ownerAgent.id)
+        .select('id, email, name, role, status, created_at, updated_at')
+        .single();
+
+      if (error) {
+        throw new Error(`Failed to update owner credentials: ${error.message}`);
+      }
+
+      // Log audit action
+      const auditDetails = {};
+      if (email) auditDetails.emailChanged = true;
+      if (password) auditDetails.passwordChanged = true;
+      
+      await this.logAuditAction(superadminId, 'update_owner_credentials', 'account', accountId, tenantId, {
+        ...auditDetails,
+        agentId: ownerAgent.id,
+        previousEmail: ownerAgent.email
+      });
+
+      logger.info('Account owner credentials updated by superadmin', {
+        superadminId,
+        tenantId,
+        accountId,
+        agentId: ownerAgent.id,
+        emailChanged: !!email,
+        passwordChanged: !!password
+      });
+
+      return updatedAgent;
+    } catch (error) {
+      logger.error('Failed to update account owner credentials', {
+        error: error.message,
+        tenantId,
+        accountId,
+        superadminId
+      });
+      throw error;
+    }
+  }
+
   // ========================================
   // TENANT AGENT MANAGEMENT METHODS
   // ========================================

@@ -301,7 +301,7 @@ export function TenantBrandingTab({ tenantId }: TenantBrandingTabProps) {
           <RotateCcw className="h-4 w-4 mr-2" />
           Reset
         </Button>
-        <Button onClick={handleSave} disabled={saving}>
+        <Button onClick={handleSave} disabled={saving} className="bg-orange-500 hover:bg-orange-600 text-white">
           {saving ? (
             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
           ) : (

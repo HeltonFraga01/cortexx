@@ -271,26 +271,32 @@ const TenantDetails = () => {
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
           </Button>
-          <div>
-            <div className="flex items-center space-x-2">
-              <h1 className="text-3xl font-bold">{tenant.name}</h1>
-              <Badge
-                variant={
-                  tenant.status === 'active' ? 'default' :
-                  tenant.status === 'inactive' ? 'secondary' : 'destructive'
-                }
-              >
-                {tenant.status}
-              </Badge>
+          <div className="flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 shadow-lg shadow-orange-500/20">
+              <Building2 className="h-5 w-5 text-white" />
             </div>
-            <p className="text-muted-foreground flex items-center space-x-1">
-              <Globe className="h-4 w-4" />
-              <span>{tenant.subdomain}.cortex.online</span>
-            </p>
+            <div>
+              <div className="flex items-center space-x-2">
+                <h1 className="text-2xl font-bold text-foreground">{tenant.name}</h1>
+                <Badge
+                  className={
+                    tenant.status === 'active' ? 'bg-green-500 text-white border-0' :
+                    tenant.status === 'inactive' ? 'bg-yellow-500 text-white border-0' : 'bg-red-500 text-white border-0'
+                  }
+                >
+                  {tenant.status}
+                </Badge>
+              </div>
+              <p className="text-sm text-muted-foreground flex items-center space-x-1">
+                <Globe className="h-4 w-4" />
+                <span>{tenant.subdomain}.cortex.online</span>
+              </p>
+            </div>
           </div>
         </div>
         <div className="flex items-center space-x-2">
           <Button
+            className={showManagePanel ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}
             variant={showManagePanel ? "default" : "outline"}
             onClick={() => {
               setShowManagePanel(!showManagePanel);
@@ -348,40 +354,56 @@ const TenantDetails = () => {
 
       {/* Info Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Accounts</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{tenant.metrics?.accountCount || 0}</div>
+        <Card className="relative overflow-hidden border-0 bg-gradient-to-br from-blue-500/10 to-blue-500/5">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Accounts</p>
+                <p className="text-2xl font-bold text-foreground">{tenant.metrics?.accountCount || 0}</p>
+              </div>
+              <div className="p-3 rounded-xl bg-blue-500/20">
+                <Users className="w-5 h-5 text-blue-500" />
+              </div>
+            </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">MRR</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(tenant.metrics?.mrr || 0)}</div>
+        <Card className="relative overflow-hidden border-0 bg-gradient-to-br from-green-500/10 to-green-500/5">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">MRR</p>
+                <p className="text-2xl font-bold text-foreground">{formatCurrency(tenant.metrics?.mrr || 0)}</p>
+              </div>
+              <div className="p-3 rounded-xl bg-green-500/20">
+                <DollarSign className="w-5 h-5 text-green-500" />
+              </div>
+            </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Agents</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{tenant.metrics?.agentCount || 0}</div>
+        <Card className="relative overflow-hidden border-0 bg-gradient-to-br from-purple-500/10 to-purple-500/5">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Agents</p>
+                <p className="text-2xl font-bold text-foreground">{tenant.metrics?.agentCount || 0}</p>
+              </div>
+              <div className="p-3 rounded-xl bg-purple-500/20">
+                <Users className="w-5 h-5 text-purple-500" />
+              </div>
+            </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Inboxes</CardTitle>
-            <Mail className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{tenant.metrics?.inboxCount || 0}</div>
+        <Card className="relative overflow-hidden border-0 bg-gradient-to-br from-orange-500/10 to-orange-500/5">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Inboxes</p>
+                <p className="text-2xl font-bold text-foreground">{tenant.metrics?.inboxCount || 0}</p>
+              </div>
+              <div className="p-3 rounded-xl bg-orange-500/20">
+                <Mail className="w-5 h-5 text-orange-500" />
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>

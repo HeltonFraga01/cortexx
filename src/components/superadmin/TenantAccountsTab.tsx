@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -29,7 +30,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Plus, Edit, Trash2, X, Check, Loader2, Users } from 'lucide-react';
+import { Plus, Edit, Trash2, X, Check, Loader2, Users, Key, Eye, EyeOff, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface TenantAccount {
@@ -41,6 +42,14 @@ interface TenantAccount {
   created_at: string;
   agent_count?: number;
   inbox_count?: number;
+}
+
+interface OwnerAgent {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  status: string;
 }
 
 interface TenantAccountsTabProps {
@@ -59,6 +68,7 @@ const getCsrfToken = async (): Promise<string | null> => {
 };
 
 export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
+  const navigate = useNavigate();
   const [accounts, setAccounts] = useState<TenantAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewForm, setShowNewForm] = useState(false);
@@ -67,6 +77,18 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+
+  // Credentials editing state
+  const [editingCredentialsId, setEditingCredentialsId] = useState<string | null>(null);
+  const [ownerData, setOwnerData] = useState<OwnerAgent | null>(null);
+  const [loadingOwner, setLoadingOwner] = useState(false);
+  const [credentialsForm, setCredentialsForm] = useState({
+    email: '',
+    password: '',
+    confirmPassword: ''
+  });
+  const [showPassword, setShowPassword] = useState(false);
+  const [savingCredentials, setSavingCredentials] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -87,11 +109,13 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
       // Handle authentication errors
       if (response.status === 401) {
         toast.error('Session expired. Please login again.');
+        navigate('/superadmin/login');
         return;
       }
       
       if (response.status === 403) {
         toast.error('Access denied. Superadmin privileges required.');
+        navigate('/superadmin/login');
         return;
       }
       
@@ -222,6 +246,114 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
     }
   };
 
+  const fetchOwnerAgent = async (accountId: string) => {
+    try {
+      setLoadingOwner(true);
+      const response = await fetch(
+        `/api/superadmin/tenants/${tenantId}/accounts/${accountId}/owner`,
+        { credentials: 'include' }
+      );
+
+      const data = await response.json();
+      if (data.success) {
+        setOwnerData(data.data);
+        setCredentialsForm({
+          email: data.data.email || '',
+          password: '',
+          confirmPassword: ''
+        });
+      } else {
+        setOwnerData(null);
+        setCredentialsForm({ email: '', password: '', confirmPassword: '' });
+        if (response.status !== 404) {
+          toast.error(data.error || 'Failed to fetch owner data');
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching owner:', error);
+      setOwnerData(null);
+    } finally {
+      setLoadingOwner(false);
+    }
+  };
+
+  const handleEditCredentials = async (accountId: string) => {
+    setEditingCredentialsId(accountId);
+    await fetchOwnerAgent(accountId);
+  };
+
+  const handleSaveCredentials = async () => {
+    if (!editingCredentialsId) return;
+
+    // Validate
+    if (!credentialsForm.email && !credentialsForm.password) {
+      toast.error('Please provide email or password to update');
+      return;
+    }
+
+    if (credentialsForm.password && credentialsForm.password !== credentialsForm.confirmPassword) {
+      toast.error('Passwords do not match');
+      return;
+    }
+
+    if (credentialsForm.password && credentialsForm.password.length < 8) {
+      toast.error('Password must be at least 8 characters');
+      return;
+    }
+
+    try {
+      setSavingCredentials(true);
+      const csrfToken = await getCsrfToken();
+      
+      const body: { email?: string; password?: string } = {};
+      if (credentialsForm.email && credentialsForm.email !== ownerData?.email) {
+        body.email = credentialsForm.email;
+      }
+      if (credentialsForm.password) {
+        body.password = credentialsForm.password;
+      }
+
+      if (Object.keys(body).length === 0) {
+        toast.info('No changes to save');
+        return;
+      }
+
+      const response = await fetch(
+        `/api/superadmin/tenants/${tenantId}/accounts/${editingCredentialsId}/credentials`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(csrfToken && { 'CSRF-Token': csrfToken })
+          },
+          credentials: 'include',
+          body: JSON.stringify(body)
+        }
+      );
+
+      const data = await response.json();
+      if (data.success) {
+        toast.success('Credentials updated successfully');
+        setEditingCredentialsId(null);
+        setOwnerData(null);
+        setCredentialsForm({ email: '', password: '', confirmPassword: '' });
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update credentials');
+    } finally {
+      setSavingCredentials(false);
+    }
+  };
+
+  const cancelEditCredentials = () => {
+    setEditingCredentialsId(null);
+    setOwnerData(null);
+    setCredentialsForm({ email: '', password: '', confirmPassword: '' });
+    setShowPassword(false);
+  };
+
   const startEdit = (account: TenantAccount) => {
     setEditingId(account.id);
     setFormData({
@@ -240,12 +372,12 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
     });
   };
 
-  const getStatusVariant = (status: string) => {
+  const getStatusColor = (status: string) => {
     switch (status) {
-      case 'active': return 'default';
-      case 'inactive': return 'secondary';
-      case 'suspended': return 'destructive';
-      default: return 'outline';
+      case 'active': return 'bg-green-500 text-white border-0';
+      case 'inactive': return 'bg-yellow-500 text-white border-0';
+      case 'suspended': return 'bg-red-500 text-white border-0';
+      default: return '';
     }
   };
 
@@ -344,6 +476,124 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
         </Card>
       )}
 
+      {editingCredentialsId && (
+        <Card className="border-2 border-blue-500/30 bg-blue-500/5">
+          <CardHeader className="pb-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-blue-500/20">
+                  <Key className="h-4 w-4 text-blue-500" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Edit Owner Credentials</CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Update email and password for the account owner
+                  </p>
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" onClick={cancelEditCredentials}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {loadingOwner ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
+                <span className="ml-2 text-sm text-muted-foreground">Loading owner data...</span>
+              </div>
+            ) : ownerData ? (
+              <>
+                <div className="p-3 rounded-lg bg-muted/50 mb-4">
+                  <p className="text-sm">
+                    <span className="text-muted-foreground">Current owner:</span>{' '}
+                    <span className="font-medium">{ownerData.name}</span>{' '}
+                    <span className="text-muted-foreground">({ownerData.email})</span>
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium flex items-center gap-2">
+                    <Mail className="h-4 w-4" />
+                    Email
+                  </Label>
+                  <Input
+                    type="email"
+                    placeholder="email@example.com"
+                    value={credentialsForm.email}
+                    onChange={(e) => setCredentialsForm({ ...credentialsForm, email: e.target.value })}
+                    className="bg-background"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium flex items-center gap-2">
+                      <Key className="h-4 w-4" />
+                      New Password
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        type={showPassword ? 'text' : 'password'}
+                        value={credentialsForm.password}
+                        onChange={(e) => setCredentialsForm({ ...credentialsForm, password: e.target.value })}
+                        className="bg-background pr-10"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                        onClick={() => setShowPassword(!showPassword)}
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Leave empty to keep current password</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Confirm Password</Label>
+                    <Input
+                      type={showPassword ? 'text' : 'password'}
+                      value={credentialsForm.confirmPassword}
+                      onChange={(e) => setCredentialsForm({ ...credentialsForm, confirmPassword: e.target.value })}
+                      className="bg-background"
+                      disabled={!credentialsForm.password}
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2 justify-end pt-2">
+                  <Button variant="outline" onClick={cancelEditCredentials}>
+                    <X className="h-4 w-4 mr-2" />
+                    Cancel
+                  </Button>
+                  <Button 
+                    onClick={handleSaveCredentials} 
+                    disabled={savingCredentials}
+                    className="bg-blue-500 hover:bg-blue-600 text-white"
+                  >
+                    {savingCredentials ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Check className="h-4 w-4 mr-2" />
+                    )}
+                    Save Credentials
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-8">
+                <div className="p-4 rounded-full bg-muted/50 inline-block mb-3">
+                  <Users className="w-8 h-8 opacity-40" />
+                </div>
+                <p className="text-sm font-medium">No owner found</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  This account doesn't have an owner agent yet
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Table>
         <TableHeader>
           <TableRow>
@@ -400,7 +650,7 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
                 <>
                   <TableCell className="font-medium">{account.name}</TableCell>
                   <TableCell>
-                    <Badge variant={getStatusVariant(account.status)}>
+                    <Badge className={getStatusColor(account.status)}>
                       {account.status}
                     </Badge>
                   </TableCell>
@@ -409,6 +659,15 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
                   <TableCell>{formatDate(account.created_at)}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex gap-1 justify-end">
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        onClick={() => handleEditCredentials(account.id)}
+                        title="Edit owner credentials"
+                        className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                      >
+                        <Key className="h-4 w-4" />
+                      </Button>
                       <Button size="sm" variant="outline" onClick={() => startEdit(account)}>
                         <Edit className="h-4 w-4" />
                       </Button>

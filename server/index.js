@@ -127,6 +127,7 @@ app.use((req, res, next) => {
   // Rotas que não precisam de CSRF
   const csrfExemptPaths = [
     '/api/auth/login',
+    '/api/auth/admin-login', // Admin login via email/password (creates session)
     '/api/auth/status',
     '/api/admin/database-connections', // Rotas de database-connections para integração externa
     '/api/webhook/events', // Webhook endpoint para receber eventos do WUZAPI

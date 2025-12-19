@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Edit, Star, X, Check, Loader2 } from 'lucide-react';
+import { Plus, Edit, Star, X, Check, CreditCard } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface TenantPlan {
@@ -225,19 +225,34 @@ export function TenantPlansTab({ tenantId }: TenantPlansTabProps) {
     }).format(cents / 100);
   };
 
-  const getStatusVariant = (status: string) => {
+  const getStatusColor = (status: string) => {
     switch (status) {
-      case 'active': return 'default';
-      case 'inactive': return 'secondary';
-      case 'archived': return 'outline';
-      default: return 'outline';
+      case 'active': return 'bg-green-500/10 text-green-600 border-green-500/20';
+      case 'inactive': return 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20';
+      case 'archived': return 'bg-red-500/10 text-red-600 border-red-500/20';
+      default: return 'bg-muted text-muted-foreground';
     }
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-8">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="h-5 w-32 bg-muted animate-pulse rounded" />
+          <div className="h-10 w-32 bg-muted animate-pulse rounded" />
+        </div>
+        <div className="space-y-3">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="flex items-center gap-4 p-4 border rounded-lg">
+              <div className="h-5 w-32 bg-muted animate-pulse rounded" />
+              <div className="h-5 w-20 bg-muted animate-pulse rounded" />
+              <div className="h-5 w-20 bg-muted animate-pulse rounded" />
+              <div className="h-6 w-16 bg-muted animate-pulse rounded-full" />
+              <div className="flex-1" />
+              <div className="h-8 w-20 bg-muted animate-pulse rounded" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -248,14 +263,18 @@ export function TenantPlansTab({ tenantId }: TenantPlansTabProps) {
         <p className="text-sm text-muted-foreground">
           {plans.length} plan{plans.length !== 1 ? 's' : ''} configured
         </p>
-        <Button onClick={() => setShowNewForm(true)} disabled={showNewForm}>
+        <Button 
+          onClick={() => setShowNewForm(true)} 
+          disabled={showNewForm}
+          className="bg-orange-500 hover:bg-orange-600 text-white"
+        >
           <Plus className="h-4 w-4 mr-2" />
           Create Plan
         </Button>
       </div>
 
       {showNewForm && (
-        <Card className="border-2 border-primary">
+        <Card className="border-2 border-orange-500/30 bg-orange-500/5">
           <CardHeader>
             <CardTitle className="text-lg">New Plan</CardTitle>
           </CardHeader>
@@ -349,7 +368,10 @@ export function TenantPlansTab({ tenantId }: TenantPlansTabProps) {
                 <X className="h-4 w-4 mr-2" />
                 Cancel
               </Button>
-              <Button onClick={handleCreate}>
+              <Button 
+                onClick={handleCreate}
+                className="bg-orange-500 hover:bg-orange-600 text-white"
+              >
                 <Check className="h-4 w-4 mr-2" />
                 Create
               </Button>
@@ -425,7 +447,11 @@ export function TenantPlansTab({ tenantId }: TenantPlansTabProps) {
                   <TableCell>{plan.subscriber_count || 0}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex gap-1 justify-end">
-                      <Button size="sm" onClick={() => handleUpdate(plan.id)}>
+                      <Button 
+                        size="sm" 
+                        onClick={() => handleUpdate(plan.id)}
+                        className="bg-orange-500 hover:bg-orange-600 text-white"
+                      >
                         <Check className="h-4 w-4" />
                       </Button>
                       <Button size="sm" variant="outline" onClick={() => setEditingId(null)}>
@@ -450,7 +476,7 @@ export function TenantPlansTab({ tenantId }: TenantPlansTabProps) {
                   <TableCell>{formatPrice(plan.price_cents)}</TableCell>
                   <TableCell className="capitalize">{plan.billing_cycle}</TableCell>
                   <TableCell>
-                    <Badge variant={getStatusVariant(plan.status)}>
+                    <Badge className={getStatusColor(plan.status)}>
                       {plan.status}
                     </Badge>
                   </TableCell>
@@ -473,8 +499,16 @@ export function TenantPlansTab({ tenantId }: TenantPlansTabProps) {
           ))}
           {plans.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                No plans configured
+              <TableCell colSpan={6} className="py-12">
+                <div className="flex flex-col items-center justify-center text-center">
+                  <div className="p-3 rounded-xl bg-muted mb-3">
+                    <CreditCard className="h-6 w-6 text-muted-foreground" />
+                  </div>
+                  <p className="text-sm font-medium text-foreground">No plans configured</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Create a plan to start managing subscriptions
+                  </p>
+                </div>
               </TableCell>
             </TableRow>
           )}

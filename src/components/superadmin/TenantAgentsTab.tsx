@@ -256,29 +256,38 @@ export function TenantAgentsTab({ tenantId }: TenantAgentsTabProps) {
     });
   };
 
-  const getStatusVariant = (status: string) => {
+  const getStatusColor = (status: string) => {
     switch (status) {
-      case 'active': return 'default';
-      case 'inactive': return 'secondary';
-      case 'pending': return 'outline';
-      default: return 'outline';
+      case 'active': return 'bg-green-500 text-white border-0';
+      case 'inactive': return 'bg-yellow-500 text-white border-0';
+      case 'pending': return 'bg-blue-500 text-white border-0';
+      default: return '';
     }
   };
 
-  const getRoleVariant = (role: string) => {
+  const getRoleColor = (role: string) => {
     switch (role) {
-      case 'owner': return 'default';
-      case 'administrator': return 'secondary';
-      case 'agent': return 'outline';
-      case 'viewer': return 'outline';
-      default: return 'outline';
+      case 'owner': return 'bg-purple-500 text-white border-0';
+      case 'administrator': return 'bg-blue-500 text-white border-0';
+      case 'agent': return 'bg-orange-500 text-white border-0';
+      case 'viewer': return 'bg-gray-500 text-white border-0';
+      default: return '';
     }
   };
 
   if (loading && agents.length === 0) {
     return (
-      <div className="flex items-center justify-center py-8">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="space-y-3">
+        {[...Array(3)].map((_, i) => (
+          <div key={i} className="flex items-center gap-4 p-4 rounded-xl bg-muted/30 animate-pulse">
+            <div className="w-10 h-10 rounded-xl bg-muted" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 w-3/4 bg-muted rounded" />
+              <div className="h-3 w-1/2 bg-muted rounded" />
+            </div>
+            <div className="h-5 w-20 bg-muted rounded" />
+          </div>
+        ))}
       </div>
     );
   }
@@ -286,10 +295,19 @@ export function TenantAgentsTab({ tenantId }: TenantAgentsTabProps) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {total} agent{total !== 1 ? 's' : ''} total
-        </p>
-        <Button onClick={() => setShowNewForm(true)} disabled={showNewForm || accounts.length === 0}>
+        <div className="flex items-center gap-2">
+          <div className="p-2 rounded-lg bg-purple-500/10">
+            <Plus className="h-4 w-4 text-purple-500" />
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {total} agent{total !== 1 ? 's' : ''} total
+          </p>
+        </div>
+        <Button 
+          onClick={() => setShowNewForm(true)} 
+          disabled={showNewForm || accounts.length === 0}
+          className="bg-orange-500 hover:bg-orange-600 text-white"
+        >
           <Plus className="h-4 w-4 mr-2" />
           Create Agent
         </Button>
@@ -304,9 +322,14 @@ export function TenantAgentsTab({ tenantId }: TenantAgentsTabProps) {
       )}
 
       {showNewForm && (
-        <Card className="border-2 border-primary">
-          <CardHeader>
-            <CardTitle className="text-lg">New Agent</CardTitle>
+        <Card className="border-2 border-orange-500/30 bg-orange-500/5">
+          <CardHeader className="pb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-orange-500/20">
+                <Plus className="h-4 w-4 text-orange-500" />
+              </div>
+              <CardTitle className="text-lg">New Agent</CardTitle>
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
@@ -372,7 +395,7 @@ export function TenantAgentsTab({ tenantId }: TenantAgentsTabProps) {
               />
               <p className="text-xs text-muted-foreground">Minimum 8 characters</p>
             </div>
-            <div className="flex gap-2 justify-end">
+            <div className="flex gap-2 justify-end pt-2">
               <Button variant="outline" onClick={() => {
                 setShowNewForm(false);
                 setFormData({ accountId: '', name: '', email: '', password: '', role: 'agent', status: 'active' });
@@ -380,7 +403,7 @@ export function TenantAgentsTab({ tenantId }: TenantAgentsTabProps) {
                 <X className="h-4 w-4 mr-2" />
                 Cancel
               </Button>
-              <Button onClick={handleCreate}>
+              <Button onClick={handleCreate} className="bg-orange-500 hover:bg-orange-600 text-white">
                 <Check className="h-4 w-4 mr-2" />
                 Create
               </Button>
@@ -462,12 +485,12 @@ export function TenantAgentsTab({ tenantId }: TenantAgentsTabProps) {
                   <TableCell>{agent.email}</TableCell>
                   <TableCell>{agent.account_name}</TableCell>
                   <TableCell>
-                    <Badge variant={getRoleVariant(agent.role)}>
+                    <Badge className={getRoleColor(agent.role)}>
                       {agent.role}
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={getStatusVariant(agent.status)}>
+                    <Badge className={getStatusColor(agent.status)}>
                       {agent.status}
                     </Badge>
                   </TableCell>
@@ -488,8 +511,14 @@ export function TenantAgentsTab({ tenantId }: TenantAgentsTabProps) {
           ))}
           {agents.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                No agents found
+              <TableCell colSpan={7} className="text-center py-12">
+                <div className="flex flex-col items-center justify-center text-muted-foreground">
+                  <div className="p-4 rounded-full bg-muted/50 mb-3">
+                    <Plus className="w-8 h-8 opacity-40" />
+                  </div>
+                  <p className="text-sm font-medium">No agents found</p>
+                  <p className="text-xs mt-1">Create your first agent to get started</p>
+                </div>
               </TableCell>
             </TableRow>
           )}

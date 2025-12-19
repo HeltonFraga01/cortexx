@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils';
 
 // Navigation item classes following design system
 const NAV_ITEM_BASE = "flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors";
-const NAV_ITEM_ACTIVE = "bg-primary/10 text-primary dark:bg-primary/20 dark:text-primary";
+const NAV_ITEM_ACTIVE = "bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400";
 const NAV_ITEM_INACTIVE = "text-muted-foreground hover:bg-muted hover:text-foreground";
 const NAV_ITEM_COLLAPSED = "justify-center";
 
@@ -74,8 +74,8 @@ const SuperadminLayout = ({ children }: SuperadminLayoutProps) => {
           <div className="p-6 border-b bg-gradient-to-br from-primary/10 to-primary/5">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-3">
-                <div className="bg-primary rounded-lg p-2">
-                  <Shield className="h-5 w-5 text-primary-foreground" />
+                <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg p-2 shadow-lg shadow-orange-500/20">
+                  <Shield className="h-5 w-5 text-white" />
                 </div>
                 <span className="text-lg font-bold text-foreground">Superadmin</span>
               </div>
@@ -158,8 +158,8 @@ const SuperadminLayout = ({ children }: SuperadminLayoutProps) => {
                   "flex items-center min-w-0",
                   sidebarCollapsed ? "justify-center" : "space-x-3"
                 )}>
-                  <div className="bg-primary rounded-lg p-2 flex-shrink-0">
-                    <Shield className="h-5 w-5 text-primary-foreground" />
+                  <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg p-2 flex-shrink-0 shadow-lg shadow-orange-500/20">
+                    <Shield className="h-5 w-5 text-white" />
                   </div>
                   {!sidebarCollapsed && (
                     <span className="text-lg font-bold text-foreground truncate">Superadmin</span>
@@ -299,7 +299,7 @@ const SuperadminLayout = ({ children }: SuperadminLayoutProps) => {
               <Menu className="h-4 w-4" />
             </Button>
             <div className="flex items-center space-x-2">
-              <Shield className="h-5 w-5 text-primary" />
+              <Shield className="h-5 w-5 text-orange-500" />
               <h1 className="text-lg font-semibold">Superadmin</h1>
             </div>
             <div className="flex items-center gap-1">

@@ -157,8 +157,8 @@ function requireAgentAuth(db) {
         });
       }
       
-      // Load account data
-      const account = await accountService.getAccountById(session.accountId);
+      // Load account data (get accountId from agent, not session)
+      const account = await accountService.getAccountById(agent.accountId);
       
       if (!account) {
         logger.error('Agent auth failed - Account not found', {
@@ -348,7 +348,7 @@ function optionalAgentAuth(db) {
       
       const { session } = validation;
       const agent = await agentService.getAgentById(session.agentId);
-      const account = await accountService.getAccountById(session.accountId);
+      const account = agent ? await accountService.getAccountById(agent.accountId) : null;
       
       if (agent && agent.status === 'active' && account && account.status === 'active') {
         const permissions = await agentService.getAgentPermissions(agent.id);

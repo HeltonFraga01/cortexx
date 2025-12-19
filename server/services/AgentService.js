@@ -654,6 +654,44 @@ class AgentService {
   // ==================== LOGIN ATTEMPT TRACKING ====================
 
   /**
+   * Check if agent is locked due to failed login attempts
+   * @param {string} agentId - Agent ID (UUID)
+   * @returns {Promise<boolean>} True if agent is locked
+   */
+  async isAgentLocked(agentId) {
+    try {
+      const queryFn = (query) => query
+        .select('locked_until')
+        .eq('id', agentId)
+        .single();
+
+      const { data: result, error } = await supabaseService.queryAsAdmin('agents', queryFn);
+
+      if (error) {
+        logger.error('Failed to check agent lock status', { error: error.message, agentId });
+        return false; // Fail open to allow login attempt
+      }
+
+      if (!result?.locked_until) {
+        return false;
+      }
+
+      const lockedUntil = new Date(result.locked_until);
+      const isLocked = lockedUntil > new Date();
+
+      if (!isLocked) {
+        // Lock has expired, reset it
+        await this.resetFailedLogins(agentId);
+      }
+
+      return isLocked;
+    } catch (error) {
+      logger.error('Failed to check agent lock status', { error: error.message, agentId });
+      return false; // Fail open to allow login attempt
+    }
+  }
+
+  /**
    * Record failed login attempt
    * @param {string} agentId - Agent ID (UUID)
    * @returns {Promise<Object>} Updated attempt info

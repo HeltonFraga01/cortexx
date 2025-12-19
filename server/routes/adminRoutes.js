@@ -270,37 +270,95 @@ router.get('/stats',
  * 
  * Responses:
  * - 200: Estatísticas retornadas com sucesso
- * - 401: Token administrativo inválido ou expirado
- * - 503: Serviço WuzAPI temporariamente indisponível
+ * - 401: Não autenticado como admin
  * - 500: Erro interno do servidor
  */
 router.get('/dashboard-stats',
   async (req, res) => {
     const startTime = Date.now();
     
+    // Verificar se está autenticado como admin
+    if (!req.session?.userId || req.session?.role !== 'admin') {
+      logger.error('Dashboard stats access denied - Not authenticated as admin', {
+        type: 'dashboard_stats_auth_failure',
+        sessionId: req.sessionID,
+        userId: req.session?.userId,
+        role: req.session?.role,
+        path: req.path,
+        ip: req.ip
+      });
+      
+      return res.status(401).json({
+        success: false,
+        error: 'Não autenticado como administrador',
+        code: 401,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    const token = req.session.userToken;
+    const isAgentLogin = !!req.session.agentRole; // Admin logged in via agent credentials
+    
+    // Formatar uptime em formato legível
+    const formatUptime = (seconds) => {
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = Math.floor(seconds % 60);
+      
+      if (hours > 0) {
+        return `${hours}h ${minutes}m ${secs}s`;
+      } else if (minutes > 0) {
+        return `${minutes}m ${secs}s`;
+      } else {
+        return `${secs}s`;
+      }
+    };
+    
+    // Converter bytes para MB
+    const bytesToMB = (bytes) => (bytes / 1024 / 1024).toFixed(2);
+    
     try {
-      // Verificar explicitamente se o token está na sessão
-      if (!req.session.userToken) {
-        logger.error('Token missing from session', {
-          type: 'token_missing',
-          sessionId: req.sessionID,
+      // Se admin logou via agent credentials e não tem token WUZAPI válido,
+      // retornar dados básicos sem tentar validar o token
+      if (!token || isAgentLogin) {
+        logger.info('Dashboard stats - agent login mode (no WUZAPI token validation)', {
           userId: req.session.userId,
-          role: req.session.role,
-          path: req.path,
-          method: req.method,
-          ip: req.ip
+          agentRole: req.session.agentRole,
+          accountId: req.session.accountId
         });
         
-        return res.status(401).json({
-          success: false,
-          error: 'Token de administrador não encontrado na sessão',
-          code: 'TOKEN_MISSING',
+        // Retornar estatísticas básicas do sistema sem dados de usuários WUZAPI
+        const memoryUsage = process.memoryUsage();
+        const uptime = process.uptime();
+        
+        return res.status(200).json({
+          success: true,
+          data: {
+            systemStatus: 'ok',
+            uptime: formatUptime(uptime),
+            version: '1.0.0',
+            totalUsers: 0,
+            connectedUsers: 0,
+            loggedInUsers: 0,
+            activeConnections: 0,
+            memoryStats: {
+              alloc_mb: bytesToMB(memoryUsage.heapUsed),
+              sys_mb: bytesToMB(memoryUsage.rss),
+              total_alloc_mb: bytesToMB(memoryUsage.heapTotal),
+              num_gc: 0,
+              heapUsed: memoryUsage.heapUsed,
+              heapTotal: memoryUsage.heapTotal,
+              rss: memoryUsage.rss,
+              external: memoryUsage.external
+            },
+            goroutines: 0,
+            users: [],
+            wuzapiConfigured: false,
+            message: 'WUZAPI token não configurado. Configure um token WUZAPI válido na conta para ver estatísticas de usuários.'
+          },
           timestamp: new Date().toISOString()
         });
       }
-      
-      // Obter token da sessão (já validado pelo middleware requireAdmin)
-      const token = req.session.userToken;
       
       // Validar token administrativo na WuzAPI
       const validationResult = await adminValidator.validateAdminToken(token);
@@ -316,24 +374,6 @@ router.get('/dashboard-stats',
         // Obter informações do sistema
         const memoryUsage = process.memoryUsage();
         const uptime = process.uptime();
-        
-        // Formatar uptime em formato legível
-        const formatUptime = (seconds) => {
-          const hours = Math.floor(seconds / 3600);
-          const minutes = Math.floor((seconds % 3600) / 60);
-          const secs = Math.floor(seconds % 60);
-          
-          if (hours > 0) {
-            return `${hours}h ${minutes}m ${secs}s`;
-          } else if (minutes > 0) {
-            return `${minutes}m ${secs}s`;
-          } else {
-            return `${secs}s`;
-          }
-        };
-        
-        // Converter bytes para MB
-        const bytesToMB = (bytes) => (bytes / 1024 / 1024).toFixed(2);
         
         // Preparar resposta com estatísticas
         const dashboardStats = {
@@ -355,7 +395,8 @@ router.get('/dashboard-stats',
             external: memoryUsage.external
           },
           goroutines: 0, // Node.js não usa goroutines
-          users: users.slice(0, 10) // Primeiros 10 usuários
+          users: users.slice(0, 10), // Primeiros 10 usuários
+          wuzapiConfigured: true
         };
         
         logger.info('Dashboard stats obtidas com sucesso', {
@@ -375,7 +416,43 @@ router.get('/dashboard-stats',
           timestamp: new Date().toISOString()
         });
       } else {
-        return errorHandler.handleValidationError(validationResult, req, res);
+        // Token WUZAPI inválido - retornar dados básicos em vez de erro
+        // Isso evita o loop de logout quando o token WUZAPI é inválido
+        logger.warn('WUZAPI token validation failed, returning basic stats', {
+          userId: req.session.userId,
+          error: validationResult.error
+        });
+        
+        const memoryUsage = process.memoryUsage();
+        const uptime = process.uptime();
+        
+        return res.status(200).json({
+          success: true,
+          data: {
+            systemStatus: 'ok',
+            uptime: formatUptime(uptime),
+            version: '1.0.0',
+            totalUsers: 0,
+            connectedUsers: 0,
+            loggedInUsers: 0,
+            activeConnections: 0,
+            memoryStats: {
+              alloc_mb: bytesToMB(memoryUsage.heapUsed),
+              sys_mb: bytesToMB(memoryUsage.rss),
+              total_alloc_mb: bytesToMB(memoryUsage.heapTotal),
+              num_gc: 0,
+              heapUsed: memoryUsage.heapUsed,
+              heapTotal: memoryUsage.heapTotal,
+              rss: memoryUsage.rss,
+              external: memoryUsage.external
+            },
+            goroutines: 0,
+            users: [],
+            wuzapiConfigured: false,
+            error: validationResult.error || 'Token WUZAPI inválido'
+          },
+          timestamp: new Date().toISOString()
+        });
       }
     } catch (error) {
       const responseTime = Date.now() - startTime;
@@ -390,10 +467,35 @@ router.get('/dashboard-stats',
         ip: req.ip
       });
 
-      return res.status(500).json({
-        success: false,
-        error: 'Erro ao buscar estatísticas do sistema',
-        code: 500,
+      // Return success with empty data instead of error to prevent logout loop
+      const memoryUsage = process.memoryUsage();
+      const uptime = process.uptime();
+      
+      return res.status(200).json({
+        success: true,
+        data: {
+          systemStatus: 'error',
+          uptime: formatUptime(uptime),
+          version: '1.0.0',
+          totalUsers: 0,
+          connectedUsers: 0,
+          loggedInUsers: 0,
+          activeConnections: 0,
+          memoryStats: {
+            alloc_mb: bytesToMB(memoryUsage.heapUsed),
+            sys_mb: bytesToMB(memoryUsage.rss),
+            total_alloc_mb: bytesToMB(memoryUsage.heapTotal),
+            num_gc: 0,
+            heapUsed: memoryUsage.heapUsed,
+            heapTotal: memoryUsage.heapTotal,
+            rss: memoryUsage.rss,
+            external: memoryUsage.external
+          },
+          goroutines: 0,
+          users: [],
+          wuzapiConfigured: false,
+          error: 'Erro ao conectar com WUZAPI'
+        },
         timestamp: new Date().toISOString()
       });
     }

@@ -2,12 +2,14 @@
  * MultiUserAuditService - Service for audit logging in multi-user system
  * 
  * Handles audit log creation and querying for agent actions.
+ * Uses SupabaseService for all database operations.
  * 
  * Requirements: 6.2, 6.4, 7.4
  */
 
 const { logger } = require('../utils/logger');
 const crypto = require('crypto');
+const supabaseService = require('./SupabaseService');
 
 // Action types
 const ACTION_TYPES = {
@@ -74,7 +76,8 @@ const RESOURCE_TYPES = {
 
 class MultiUserAuditService {
   constructor(db) {
-    this.db = db;
+    // db parameter kept for backward compatibility but not used
+    // All operations use SupabaseService directly
   }
 
   /**
@@ -103,23 +106,30 @@ class MultiUserAuditService {
       const id = this.generateId();
       const now = new Date().toISOString();
 
-      const sql = `
-        INSERT INTO audit_log (id, account_id, agent_id, action, resource_type, resource_id, details, ip_address, user_agent, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
-
-      await this.db.query(sql, [
+      const auditData = {
         id,
-        data.accountId,
-        data.agentId || null,
-        data.action,
-        data.resourceType,
-        data.resourceId || null,
-        JSON.stringify(data.details || {}),
-        data.ipAddress || null,
-        data.userAgent || null,
-        now
-      ]);
+        account_id: data.accountId,
+        agent_id: data.agentId || null,
+        action: data.action,
+        resource_type: data.resourceType,
+        resource_id: data.resourceId || null,
+        old_values: data.oldValues || null,
+        new_values: data.details || data.newValues || {},
+        ip_address: data.ipAddress || null,
+        user_agent: data.userAgent || null,
+        created_at: now
+      };
+
+      const { error } = await supabaseService.insert('audit_log', auditData);
+
+      if (error) {
+        // Don't throw - audit logging should not break the main operation
+        logger.error('Failed to create audit log', { 
+          error: error.message, 
+          action: data.action 
+        });
+        return null;
+      }
 
       logger.debug('Audit log created', { 
         auditId: id, 
@@ -162,74 +172,84 @@ class MultiUserAuditService {
    */
   async queryLogs(accountId, filters = {}) {
     try {
-      let sql = 'SELECT * FROM audit_log WHERE account_id = ?';
-      let countSql = 'SELECT COUNT(*) as total FROM audit_log WHERE account_id = ?';
-      const params = [accountId];
-      const countParams = [accountId];
-
-      if (filters.agentId) {
-        sql += ' AND agent_id = ?';
-        countSql += ' AND agent_id = ?';
-        params.push(filters.agentId);
-        countParams.push(filters.agentId);
-      }
-
-      if (filters.action) {
-        sql += ' AND action = ?';
-        countSql += ' AND action = ?';
-        params.push(filters.action);
-        countParams.push(filters.action);
-      }
-
-      if (filters.resourceType) {
-        sql += ' AND resource_type = ?';
-        countSql += ' AND resource_type = ?';
-        params.push(filters.resourceType);
-        countParams.push(filters.resourceType);
-      }
-
-      if (filters.resourceId) {
-        sql += ' AND resource_id = ?';
-        countSql += ' AND resource_id = ?';
-        params.push(filters.resourceId);
-        countParams.push(filters.resourceId);
-      }
-
-      if (filters.startDate) {
-        sql += ' AND created_at >= ?';
-        countSql += ' AND created_at >= ?';
-        params.push(filters.startDate);
-        countParams.push(filters.startDate);
-      }
-
-      if (filters.endDate) {
-        sql += ' AND created_at <= ?';
-        countSql += ' AND created_at <= ?';
-        params.push(filters.endDate);
-        countParams.push(filters.endDate);
-      }
-
-      sql += ' ORDER BY created_at DESC';
-
       const limit = filters.limit || 50;
       const offset = filters.offset || 0;
-      sql += ' LIMIT ? OFFSET ?';
-      params.push(limit, offset);
+
+      // Build query for logs
+      const queryFn = (query) => {
+        let q = query.select('*').eq('account_id', accountId);
+
+        if (filters.agentId) {
+          q = q.eq('agent_id', filters.agentId);
+        }
+        if (filters.action) {
+          q = q.eq('action', filters.action);
+        }
+        if (filters.resourceType) {
+          q = q.eq('resource_type', filters.resourceType);
+        }
+        if (filters.resourceId) {
+          q = q.eq('resource_id', filters.resourceId);
+        }
+        if (filters.startDate) {
+          q = q.gte('created_at', filters.startDate);
+        }
+        if (filters.endDate) {
+          q = q.lte('created_at', filters.endDate);
+        }
+
+        q = q.order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1);
+
+        return q;
+      };
+
+      // Build query for count
+      const countQueryFn = (query) => {
+        let q = query.select('*', { count: 'exact', head: true })
+          .eq('account_id', accountId);
+
+        if (filters.agentId) {
+          q = q.eq('agent_id', filters.agentId);
+        }
+        if (filters.action) {
+          q = q.eq('action', filters.action);
+        }
+        if (filters.resourceType) {
+          q = q.eq('resource_type', filters.resourceType);
+        }
+        if (filters.resourceId) {
+          q = q.eq('resource_id', filters.resourceId);
+        }
+        if (filters.startDate) {
+          q = q.gte('created_at', filters.startDate);
+        }
+        if (filters.endDate) {
+          q = q.lte('created_at', filters.endDate);
+        }
+
+        return q;
+      };
 
       const [logsResult, countResult] = await Promise.all([
-        this.db.query(sql, params),
-        this.db.query(countSql, countParams)
+        supabaseService.queryAsAdmin('audit_log', queryFn),
+        supabaseService.queryAsAdmin('audit_log', countQueryFn)
       ]);
 
-      const total = countResult.rows[0]?.total || 0;
+      if (logsResult.error) {
+        throw logsResult.error;
+      }
+
+      const logs = logsResult.data || [];
+      const total = countResult.count || 0;
 
       return {
-        logs: logsResult.rows.map(row => this.formatAuditLog(row)),
+        logs: logs.map(row => this.formatAuditLog(row)),
         pagination: {
           total,
           limit,
           offset,
-          hasMore: offset + logsResult.rows.length < total
+          hasMore: offset + logs.length < total
         }
       };
     } catch (error) {
@@ -245,14 +265,16 @@ class MultiUserAuditService {
    */
   async getLogById(logId) {
     try {
-      const sql = 'SELECT * FROM audit_log WHERE id = ?';
-      const result = await this.db.query(sql, [logId]);
+      const { data: log, error } = await supabaseService.getById('audit_log', logId);
 
-      if (result.rows.length === 0) {
-        return null;
+      if (error) {
+        if (error.code === 'PGRST116' || error.code === 'ROW_NOT_FOUND') {
+          return null;
+        }
+        throw error;
       }
 
-      return this.formatAuditLog(result.rows[0]);
+      return log ? this.formatAuditLog(log) : null;
     } catch (error) {
       logger.error('Failed to get audit log', { error: error.message, logId });
       throw error;
@@ -267,14 +289,19 @@ class MultiUserAuditService {
    */
   async getAgentActivity(agentId, limit = 20) {
     try {
-      const sql = `
-        SELECT * FROM audit_log 
-        WHERE agent_id = ? 
-        ORDER BY created_at DESC 
-        LIMIT ?
-      `;
-      const result = await this.db.query(sql, [agentId, limit]);
-      return result.rows.map(row => this.formatAuditLog(row));
+      const queryFn = (query) => query
+        .select('*')
+        .eq('agent_id', agentId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      const { data: logs, error } = await supabaseService.queryAsAdmin('audit_log', queryFn);
+
+      if (error) {
+        throw error;
+      }
+
+      return (logs || []).map(row => this.formatAuditLog(row));
     } catch (error) {
       logger.error('Failed to get agent activity', { error: error.message, agentId });
       throw error;
@@ -290,14 +317,20 @@ class MultiUserAuditService {
    */
   async getResourceActivity(resourceType, resourceId, limit = 50) {
     try {
-      const sql = `
-        SELECT * FROM audit_log 
-        WHERE resource_type = ? AND resource_id = ? 
-        ORDER BY created_at DESC 
-        LIMIT ?
-      `;
-      const result = await this.db.query(sql, [resourceType, resourceId, limit]);
-      return result.rows.map(row => this.formatAuditLog(row));
+      const queryFn = (query) => query
+        .select('*')
+        .eq('resource_type', resourceType)
+        .eq('resource_id', resourceId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      const { data: logs, error } = await supabaseService.queryAsAdmin('audit_log', queryFn);
+
+      if (error) {
+        throw error;
+      }
+
+      return (logs || []).map(row => this.formatAuditLog(row));
     } catch (error) {
       logger.error('Failed to get resource activity', { error: error.message, resourceType, resourceId });
       throw error;
@@ -315,14 +348,19 @@ class MultiUserAuditService {
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
 
-      const sql = 'DELETE FROM audit_log WHERE account_id = ? AND created_at < ?';
-      const result = await this.db.query(sql, [accountId, cutoffDate.toISOString()]);
+      const queryFn = (query) => query
+        .delete()
+        .eq('account_id', accountId)
+        .lt('created_at', cutoffDate.toISOString());
 
-      if (result.rowCount > 0) {
-        logger.info('Old audit logs cleaned up', { accountId, deleted: result.rowCount });
+      const { error } = await supabaseService.queryAsAdmin('audit_log', queryFn);
+
+      if (error) {
+        throw error;
       }
 
-      return result.rowCount;
+      logger.info('Old audit logs cleaned up', { accountId, retentionDays });
+      return 1; // Supabase doesn't return count for delete
     } catch (error) {
       logger.error('Failed to cleanup old audit logs', { error: error.message, accountId });
       throw error;
@@ -388,7 +426,9 @@ class MultiUserAuditService {
       action: row.action,
       resourceType: row.resource_type,
       resourceId: row.resource_id,
-      details: this.parseJSON(row.details, {}),
+      oldValues: this.parseJSON(row.old_values, {}),
+      newValues: this.parseJSON(row.new_values, {}),
+      details: this.parseJSON(row.new_values, {}), // Alias for backward compatibility
       ipAddress: row.ip_address,
       userAgent: row.user_agent,
       createdAt: row.created_at

@@ -64,6 +64,9 @@ const tenantBrandingRoutes = require('./tenantBrandingRoutes');
 const tenantPlanRoutes = require('./tenantPlanRoutes');
 const tenantAccountRoutes = require('./tenantAccountRoutes');
 
+// Auth Routes
+const authRoutes = require('./authRoutes');
+
 // Public Routes
 const publicRoutes = require('./publicRoutes');
 
@@ -79,6 +82,7 @@ logger.debug('contactImportRoutes loaded', {
 function setupRoutes(app) {
   // Public Routes (sem autenticação) - devem vir ANTES das rotas protegidas
   app.use('/api/branding', brandingRoutes);
+  app.use('/api/auth', authRoutes);
   app.use('/api/public', publicRoutes);
   
   // Superadmin Routes (mixed auth - login is public, others require auth)
@@ -162,6 +166,7 @@ function setupRoutes(app) {
       hasSession: !!req.session,
       userId: req.session?.userId || null,
       role: req.session?.role || null,
+      agentRole: req.session?.agentRole || null,
       hasToken: !!req.session?.userToken,
       path: req.path,
       method: req.method,
@@ -184,45 +189,19 @@ function setupRoutes(app) {
       });
     }
     
-    // Log quando token está ausente da sessão
-    if (!req.session.userToken) {
-      logger.error('Token missing from session on dashboard-stats', {
-        type: 'token_missing',
-        session: sessionState,
-        userAgent: req.get('User-Agent')
-      });
-    }
-    
     next();
   }, async (req, res) => {
-    // Verificar explicitamente se o token está na sessão
-    if (!req.session.userToken) {
-      logger.error('Token missing from session on dashboard-stats', {
-        type: 'token_missing',
-        sessionId: req.sessionID,
-        userId: req.session.userId,
-        role: req.session.role,
-        path: req.path,
-        method: req.method,
-        ip: req.ip
-      });
-      
-      return res.status(401).json({
-        success: false,
-        error: 'Token de administrador não encontrado na sessão',
-        code: 'TOKEN_MISSING',
-        timestamp: new Date().toISOString()
-      });
-    }
-    
     const adminToken = req.session.userToken;
+    const isAgentLogin = !!req.session.agentRole; // Admin logged in via agent credentials
     
-    // Log de extração de token bem-sucedida
-    logger.debug('Token extracted from session for dashboard-stats', {
-      type: 'token_extracted',
+    // Log de extração de token
+    logger.debug('Dashboard stats request', {
+      type: 'dashboard_stats',
       sessionId: req.sessionID,
       userId: req.session.userId,
-      hasToken: true,
+      hasToken: !!adminToken,
+      isAgentLogin,
+      agentRole: req.session.agentRole,
       path: req.path
     });
     
@@ -230,12 +209,66 @@ function setupRoutes(app) {
       const axios = require('axios');
       const wuzapiBaseUrl = process.env.WUZAPI_BASE_URL || 'https://wzapi.wasend.com.br';
       
-      // Buscar health da API
-      const healthResponse = await axios.get(`${wuzapiBaseUrl}/health`, {
-        timeout: 5000
-      });
+      // Buscar health da API (não requer token)
+      let healthData = {};
+      try {
+        const healthResponse = await axios.get(`${wuzapiBaseUrl}/health`, {
+          timeout: 5000
+        });
+        healthData = healthResponse.data || {};
+      } catch (healthError) {
+        logger.warn('Failed to fetch WUZAPI health', { error: healthError.message });
+      }
       
-      // Buscar lista de usuários
+      // Se admin logou via agent credentials e não tem token WUZAPI válido,
+      // retornar dados básicos sem tentar validar o token
+      if (!adminToken || isAgentLogin) {
+        logger.info('Admin dashboard stats - agent login mode (no WUZAPI token validation)', {
+          userId: req.session.userId,
+          agentRole: req.session.agentRole,
+          accountId: req.session.accountId
+        });
+        
+        // Retornar estatísticas básicas do sistema sem dados de usuários WUZAPI
+        const memoryUsage = process.memoryUsage();
+        const uptime = process.uptime();
+        
+        const formatUptime = (seconds) => {
+          const hours = Math.floor(seconds / 3600);
+          const minutes = Math.floor((seconds % 3600) / 60);
+          const secs = Math.floor(seconds % 60);
+          if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
+          if (minutes > 0) return `${minutes}m ${secs}s`;
+          return `${secs}s`;
+        };
+        
+        const bytesToMB = (bytes) => (bytes / 1024 / 1024).toFixed(2);
+        
+        return res.json({
+          success: true,
+          data: {
+            systemStatus: healthData.status || 'ok',
+            uptime: healthData.uptime || formatUptime(uptime),
+            version: healthData.version || '1.0.0',
+            totalUsers: 0,
+            connectedUsers: 0,
+            loggedInUsers: 0,
+            activeConnections: healthData.active_connections || 0,
+            memoryStats: healthData.memory_stats || {
+              alloc_mb: bytesToMB(memoryUsage.heapUsed),
+              sys_mb: bytesToMB(memoryUsage.rss),
+              total_alloc_mb: bytesToMB(memoryUsage.heapTotal),
+              num_gc: 0
+            },
+            goroutines: healthData.goroutines || 0,
+            users: [],
+            wuzapiConfigured: false,
+            message: 'WUZAPI token não configurado. Configure um token WUZAPI válido na conta para ver estatísticas de usuários.'
+          }
+        });
+      }
+      
+      // Buscar lista de usuários com token WUZAPI
       const usersResponse = await axios.get(`${wuzapiBaseUrl}/admin/users`, {
         headers: {
           'Authorization': adminToken,
@@ -244,7 +277,6 @@ function setupRoutes(app) {
         timeout: 5000
       });
       
-      const healthData = healthResponse.data || {};
       const usersData = usersResponse.data?.data || [];
       
       // Calcular estatísticas
@@ -267,7 +299,8 @@ function setupRoutes(app) {
           num_gc: 0
         },
         goroutines: healthData.goroutines || 0,
-        users: usersData.slice(0, 10)
+        users: usersData.slice(0, 10),
+        wuzapiConfigured: true
       };
       
       res.json({
@@ -281,6 +314,7 @@ function setupRoutes(app) {
         endpoint: '/api/admin/dashboard-stats'
       });
       
+      // Return success with empty data instead of error to prevent logout loop
       res.json({
         success: true,
         data: {
@@ -298,7 +332,9 @@ function setupRoutes(app) {
             num_gc: 0
           },
           goroutines: 0,
-          users: []
+          users: [],
+          wuzapiConfigured: false,
+          error: 'Erro ao conectar com WUZAPI'
         }
       });
     }

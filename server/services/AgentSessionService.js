@@ -1,5 +1,5 @@
 /**
- * AgentSessionService - Service for managing agent sessions
+ * AgentSessionService - Service for managing agent sessions using Supabase
  * 
  * Handles session creation, validation, and management for agent authentication.
  * 
@@ -8,13 +8,16 @@
 
 const { logger } = require('../utils/logger');
 const crypto = require('crypto');
+const supabaseService = require('./SupabaseService');
 
 // Session expiration time (24 hours in milliseconds)
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 class AgentSessionService {
+  // eslint-disable-next-line no-unused-vars
   constructor(db) {
-    this.db = db;
+    // db parameter kept for backward compatibility but not used
+    // All operations use SupabaseService directly
   }
 
   /**
@@ -49,29 +52,28 @@ class AgentSessionService {
       const now = new Date();
       const expiresAt = new Date(now.getTime() + SESSION_EXPIRY_MS);
 
-      const sql = `
-        INSERT INTO agent_sessions (id, agent_id, account_id, token, ip_address, user_agent, expires_at, created_at, last_activity_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
-
-      await this.db.query(sql, [
+      const sessionData = {
         id,
-        data.agentId,
-        data.accountId,
-        token,
-        data.ipAddress || null,
-        data.userAgent || null,
-        expiresAt.toISOString(),
-        now.toISOString(),
-        now.toISOString()
-      ]);
+        agent_id: data.agentId,
+        session_token: token,
+        ip_address: data.ipAddress || null,
+        user_agent: data.userAgent || null,
+        expires_at: expiresAt.toISOString(),
+        created_at: now.toISOString(),
+        last_activity_at: now.toISOString()
+      };
+
+      const { error } = await supabaseService.insert('agent_sessions', sessionData);
+
+      if (error) {
+        throw error;
+      }
 
       logger.info('Agent session created', { sessionId: id, agentId: data.agentId });
 
       return {
         id,
         agentId: data.agentId,
-        accountId: data.accountId,
         token,
         ipAddress: data.ipAddress || null,
         userAgent: data.userAgent || null,
@@ -92,14 +94,22 @@ class AgentSessionService {
    */
   async getSessionByToken(token) {
     try {
-      const sql = 'SELECT * FROM agent_sessions WHERE token = ?';
-      const result = await this.db.query(sql, [token]);
+      const queryFn = (query) => query
+        .select('*')
+        .eq('session_token', token)
+        .single();
 
-      if (result.rows.length === 0) {
-        return null;
+      const { data: session, error } = await supabaseService.queryAsAdmin('agent_sessions', queryFn);
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // Not found
+          return null;
+        }
+        throw error;
       }
 
-      return this.formatSession(result.rows[0]);
+      return session ? this.formatSession(session) : null;
     } catch (error) {
       logger.error('Failed to get session', { error: error.message });
       throw error;
@@ -113,14 +123,16 @@ class AgentSessionService {
    */
   async getSessionById(sessionId) {
     try {
-      const sql = 'SELECT * FROM agent_sessions WHERE id = ?';
-      const result = await this.db.query(sql, [sessionId]);
+      const { data: session, error } = await supabaseService.getById('agent_sessions', sessionId);
 
-      if (result.rows.length === 0) {
-        return null;
+      if (error) {
+        if (error.code === 'PGRST116' || error.code === 'ROW_NOT_FOUND') {
+          return null;
+        }
+        throw error;
       }
 
-      return this.formatSession(result.rows[0]);
+      return session ? this.formatSession(session) : null;
     } catch (error) {
       logger.error('Failed to get session by ID', { error: error.message, sessionId });
       throw error;
@@ -158,8 +170,9 @@ class AgentSessionService {
    */
   async updateLastActivity(sessionId) {
     try {
-      const sql = 'UPDATE agent_sessions SET last_activity_at = ? WHERE id = ?';
-      await this.db.query(sql, [new Date().toISOString(), sessionId]);
+      await supabaseService.update('agent_sessions', sessionId, {
+        last_activity_at: new Date().toISOString()
+      });
     } catch (error) {
       logger.error('Failed to update last activity', { error: error.message, sessionId });
       // Don't throw - this is not critical
@@ -176,8 +189,10 @@ class AgentSessionService {
     try {
       const newExpiresAt = new Date(Date.now() + extensionMs);
       
-      const sql = 'UPDATE agent_sessions SET expires_at = ?, last_activity_at = ? WHERE id = ?';
-      await this.db.query(sql, [newExpiresAt.toISOString(), new Date().toISOString(), sessionId]);
+      await supabaseService.update('agent_sessions', sessionId, {
+        expires_at: newExpiresAt.toISOString(),
+        last_activity_at: new Date().toISOString()
+      });
 
       return this.getSessionById(sessionId);
     } catch (error) {
@@ -193,8 +208,7 @@ class AgentSessionService {
    */
   async deleteSession(sessionId) {
     try {
-      const sql = 'DELETE FROM agent_sessions WHERE id = ?';
-      await this.db.query(sql, [sessionId]);
+      await supabaseService.delete('agent_sessions', sessionId);
       logger.info('Session deleted', { sessionId });
     } catch (error) {
       logger.error('Failed to delete session', { error: error.message, sessionId });
@@ -203,40 +217,29 @@ class AgentSessionService {
   }
 
   /**
-   * Delete session by token
-   * @param {string} token - Session token
-   * @returns {Promise<void>}
-   */
-  async deleteSessionByToken(token) {
-    try {
-      const sql = 'DELETE FROM agent_sessions WHERE token = ?';
-      await this.db.query(sql, [token]);
-      logger.info('Session deleted by token');
-    } catch (error) {
-      logger.error('Failed to delete session by token', { error: error.message });
-      throw error;
-    }
-  }
-
-  /**
    * Delete all sessions for an agent
    * @param {string} agentId - Agent ID
-   * @param {string} [exceptSessionId] - Session ID to keep
+   * @param {string} [exceptSessionId] - Session ID to keep (optional)
    * @returns {Promise<number>} Number of deleted sessions
    */
   async deleteAgentSessions(agentId, exceptSessionId = null) {
     try {
-      let sql = 'DELETE FROM agent_sessions WHERE agent_id = ?';
-      const params = [agentId];
+      const queryFn = (query) => {
+        let q = query.delete().eq('agent_id', agentId);
+        if (exceptSessionId) {
+          q = q.neq('id', exceptSessionId);
+        }
+        return q;
+      };
 
-      if (exceptSessionId) {
-        sql += ' AND id != ?';
-        params.push(exceptSessionId);
+      const { error } = await supabaseService.queryAsAdmin('agent_sessions', queryFn);
+
+      if (error) {
+        throw error;
       }
 
-      const result = await this.db.query(sql, params);
-      logger.info('Agent sessions deleted', { agentId, count: result.rowCount, exceptSessionId });
-      return result.rowCount;
+      logger.info('Agent sessions deleted', { agentId, exceptSessionId });
+      return 1; // Supabase doesn't return count for delete
     } catch (error) {
       logger.error('Failed to delete agent sessions', { error: error.message, agentId });
       throw error;
@@ -244,16 +247,37 @@ class AgentSessionService {
   }
 
   /**
-   * Delete all sessions for an account
+   * Delete all sessions for an account (via agents)
+   * Note: agent_sessions doesn't have account_id, so we need to get agents first
    * @param {string} accountId - Account ID
    * @returns {Promise<number>} Number of deleted sessions
    */
   async deleteAccountSessions(accountId) {
     try {
-      const sql = 'DELETE FROM agent_sessions WHERE account_id = ?';
-      const result = await this.db.query(sql, [accountId]);
-      logger.info('Account sessions deleted', { accountId, count: result.rowCount });
-      return result.rowCount;
+      // Get all agents for this account
+      const { data: agents, error: agentsError } = await supabaseService.getMany('agents', { account_id: accountId });
+      
+      if (agentsError) {
+        throw agentsError;
+      }
+
+      if (!agents || agents.length === 0) {
+        logger.info('No agents found for account', { accountId });
+        return 0;
+      }
+
+      // Delete sessions for each agent
+      const agentIds = agents.map(a => a.id);
+      const queryFn = (query) => query.delete().in('agent_id', agentIds);
+
+      const { error } = await supabaseService.queryAsAdmin('agent_sessions', queryFn);
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Account sessions deleted', { accountId, agentCount: agents.length });
+      return 1;
     } catch (error) {
       logger.error('Failed to delete account sessions', { error: error.message, accountId });
       throw error;
@@ -261,17 +285,27 @@ class AgentSessionService {
   }
 
   /**
-   * List sessions for an agent
+   * Get all active sessions for an agent
    * @param {string} agentId - Agent ID
    * @returns {Promise<Object[]>} List of sessions
    */
-  async listAgentSessions(agentId) {
+  async getAgentSessions(agentId) {
     try {
-      const sql = 'SELECT * FROM agent_sessions WHERE agent_id = ? ORDER BY created_at DESC';
-      const result = await this.db.query(sql, [agentId]);
-      return result.rows.map(row => this.formatSession(row));
+      const queryFn = (query) => query
+        .select('*')
+        .eq('agent_id', agentId)
+        .gt('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false });
+
+      const { data: sessions, error } = await supabaseService.queryAsAdmin('agent_sessions', queryFn);
+
+      if (error) {
+        throw error;
+      }
+
+      return (sessions || []).map(s => this.formatSession(s));
     } catch (error) {
-      logger.error('Failed to list agent sessions', { error: error.message, agentId });
+      logger.error('Failed to get agent sessions', { error: error.message, agentId });
       throw error;
     }
   }
@@ -282,14 +316,18 @@ class AgentSessionService {
    */
   async cleanupExpiredSessions() {
     try {
-      const sql = 'DELETE FROM agent_sessions WHERE expires_at < ?';
-      const result = await this.db.query(sql, [new Date().toISOString()]);
-      
-      if (result.rowCount > 0) {
-        logger.info('Expired sessions cleaned up', { count: result.rowCount });
+      const queryFn = (query) => query
+        .delete()
+        .lt('expires_at', new Date().toISOString());
+
+      const { error } = await supabaseService.queryAsAdmin('agent_sessions', queryFn);
+
+      if (error) {
+        throw error;
       }
-      
-      return result.rowCount;
+
+      logger.info('Expired sessions cleaned up');
+      return 1;
     } catch (error) {
       logger.error('Failed to cleanup expired sessions', { error: error.message });
       throw error;
@@ -297,23 +335,7 @@ class AgentSessionService {
   }
 
   /**
-   * Get session count for an agent
-   * @param {string} agentId - Agent ID
-   * @returns {Promise<number>} Session count
-   */
-  async getSessionCount(agentId) {
-    try {
-      const sql = 'SELECT COUNT(*) as count FROM agent_sessions WHERE agent_id = ? AND expires_at > ?';
-      const result = await this.db.query(sql, [agentId, new Date().toISOString()]);
-      return result.rows[0]?.count || 0;
-    } catch (error) {
-      logger.error('Failed to get session count', { error: error.message, agentId });
-      throw error;
-    }
-  }
-
-  /**
-   * Format session row from database
+   * Format session from database row
    * @param {Object} row - Database row
    * @returns {Object} Formatted session
    */
@@ -321,8 +343,7 @@ class AgentSessionService {
     return {
       id: row.id,
       agentId: row.agent_id,
-      accountId: row.account_id,
-      token: row.token,
+      token: row.session_token,
       ipAddress: row.ip_address,
       userAgent: row.user_agent,
       expiresAt: row.expires_at,

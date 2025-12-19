@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useBrandingConfig } from '@/hooks/useBranding';
 import ThemeToggle from '@/components/ui-custom/ThemeToggle';
 import { Loader2, Shield } from 'lucide-react';
+import { loginAgent, setAgentToken, setAgentData } from '@/services/agent-auth';
 
 const LoginPage = () => {
   const [userToken, setUserToken] = useState('');
@@ -17,7 +18,7 @@ const LoginPage = () => {
   const [adminPassword, setAdminPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   
-  const { login, loginSuperadmin, user } = useAuth();
+  const { login, loginSuperadmin, loginAsAdmin, user } = useAuth();
   const brandingConfig = useBrandingConfig();
   const navigate = useNavigate();
 
@@ -63,14 +64,65 @@ const LoginPage = () => {
 
     setIsLoading(true);
     try {
-      const success = await loginSuperadmin(adminEmail, adminPassword);
-      if (success) {
-        toast.success('Login realizado com sucesso!');
-        navigate('/superadmin/dashboard');
-      } else {
+      // Try admin login first (creates HTTP-only session for /admin routes)
+      const response = await fetch('/api/auth/admin-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: adminEmail, password: adminPassword }),
+        credentials: 'include'
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        // Admin login successful - session created on server
+        // Update AuthContext with user data
+        loginAsAdmin({
+          id: data.user.id,
+          name: data.user.name,
+          token: data.user.token
+        });
+        
+        // Refresh CSRF token after login
+        try {
+          const { backendApi } = await import('@/services/api-client');
+          await backendApi.refreshCsrfToken();
+        } catch (csrfError) {
+          console.error('Erro ao renovar CSRF (não crítico):', csrfError);
+        }
+        
+        toast.success(`Bem-vindo, ${data.user.name}!`);
+        navigate('/admin');
+        return;
+      }
+
+      // If admin login fails with NOT_ADMIN, try agent login for regular agents
+      if (data.code === 'NOT_ADMIN') {
+        try {
+          const result = await loginAgent(adminEmail, adminPassword);
+          toast.success(`Bem-vindo, ${result.agent.name}!`);
+          navigate('/agent');
+          return;
+        } catch {
+          toast.error('Credenciais inválidas');
+          return;
+        }
+      }
+
+      // If admin login fails, try superadmin login
+      try {
+        const success = await loginSuperadmin(adminEmail, adminPassword);
+        if (success) {
+          toast.success('Login realizado com sucesso!');
+          navigate('/superadmin/dashboard');
+        } else {
+          toast.error('Credenciais inválidas');
+        }
+      } catch {
         toast.error('Credenciais inválidas');
       }
     } catch (error) {
+      console.error('Admin login error:', error);
       toast.error('Erro ao fazer login');
     } finally {
       setIsLoading(false);

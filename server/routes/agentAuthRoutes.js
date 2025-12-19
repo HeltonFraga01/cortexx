@@ -159,7 +159,7 @@ router.post('/login', skipCsrf, async (req, res) => {
       }
     });
   } catch (error) {
-    logger.error('Login failed', { error: error.message, ip: req.ip });
+    logger.error('Login failed', { error: error.message, stack: error.stack, ip: req.ip });
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });

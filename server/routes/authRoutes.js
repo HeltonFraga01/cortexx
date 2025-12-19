@@ -3,6 +3,185 @@ const router = express.Router();
 const { logger } = require('../utils/logger');
 const securityLogger = require('../utils/securityLogger');
 const wuzapiClient = require('../utils/wuzapiClient');
+const AgentService = require('../services/AgentService');
+const AccountService = require('../services/AccountService');
+
+// Lazy initialization of services
+let agentService = null;
+let accountService = null;
+
+function initServices(db) {
+  if (!agentService) {
+    agentService = new AgentService(db);
+    accountService = new AccountService(db);
+  }
+}
+
+/**
+ * POST /api/auth/admin-login
+ * 
+ * Login de administrador via email/senha (Agent com role owner/administrator)
+ * Cria sessão HTTP-only para acesso às rotas /admin
+ */
+router.post('/admin-login', async (req, res) => {
+  const { email, password } = req.body;
+  
+  try {
+    initServices(req.app.locals.db);
+    
+    if (!email || !password) {
+      return res.status(400).json({
+        error: 'Email e senha são obrigatórios',
+        code: 'INVALID_INPUT'
+      });
+    }
+    
+    // Find agent by email
+    const agent = await agentService.getAgentByEmailOnly(email);
+    
+    if (!agent) {
+      securityLogger.logLoginAttempt(false, {
+        ip: req.ip,
+        reason: 'Agent not found',
+        email
+      });
+      return res.status(401).json({
+        error: 'Credenciais inválidas',
+        code: 'INVALID_CREDENTIALS'
+      });
+    }
+    
+    // Check if agent has admin role (owner or administrator)
+    if (agent.role !== 'owner' && agent.role !== 'administrator') {
+      securityLogger.logLoginAttempt(false, {
+        ip: req.ip,
+        reason: 'Not an admin role',
+        email,
+        role: agent.role
+      });
+      return res.status(403).json({
+        error: 'Acesso negado. Apenas administradores podem acessar.',
+        code: 'NOT_ADMIN'
+      });
+    }
+    
+    // Check agent status
+    if (agent.status !== 'active') {
+      return res.status(403).json({
+        error: 'Conta desativada',
+        code: 'AGENT_INACTIVE'
+      });
+    }
+    
+    // Verify password
+    const isValidPassword = await agentService.verifyPassword(password, agent.passwordHash);
+    
+    if (!isValidPassword) {
+      await agentService.recordFailedLogin(agent.id);
+      securityLogger.logLoginAttempt(false, {
+        ip: req.ip,
+        reason: 'Invalid password',
+        email
+      });
+      return res.status(401).json({
+        error: 'Credenciais inválidas',
+        code: 'INVALID_CREDENTIALS'
+      });
+    }
+    
+    // Reset failed login attempts
+    await agentService.resetFailedLogins(agent.id);
+    
+    // Get account info
+    const account = await accountService.getAccountById(agent.accountId);
+    
+    if (!account || account.status !== 'active') {
+      return res.status(403).json({
+        error: 'Conta desativada',
+        code: 'ACCOUNT_INACTIVE'
+      });
+    }
+    
+    // Create session for admin access
+    // Destroy existing session first
+    if (req.session?.userId) {
+      logger.info('Destroying existing session before admin login', {
+        oldUserId: req.session.userId,
+        oldRole: req.session.role,
+        ip: req.ip
+      });
+    }
+    
+    // Regenerate session
+    await new Promise((resolve, reject) => {
+      req.session.regenerate((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    
+    // Set session data for admin access
+    // Use account's wuzapi_token as the userToken for API calls
+    req.session.userId = agent.id;
+    req.session.userToken = account.wuzapiToken; // WUZAPI token from account
+    req.session.userName = agent.name;
+    req.session.userEmail = agent.email;
+    req.session.role = 'admin';
+    req.session.agentRole = agent.role; // Store original agent role
+    req.session.accountId = account.id;
+    req.session.accountName = account.name;
+    req.session.tenantId = account.tenantId;
+    req.session.createdAt = new Date().toISOString();
+    req.session.lastActivity = new Date().toISOString();
+    
+    // Save session
+    await new Promise((resolve, reject) => {
+      req.session.save((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    
+    securityLogger.logLoginAttempt(true, {
+      ip: req.ip,
+      userId: agent.id,
+      role: 'admin',
+      email
+    });
+    
+    logger.info('Admin logged in via agent credentials', {
+      agentId: agent.id,
+      accountId: account.id,
+      role: agent.role,
+      ip: req.ip
+    });
+    
+    res.json({
+      success: true,
+      user: {
+        id: agent.id,
+        role: 'admin',
+        token: account.wuzapiToken,
+        name: agent.name,
+        email: agent.email,
+        accountId: account.id,
+        accountName: account.name
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Admin login error', {
+      error: error.message,
+      stack: error.stack,
+      ip: req.ip
+    });
+    
+    res.status(500).json({
+      error: 'Erro interno do servidor',
+      code: 'SERVER_ERROR'
+    });
+  }
+});
 
 /**
  * POST /api/auth/login
