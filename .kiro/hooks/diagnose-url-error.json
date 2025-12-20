@@ -1,0 +1,8 @@
+{
+  "id": "diagnose-url-error",
+  "name": "Diagnosticar Erro por URL",
+  "description": "Quando uma mensagem contém URL e descrição de erro, usa MCP para reproduzir, diagnosticar, criar diagrama Mermaid e aplicar correções",
+  "eventType": "promptSubmit",
+  "hookAction": "runCommand",
+  "command": "echo 'Iniciando diagnóstico de erro via MCP...'"
+}

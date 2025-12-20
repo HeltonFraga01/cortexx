@@ -102,7 +102,7 @@ export async function getConversations(
   }
 }
 
-export async function getConversation(conversationId: number): Promise<Conversation> {
+export async function getConversation(conversationId: string | number): Promise<Conversation> {
   const response = await backendApi.get(`${BASE_URL}/conversations/${conversationId}`)
   return extractAndTransform<Conversation>(response)
 }
@@ -345,6 +345,17 @@ export async function searchMessagesInConversation(
     `${BASE_URL}/conversations/${conversationId}/messages/search?q=${encodeURIComponent(query)}&limit=${limit}`
   )
   return extractData<SearchResult[]>(response)
+}
+
+/**
+ * Delete a message from a conversation
+ * @param messageId - Message ID to delete
+ */
+export async function deleteMessage(messageId: string | number): Promise<void> {
+  const response = await backendApi.delete(`${BASE_URL}/messages/${messageId}`)
+  if (!response.success) {
+    throw new Error(response.error || 'Failed to delete message')
+  }
 }
 
 export async function searchMessagesGlobal(query: string, limit = 20): Promise<SearchResult[]> {

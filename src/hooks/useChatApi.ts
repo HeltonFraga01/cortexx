@@ -40,6 +40,7 @@ import {
   getPreviousConversations,
   muteConversation,
   deleteConversation,
+  deleteMessage,
   addPrivateNote,
   getGroupParticipants,
   sendLocationMessage,
@@ -119,8 +120,8 @@ import type {
 export interface ChatApi {
   // Conversations
   getConversations: (filters?: ConversationFilters, pagination?: { limit?: number; offset?: number }) => Promise<ConversationsResponse>
-  getConversation: (id: number) => Promise<Conversation>
-  updateConversation: (id: number, data: { status?: string; assignedBotId?: number | null; isMuted?: boolean }) => Promise<Conversation>
+  getConversation: (id: string | number) => Promise<Conversation>
+  updateConversation: (id: string | number, data: { status?: string; assignedBotId?: number | null; isMuted?: boolean }) => Promise<Conversation>
   markConversationAsRead: (id: number) => Promise<void>
   searchConversations: (query: string, limit?: number) => Promise<Conversation[]>
   startConversation: (phone: string, contactInfo?: { name?: string; avatarUrl?: string }) => Promise<Conversation>
@@ -164,6 +165,7 @@ export interface ChatApi {
   // Conversation Operations
   muteConversation: (conversationId: number, muted: boolean) => Promise<Conversation>
   deleteConversation: (conversationId: number) => Promise<void>
+  deleteMessage: (messageId: string | number) => Promise<void>
   
   // Private Notes
   addPrivateNote: (conversationId: number, content: string) => Promise<PrivateNote>
@@ -245,6 +247,7 @@ export function useChatApi(): ChatApi {
         // Conversation Operations
         muteConversation: muteAgentConversation,
         deleteConversation: deleteAgentConversation,
+        deleteMessage: deleteMessage, // Use user chat deleteMessage for now (agent mode can be added later)
         
         // Private Notes
         addPrivateNote: addAgentPrivateNote,
@@ -318,6 +321,7 @@ export function useChatApi(): ChatApi {
       // Conversation Operations
       muteConversation,
       deleteConversation,
+      deleteMessage,
       
       // Private Notes
       addPrivateNote,

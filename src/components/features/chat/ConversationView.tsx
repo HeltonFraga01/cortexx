@@ -162,6 +162,18 @@ export function ConversationView({
     }
   })
 
+  // Delete message mutation
+  const deleteMessageMutation = useMutation({
+    mutationFn: (messageId: string | number) => chatApi.deleteMessage(messageId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['messages', conversation.id] })
+      toast.success('Mensagem excluída com sucesso')
+    },
+    onError: () => {
+      toast.error('Erro ao excluir mensagem')
+    }
+  })
+
   // Mute conversation mutation with optimistic update
   const muteMutation = useMutation({
     mutationFn: (muted: boolean) => chatApi.muteConversation(conversation.id, muted),
@@ -294,6 +306,12 @@ export function ConversationView({
   const handleReply = useCallback((message: ChatMessage) => {
     setReplyToMessage(message)
   }, [])
+
+  const handleDeleteMessage = useCallback((message: ChatMessage) => {
+    if (confirm('Tem certeza que deseja excluir esta mensagem?')) {
+      deleteMessageMutation.mutate(message.id)
+    }
+  }, [deleteMessageMutation])
 
   const cancelReply = useCallback(() => {
     setReplyToMessage(null)
@@ -613,6 +631,7 @@ export function ConversationView({
                           <MessageBubble
                             message={message}
                             onReply={handleReply}
+                            onDelete={handleDeleteMessage}
                             searchQuery={searchQuery}
                             showParticipant={showParticipant}
                           />

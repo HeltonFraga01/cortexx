@@ -12,6 +12,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
+import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { getAgentToken } from '@/services/agent-auth'
@@ -42,6 +43,10 @@ export function ChatLayout({ className, isAgentMode = false }: ChatLayoutProps) 
   const [typingIndicators, setTypingIndicators] = useState<Record<number, boolean>>({})
   const searchInputRef = useRef<HTMLInputElement>(null)
   const initialConversationLoaded = useRef(false)
+  
+  // States for URL conversation loading
+  const [isLoadingFromUrl, setIsLoadingFromUrl] = useState(false)
+  const [urlLoadError, setUrlLoadError] = useState<string | null>(null)
 
   // Sync selected conversation with cache updates (for optimistic updates)
   useEffect(() => {
@@ -77,25 +82,47 @@ export function ChatLayout({ className, isAgentMode = false }: ChatLayoutProps) 
   const { playNotification } = useAudioNotification()
 
   // Load conversation from URL parameter on mount
+  // Wait for chatApi to be in the correct mode before loading
   useEffect(() => {
     const conversationId = searchParams.get('conversation')
-    if (conversationId && !initialConversationLoaded.current) {
-      initialConversationLoaded.current = true
-      const loadConversation = async () => {
-        try {
-          const conversation = await chatApi.getConversation(parseInt(conversationId, 10))
-          if (conversation) {
-            setSelectedConversation(conversation)
-          }
-        } catch (error) {
-          console.error('Failed to load conversation from URL:', error)
+    
+    // No conversation to load
+    if (!conversationId) return
+    
+    // Already loaded
+    if (initialConversationLoaded.current) return
+    
+    // Wait for chatApi to be in the correct mode
+    // isAgentMode prop indicates expected mode, chatApi.isAgentMode indicates current mode
+    if (isAgentMode !== chatApi.isAgentMode) {
+      // Mode not ready yet, wait for next render
+      return
+    }
+    
+    // Mark as loaded to prevent multiple attempts
+    initialConversationLoaded.current = true
+    setIsLoadingFromUrl(true)
+    setUrlLoadError(null)
+    
+    const loadConversation = async () => {
+      try {
+        // Pass conversationId as string - conversation IDs are UUIDs
+        const conversation = await chatApi.getConversation(conversationId)
+        if (conversation) {
+          setSelectedConversation(conversation)
         }
-        // Clear the URL parameter after loading
+      } catch (error) {
+        console.error('Failed to load conversation from URL:', error)
+        setUrlLoadError('Não foi possível carregar a conversa')
+      } finally {
+        setIsLoadingFromUrl(false)
+        // Clear the URL parameter after loading (success or error)
         setSearchParams({}, { replace: true })
       }
-      loadConversation()
     }
-  }, [searchParams, setSearchParams, chatApi])
+    
+    loadConversation()
+  }, [searchParams, setSearchParams, chatApi, isAgentMode])
 
   // Memoize the user token to prevent unnecessary reconnections
   // Use agent token if in agent mode, otherwise use user token
@@ -252,7 +279,12 @@ export function ChatLayout({ className, isAgentMode = false }: ChatLayoutProps) 
             isConnected={isConnected}
           />
         ) : (
-          <EmptyState onToggleSidebar={toggleSidebar} isSidebarCollapsed={isSidebarCollapsed} />
+          <EmptyState 
+            onToggleSidebar={toggleSidebar} 
+            isSidebarCollapsed={isSidebarCollapsed}
+            isLoading={isLoadingFromUrl}
+            error={urlLoadError}
+          />
         )}
       </div>
 
@@ -277,9 +309,23 @@ export function ChatLayout({ className, isAgentMode = false }: ChatLayoutProps) 
 interface EmptyStateProps {
   onToggleSidebar: () => void
   isSidebarCollapsed: boolean
+  isLoading?: boolean
+  error?: string | null
 }
 
-function EmptyState({ onToggleSidebar, isSidebarCollapsed }: EmptyStateProps) {
+function EmptyState({ onToggleSidebar, isSidebarCollapsed, isLoading, error }: EmptyStateProps) {
+  // Show loading state when loading conversation from URL
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-muted/30">
+        <div className="text-center space-y-4">
+          <Loader2 className="w-8 h-8 mx-auto animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Carregando conversa...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex-1 flex items-center justify-center bg-muted/30">
       <div className="text-center space-y-4">
@@ -308,10 +354,10 @@ function EmptyState({ onToggleSidebar, isSidebarCollapsed }: EmptyStateProps) {
         </div>
         <div>
           <h3 className="text-lg font-medium text-foreground">
-            Selecione uma conversa
+            {error ? 'Erro ao carregar conversa' : 'Selecione uma conversa'}
           </h3>
           <p className="text-sm text-muted-foreground mt-1">
-            Escolha uma conversa na lista para começar a enviar mensagens
+            {error || 'Escolha uma conversa na lista para começar a enviar mensagens'}
           </p>
         </div>
       </div>

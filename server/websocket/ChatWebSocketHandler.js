@@ -392,6 +392,12 @@ class ChatWebSocketHandler {
 
   /**
    * Broadcast new message to conversation room AND globally for notifications
+   * @param {string} conversationId - The conversation ID to broadcast to
+   * @param {Object} message - The message object to broadcast
+   * @param {Object} options - Additional options
+   * @param {boolean} options.isMuted - Whether the conversation is muted (affects notifications)
+   * @example
+   * chatHandler.broadcastNewMessage('conv123', { id: 'msg456', content: 'Hello' }, { isMuted: false })
    */
   broadcastNewMessage(conversationId, message, options = {}) {
     const room = `conversation:${conversationId}`
@@ -417,6 +423,12 @@ class ChatWebSocketHandler {
 
   /**
    * Broadcast message status update to conversation room
+   * @param {string} conversationId - The conversation ID
+   * @param {string} messageId - The message ID to update
+   * @param {string} status - The new status ('sent', 'delivered', 'read', etc.)
+   * @param {string} timestamp - The timestamp of the status update
+   * @example
+   * chatHandler.broadcastMessageStatusUpdate('conv123', 'msg456', 'delivered', '2023-01-01T12:00:00Z')
    */
   broadcastMessageStatusUpdate(conversationId, messageId, status, timestamp) {
     const room = `conversation:${conversationId}`
@@ -459,8 +471,30 @@ class ChatWebSocketHandler {
 
   /**
    * Broadcast message update (edit/delete) to conversation room
+   * Used for both message edits and deletions with proper parameter handling
    * Requirements: 2.2, 3.2 (unsupported-message-types)
    * Requirements: 1.1, 1.2 (websocket-data-transformation-fix)
+   * @param {string} conversationId - The conversation ID
+   * @param {Object} messageUpdate - The message update object
+   * @param {string} messageUpdate.id - The message ID
+   * @param {string} messageUpdate.content - The updated content (or deletion message)
+   * @param {boolean} messageUpdate.is_edited - Whether the message was edited
+   * @param {boolean} messageUpdate.is_deleted - Whether the message was deleted
+   * @example
+   * // For message deletion:
+   * chatHandler.broadcastMessageUpdate('conv123', {
+   *   id: 'msg456',
+   *   content: '🚫 Esta mensagem foi apagada',
+   *   is_edited: false,
+   *   is_deleted: true
+   * })
+   * // For message edit:
+   * chatHandler.broadcastMessageUpdate('conv123', {
+   *   id: 'msg456',
+   *   content: 'Updated message content',
+   *   is_edited: true,
+   *   is_deleted: false
+   * })
    */
   broadcastMessageUpdate(conversationId, messageUpdate) {
     const room = `conversation:${conversationId}`

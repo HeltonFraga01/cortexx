@@ -30,6 +30,7 @@ import { ContactTagsManager } from '@/components/contacts/ContactTagsManager';
 import { ContactGroupsSidebar } from '@/components/contacts/ContactGroupsSidebar';
 import { ContactGroupForm } from '@/components/contacts/ContactGroupForm';
 import { ContactImportButton } from '@/components/contacts/ContactImportButton';
+import { ContactUserCreationForm } from '@/components/contacts/ContactUserCreationForm';
 import { ContactsStatsSkeleton, ContactsTableSkeleton } from '@/components/contacts/ContactsSkeleton';
 import ErrorBoundary from '@/components/ErrorBoundary';
 
@@ -60,6 +61,7 @@ function UserContactsContent() {
   });
   const [showTagsManager, setShowTagsManager] = useState(false);
   const [showGroupForm, setShowGroupForm] = useState(false);
+  const [showUserCreation, setShowUserCreation] = useState(false);
   
   // Hooks
   const {
@@ -240,6 +242,14 @@ function UserContactsContent() {
     }
   };
 
+  // Handler para criar usuário
+  const handleUserCreationSuccess = (userData: { name: string; token: string; phone: string }) => {
+    toast.success('Usuário criado com sucesso!', {
+      description: `Token: ${userData.token.substring(0, 12)}...`
+    })
+    setShowUserCreation(false)
+  }
+
   const handleExport = () => {
     const contactsToExport = selectedCount > 0
       ? contacts.filter(c => selectedIds.has(c.phone))
@@ -308,7 +318,7 @@ function UserContactsContent() {
 
   return (
     <div className={cn(
-      "w-full max-w-full max-w-7xl mx-auto overflow-x-hidden px-2 sm:px-6 py-3 sm:py-6 space-y-3 sm:space-y-6 transition-all duration-300",
+      "w-full max-w-7xl mx-auto overflow-x-hidden px-2 sm:px-6 py-3 sm:py-6 space-y-3 sm:space-y-6 transition-all duration-300",
       selectedCount > 0 && "pb-32 sm:pb-28"
     )}>
       {/* Header */}
@@ -322,6 +332,13 @@ function UserContactsContent() {
             variant: 'outline',
             icon: <Download className="h-4 w-4" />,
             disabled: loading || contacts.length === 0,
+          },
+          {
+            label: 'Criar Usuário',
+            onClick: () => setShowUserCreation(true),
+            variant: 'outline',
+            icon: <Users className="h-4 w-4" />,
+            disabled: loading,
           },
           {
             label: 'Novo Grupo',
@@ -424,6 +441,14 @@ function UserContactsContent() {
                   selectedContactIds={Array.from(selectedIds)}
                   onCreateGroup={handleCreateGroup}
                   onClose={() => setShowGroupForm(false)}
+                />
+              )}
+
+              {/* Formulário de Criação de Usuário inline */}
+              {showUserCreation && (
+                <ContactUserCreationForm
+                  onSuccess={handleUserCreationSuccess}
+                  onCancel={() => setShowUserCreation(false)}
                 />
               )}
 

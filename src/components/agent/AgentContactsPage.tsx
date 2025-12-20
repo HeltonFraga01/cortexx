@@ -19,19 +19,25 @@ import { useContactFilters } from '@/hooks/useContactFilters'
 import { useContactSelection } from '@/hooks/useContactSelection'
 import { contactsService } from '@/services/contactsService'
 import { AgentInboxProvider, useAgentInbox } from '@/contexts/AgentInboxContext'
+import { AgentContactImportButton } from '@/components/agent/AgentContactImportButton'
+import { useAgentAuth } from '@/contexts/AgentAuthContext'
+import { getAgentToken } from '@/services/agent-auth'
 import { ContactsFilters } from '@/components/contacts/ContactsFilters'
 import { ContactsTable } from '@/components/contacts/ContactsTable'
 import { ContactsStats } from '@/components/contacts/ContactsStats'
 import { ContactSelection } from '@/components/contacts/ContactSelection'
+import { ContactUserCreationForm } from '@/components/contacts/ContactUserCreationForm'
 import { ContactsStatsSkeleton, ContactsTableSkeleton } from '@/components/contacts/ContactsSkeleton'
 import ErrorBoundary from '@/components/ErrorBoundary'
 
 function AgentContactsContent() {
   const navigate = useNavigate()
   const { inboxes, isLoading: isLoadingInboxes } = useAgentInbox()
+  const { agent } = useAgentAuth()
   
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize] = useState(50)
+  const [showUserCreation, setShowUserCreation] = useState(false)
   
   // Hooks
   const {
@@ -39,7 +45,6 @@ function AgentContactsContent() {
     tags,
     loading,
     importing,
-    importContacts,
     refreshContacts,
     updateContact,
     deleteContacts,
@@ -69,6 +74,13 @@ function AgentContactsContent() {
     selectFiltered,
   } = useContactSelection()
 
+  // Handler para importar contatos
+  const handleImportComplete = (contacts: any[], total: number) => {
+    // Refresh contacts after import
+    refreshContacts()
+    toast.success(`${total} contatos importados com sucesso`)
+  }
+
   // Calcular estatísticas
   const stats = useMemo(() => {
     return contactsService.getStats(filteredContacts, tags)
@@ -88,6 +100,14 @@ function AgentContactsContent() {
   // Handler para remover tag de contato
   const handleRemoveTagFromContact = (contactPhone: string, tagId: string) => {
     removeTagsFromContacts([contactPhone], [tagId])
+  }
+
+  // Handler para criar usuário
+  const handleUserCreationSuccess = (userData: { name: string; token: string; phone: string }) => {
+    toast.success('Usuário criado com sucesso!', {
+      description: `Token: ${userData.token.substring(0, 12)}...`
+    })
+    setShowUserCreation(false)
   }
 
   // Handler para enviar mensagem
@@ -210,35 +230,30 @@ function AgentContactsContent() {
           },
         ]}
       >
-        <Button
-          variant="default"
-          size="default"
-          onClick={importContacts}
-          disabled={loading || importing || inboxes.length === 0}
-          className="shrink-0"
-        >
-          {importing ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Importando...
-            </>
-          ) : (
-            <>
-              <Users className="h-4 w-4 mr-2" />
-              Importar da Agenda
-            </>
-          )}
-        </Button>
-        <Button
-          variant="outline"
-          size="default"
-          onClick={refreshContacts}
-          disabled={loading || importing}
-          className="shrink-0"
-        >
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-          Atualizar
-        </Button>
+        <div className="flex items-center gap-2">
+          <ContactUserCreationForm
+            onSuccess={handleUserCreationSuccess}
+            onCancel={() => setShowUserCreation(false)}
+            className="shrink-0"
+          />
+          <AgentContactImportButton
+            instance="default"
+            agentToken={getAgentToken() || ''}
+            onImportComplete={handleImportComplete}
+            disabled={loading || importing || inboxes.length === 0}
+            className="shrink-0"
+          />
+          <Button
+            variant="outline"
+            size="default"
+            onClick={refreshContacts}
+            disabled={loading || importing}
+            className="shrink-0"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            Atualizar
+          </Button>
+        </div>
       </PageHeader>
 
       {/* Stats Cards */}
@@ -269,12 +284,22 @@ function AgentContactsContent() {
                 icon={Users}
                 title="Nenhum contato importado"
                 description="Clique no botão abaixo para importar seus contatos da agenda WhatsApp e começar a gerenciá-los"
-                action={inboxes.length > 0 ? {
-                  label: importing ? "Importando..." : "Importar Contatos",
-                  onClick: importContacts,
-                  disabled: importing
-                } : undefined}
-              />
+              >
+                {inboxes.length > 0 && (
+                  <div className="mt-4 flex flex-col sm:flex-row gap-2 items-center justify-center">
+                    <ContactUserCreationForm
+                      onSuccess={handleUserCreationSuccess}
+                      onCancel={() => setShowUserCreation(false)}
+                    />
+                    <AgentContactImportButton
+                      instance="default"
+                      agentToken={getAgentToken() || ''}
+                      onImportComplete={handleImportComplete}
+                      disabled={loading || importing}
+                    />
+                  </div>
+                )}
+              </EmptyState>
             ) : (
               <div className="space-y-4">
                 {/* Filtros */}

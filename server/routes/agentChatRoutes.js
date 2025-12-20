@@ -14,6 +14,7 @@ const { requireAgentAuth, requirePermission } = require('../middleware/agentAuth
 const ChatService = require('../services/ChatService');
 const InboxService = require('../services/InboxService');
 const { validatePhoneWithAPI } = require('../services/PhoneValidationService');
+const SupabaseService = require('../services/SupabaseService');
 
 // Services will be initialized with db
 let chatService = null;
@@ -52,7 +53,6 @@ function getAccountUserTokenFromRequest(req) {
  * Use getAccountUserTokenFromRequest(req) instead when req.account is available
  */
 async function getAccountUserToken(db, accountId) {
-  const SupabaseService = require('../services/SupabaseService');
   const { data, error } = await SupabaseService.queryAsAdmin('accounts', (query) =>
     query.select('wuzapi_token').eq('id', accountId).single()
   );
@@ -68,7 +68,6 @@ async function getAccountUserToken(db, accountId) {
  * The inbox's WUZAPI token is needed to send messages via WUZAPI
  */
 async function getInboxWuzapiToken(db, inboxId) {
-  const SupabaseService = require('../services/SupabaseService');
   const { data, error } = await SupabaseService.queryAsAdmin('inboxes', (query) =>
     query.select('wuzapi_token').eq('id', inboxId).single()
   );
@@ -523,10 +522,7 @@ router.post('/conversations/:id/messages', requireAgentAuth(null), requirePermis
         });
         
         // Update message status to failed
-        await db.query(
-          'UPDATE chat_messages SET status = ? WHERE id = ?',
-          ['failed', message.id]
-        );
+        await SupabaseService.update('chat_messages', message.id, { status: 'failed' });
         message.status = 'failed';
         
         return res.status(400).json({
@@ -651,10 +647,7 @@ router.post('/conversations/:id/messages', requireAgentAuth(null), requirePermis
     // Update message status based on WUZAPI response
     const newStatus = wuzapiSuccess ? 'sent' : 'failed';
     
-    await db.query(
-      'UPDATE chat_messages SET status = ? WHERE id = ?',
-      [newStatus, message.id]
-    );
+    await SupabaseService.update('chat_messages', message.id, { status: newStatus });
     
     message.status = newStatus;
     
@@ -755,10 +748,7 @@ router.post('/conversations/:id/fetch-avatar', requireAgentAuth(null), requirePe
       const avatarUrl = avatarData?.URL || avatarData?.url;
       
       if (avatarUrl) {
-        await db.query(
-          'UPDATE conversations SET contact_avatar_url = ? WHERE id = ?',
-          [avatarUrl, id]
-        );
+        await SupabaseService.update('conversations', id, { contact_avatar_url: avatarUrl });
         
         logger.info('Agent fetched avatar', { agentId, conversationId: id, phone, hasUrl: true });
         
@@ -1727,6 +1717,183 @@ router.delete('/contacts/:contactJid/notes/:noteId', requireAgentAuth(null), req
     res.json({ success: true });
   } catch (error) {
     logger.error('Error deleting contact note', { error: error.message, agentId: req.agent?.id });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== Inbox Management Routes ====================
+
+/**
+ * POST /api/agent/chat/inbox/clear
+ * Clear all conversations from agent's assigned inboxes
+ * This endpoint allows agents to clear all conversations from their assigned inboxes
+ */
+router.post('/inbox/clear', requireAgentAuth(null), requirePermission('conversations:manage'), async (req, res) => {
+  try {
+    initServices(req.app.locals.db);
+    
+    const agentId = req.agent.id;
+    const accountId = req.account.id;
+    const userToken = getAccountUserTokenFromRequest(req);
+    
+    if (!userToken) {
+      return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
+    }
+    
+    // Get agent's assigned inboxes
+    const agentInboxIds = await getAgentInboxIds(agentId);
+    
+    if (agentInboxIds.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          clearedInboxes: 0,
+          deletedConversations: 0,
+          deletedMessages: 0,
+          message: 'Nenhuma caixa de entrada atribuída ao agente'
+        }
+      });
+    }
+    
+    logger.info('Agent inbox clearing initiated', {
+      agentId,
+      accountId,
+      inboxCount: agentInboxIds.length
+    });
+    
+    let totalDeletedConversations = 0;
+    let totalDeletedMessages = 0;
+    const clearedInboxes = [];
+    
+    // Process each inbox assigned to the agent
+    for (const inboxId of agentInboxIds) {
+      try {
+        // Get inbox details
+        const { data: inbox, error: inboxError } = await SupabaseService.queryAsAdmin('inboxes', (query) =>
+          query.select('id, name').eq('id', inboxId).single()
+        );
+        
+        if (inboxError || !inbox) {
+          logger.warn('Inbox not found during clearing', { inboxId, agentId });
+          continue;
+        }
+        
+        // Get all conversations in this inbox
+        const { data: conversations, error: conversationsError } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+          query.select('id').eq('inbox_id', inboxId).eq('account_id', accountId)
+        );
+        
+        if (conversationsError) {
+          logger.error('Error fetching conversations for inbox clearing', {
+            inboxId,
+            agentId,
+            error: conversationsError.message
+          });
+          continue;
+        }
+        
+        if (!conversations || conversations.length === 0) {
+          clearedInboxes.push({
+            id: inboxId,
+            name: inbox.name,
+            conversationsDeleted: 0
+          });
+          continue;
+        }
+        
+        const conversationIds = conversations.map(c => c.id);
+        let inboxDeletedMessages = 0;
+        
+        // Delete conversation labels first
+        await SupabaseService.queryAsAdmin('conversation_labels', (query) =>
+          query.delete().in('conversation_id', conversationIds)
+        );
+        
+        // Get all message IDs for these conversations and delete reactions
+        const { data: messages } = await SupabaseService.queryAsAdmin('chat_messages', (query) =>
+          query.select('id').in('conversation_id', conversationIds)
+        );
+        
+        if (messages && messages.length > 0) {
+          const messageIds = messages.map(m => m.id);
+          inboxDeletedMessages = messages.length;
+          
+          // Delete message reactions
+          await SupabaseService.queryAsAdmin('message_reactions', (query) =>
+            query.delete().in('message_id', messageIds)
+          );
+          
+          // Delete all messages
+          await SupabaseService.queryAsAdmin('chat_messages', (query) =>
+            query.delete().in('conversation_id', conversationIds)
+          );
+        }
+        
+        // Delete all conversations in this inbox
+        const { error: deleteError } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+          query.delete().eq('inbox_id', inboxId).eq('account_id', accountId)
+        );
+        
+        if (deleteError) {
+          logger.error('Error deleting conversations from inbox', {
+            inboxId,
+            agentId,
+            error: deleteError.message
+          });
+          continue;
+        }
+        
+        totalDeletedConversations += conversationIds.length;
+        totalDeletedMessages += inboxDeletedMessages;
+        
+        clearedInboxes.push({
+          id: inboxId,
+          name: inbox.name,
+          conversationsDeleted: conversationIds.length
+        });
+        
+        logger.info('Inbox cleared successfully', {
+          inboxId,
+          inboxName: inbox.name,
+          agentId,
+          conversationsDeleted: conversationIds.length,
+          messagesDeleted: inboxDeletedMessages
+        });
+        
+      } catch (inboxError) {
+        logger.error('Error clearing inbox', {
+          inboxId,
+          agentId,
+          error: inboxError.message
+        });
+      }
+    }
+    
+    logger.info('Agent inbox clearing completed', {
+      agentId,
+      accountId,
+      clearedInboxes: clearedInboxes.length,
+      deletedConversations: totalDeletedConversations,
+      deletedMessages: totalDeletedMessages
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        clearedInboxes: clearedInboxes.length,
+        deletedConversations: totalDeletedConversations,
+        deletedMessages: totalDeletedMessages,
+        agentId,
+        inboxes: clearedInboxes
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Error clearing agent inbox', { 
+      error: error.message, 
+      agentId: req.agent?.id,
+      accountId: req.account?.id 
+    });
     res.status(500).json({ success: false, error: error.message });
   }
 });

@@ -324,7 +324,8 @@ class ChatService {
         throw error;
       }
 
-      return data;
+      // Format the conversation to use camelCase consistently
+      return data ? this.formatConversation(data) : null;
     } catch (error) {
       logger.error('Failed to get conversation', { conversationId, error: error.message });
       return null;
@@ -374,7 +375,8 @@ class ChatService {
         throw error;
       }
 
-      return data;
+      // Format the conversation to use camelCase consistently
+      return data ? this.formatConversation(data) : null;
     } catch (error) {
       return null;
     }
@@ -1099,6 +1101,203 @@ class ChatService {
       logger.info('Canned response deleted', { accountId, responseId });
     } catch (error) {
       logger.error('Failed to delete canned response', { accountId, responseId, error: error.message });
+      throw error;
+    }
+  }
+
+  // ==================== DELETE METHODS ====================
+
+  /**
+   * Delete ALL conversations for a user account
+   * @param {string} userId - User ID (WUZAPI token or UUID)
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<{deleted: number}>}
+   */
+  async deleteAllConversations(userId, token = null) {
+    try {
+      // Convert WUZAPI token to account UUID if needed
+      const accountId = await this.getAccountIdFromToken(userId);
+      if (!accountId) {
+        throw new Error('Account not found for the provided token');
+      }
+
+      // Get all conversations for this account
+      const { data: conversations } = await supabaseService.queryAsAdmin('conversations', (query) =>
+        query.select('id').eq('account_id', accountId)
+      );
+
+      if (!conversations || conversations.length === 0) {
+        logger.info('No conversations to delete', { userId, accountId });
+        return { deleted: 0 };
+      }
+
+      const conversationIds = conversations.map(c => c.id);
+
+      // Delete conversation labels
+      await supabaseService.queryAsAdmin('conversation_labels', (query) =>
+        query.delete().in('conversation_id', conversationIds)
+      );
+
+      // Get all messages for these conversations
+      const { data: messages } = await supabaseService.queryAsAdmin('chat_messages', (query) =>
+        query.select('id').in('conversation_id', conversationIds)
+      );
+
+      if (messages && messages.length > 0) {
+        const messageIds = messages.map(m => m.id);
+        // Delete message reactions
+        await supabaseService.queryAsAdmin('message_reactions', (query) =>
+          query.delete().in('message_id', messageIds)
+        );
+      }
+
+      // Delete all messages
+      await supabaseService.queryAsAdmin('chat_messages', (query) =>
+        query.delete().in('conversation_id', conversationIds)
+      );
+
+      // Delete all conversations
+      const { error } = await supabaseService.queryAsAdmin('conversations', (query) =>
+        query.delete().eq('account_id', accountId)
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('All conversations deleted', { userId, accountId, deleted: conversationIds.length });
+      return { deleted: conversationIds.length };
+    } catch (error) {
+      logger.error('Failed to delete all conversations', { userId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a conversation and all its messages
+   * @param {string} userId - User ID (WUZAPI token or UUID)
+   * @param {string} conversationId - Conversation ID (UUID)
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<void>}
+   */
+  async deleteConversation(userId, conversationId, token = null) {
+    try {
+      // Convert WUZAPI token to account UUID if needed
+      const accountId = await this.getAccountIdFromToken(userId);
+      if (!accountId) {
+        throw new Error('Account not found for the provided token');
+      }
+
+      // Verify user owns this conversation
+      const conversation = await this.getConversationById(conversationId, userId, token);
+      if (!conversation) {
+        throw new Error('Conversation not found or unauthorized');
+      }
+
+      // Delete conversation labels first
+      await supabaseService.queryAsAdmin('conversation_labels', (query) =>
+        query.delete().eq('conversation_id', conversationId)
+      );
+
+      // Delete message reactions
+      const { data: messages } = await supabaseService.queryAsAdmin('chat_messages', (query) =>
+        query.select('id').eq('conversation_id', conversationId)
+      );
+
+      if (messages && messages.length > 0) {
+        const messageIds = messages.map(m => m.id);
+        await supabaseService.queryAsAdmin('message_reactions', (query) =>
+          query.delete().in('message_id', messageIds)
+        );
+      }
+
+      // Delete all messages in the conversation
+      await supabaseService.queryAsAdmin('chat_messages', (query) =>
+        query.delete().eq('conversation_id', conversationId)
+      );
+
+      // Delete the conversation
+      const { error } = await supabaseService.queryAsAdmin('conversations', (query) =>
+        query.delete().eq('id', conversationId).eq('account_id', accountId)
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      logger.info('Conversation deleted', { userId, conversationId, accountId });
+    } catch (error) {
+      logger.error('Failed to delete conversation', { userId, conversationId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Delete all conversations for a user account
+   * @param {string} userId - User ID (WUZAPI token or UUID)
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<{deleted: number}>} Number of deleted conversations
+   */
+  async deleteAllConversations(userId, token = null) {
+    try {
+      // Convert WUZAPI token to account UUID if needed
+      const accountId = await this.getAccountIdFromToken(userId);
+      if (!accountId) {
+        throw new Error('Account not found for the provided token');
+      }
+
+      // Get all conversations for this account
+      const { data: conversations, error: fetchError } = await supabaseService.queryAsAdmin('conversations', (query) =>
+        query.select('id').eq('account_id', accountId)
+      );
+
+      if (fetchError) {
+        throw fetchError;
+      }
+
+      if (!conversations || conversations.length === 0) {
+        logger.info('No conversations to delete', { userId, accountId });
+        return { deleted: 0 };
+      }
+
+      const conversationIds = conversations.map(c => c.id);
+
+      // Delete conversation labels
+      await supabaseService.queryAsAdmin('conversation_labels', (query) =>
+        query.delete().in('conversation_id', conversationIds)
+      );
+
+      // Get all message IDs for these conversations
+      const { data: messages } = await supabaseService.queryAsAdmin('chat_messages', (query) =>
+        query.select('id').in('conversation_id', conversationIds)
+      );
+
+      if (messages && messages.length > 0) {
+        const messageIds = messages.map(m => m.id);
+        // Delete message reactions
+        await supabaseService.queryAsAdmin('message_reactions', (query) =>
+          query.delete().in('message_id', messageIds)
+        );
+      }
+
+      // Delete all messages
+      await supabaseService.queryAsAdmin('chat_messages', (query) =>
+        query.delete().in('conversation_id', conversationIds)
+      );
+
+      // Delete all conversations
+      const { error: deleteError } = await supabaseService.queryAsAdmin('conversations', (query) =>
+        query.delete().eq('account_id', accountId)
+      );
+
+      if (deleteError) {
+        throw deleteError;
+      }
+
+      logger.info('All conversations deleted', { userId, accountId, count: conversationIds.length });
+      return { deleted: conversationIds.length };
+    } catch (error) {
+      logger.error('Failed to delete all conversations', { userId, error: error.message });
       throw error;
     }
   }

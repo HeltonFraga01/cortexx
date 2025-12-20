@@ -183,13 +183,48 @@ router.patch('/conversations/:id', verifyUserToken, async (req, res) => {
 
     // Broadcast update via WebSocket
     const chatHandler = req.app.locals.chatHandler
-    if (chatHandler) {
-      chatHandler.broadcastConversationUpdate(conversation)
+    if (chatHandler && typeof chatHandler.broadcastConversationUpdate === 'function') {
+      try {
+        chatHandler.broadcastConversationUpdate(conversation)
+        logger.debug('WebSocket conversation update broadcast sent', { conversationId: id })
+      } catch (wsError) {
+        logger.warn('WebSocket broadcast failed for conversation update', {
+          error: wsError.message,
+          conversationId: id,
+          userToken: req.userToken?.substring(0, 8)
+        })
+      }
+    } else {
+      logger.warn('WebSocket handler unavailable for conversation update broadcast', {
+        conversationId: id,
+        hasHandler: !!chatHandler,
+        hasMethod: chatHandler ? typeof chatHandler.broadcastConversationUpdate === 'function' : false
+      })
     }
 
     res.json({ success: true, data: conversation })
   } catch (error) {
     logger.error('Error updating conversation', { error: error.message, conversationId: req.params.id })
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * DELETE /api/chat/inbox/conversations
+ * Delete ALL conversations for the authenticated user
+ */
+router.delete('/conversations', verifyUserToken, async (req, res) => {
+  try {
+    if (!supabaseService) {
+      return res.status(500).json({ success: false, error: 'Database not available' })
+    }
+
+    const chatService = new ChatService()
+    const result = await chatService.deleteAllConversations(req.userToken)
+
+    res.json({ success: true, message: `${result.deleted} conversas excluídas com sucesso`, deleted: result.deleted })
+  } catch (error) {
+    logger.error('Error deleting all conversations', { error: error.message })
     res.status(500).json({ success: false, error: error.message })
   }
 })
@@ -213,6 +248,30 @@ router.delete('/conversations/:id', verifyUserToken, async (req, res) => {
     res.json({ success: true, message: 'Conversa excluída com sucesso' })
   } catch (error) {
     logger.error('Error deleting conversation', { error: error.message, conversationId: req.params.id })
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * DELETE /api/chat/inbox/conversations
+ * Delete ALL conversations for the authenticated user
+ */
+router.delete('/conversations', verifyUserToken, async (req, res) => {
+  try {
+    if (!supabaseService) {
+      return res.status(500).json({ success: false, error: 'Database not available' })
+    }
+
+    const chatService = new ChatService()
+    const result = await chatService.deleteAllConversations(req.userToken)
+
+    res.json({ 
+      success: true, 
+      message: `${result.deleted} conversas excluídas com sucesso`,
+      deleted: result.deleted
+    })
+  } catch (error) {
+    logger.error('Error deleting all conversations', { error: error.message })
     res.status(500).json({ success: false, error: error.message })
   }
 })
@@ -642,8 +701,25 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
 
     // Broadcast new message via WebSocket
     const chatHandler = req.app.locals.chatHandler
-    if (chatHandler) {
-      chatHandler.broadcastNewMessage(id, message)
+    if (chatHandler && typeof chatHandler.broadcastNewMessage === 'function') {
+      try {
+        chatHandler.broadcastNewMessage(id, message)
+        logger.debug('WebSocket new message broadcast sent', { conversationId: id, messageId: message.id })
+      } catch (wsError) {
+        logger.warn('WebSocket broadcast failed for new message', {
+          error: wsError.message,
+          conversationId: id,
+          messageId: message.id,
+          userToken: req.userToken?.substring(0, 8)
+        })
+      }
+    } else {
+      logger.warn('WebSocket handler unavailable for new message broadcast', {
+        conversationId: id,
+        messageId: message.id,
+        hasHandler: !!chatHandler,
+        hasMethod: chatHandler ? typeof chatHandler.broadcastNewMessage === 'function' : false
+      })
     }
 
     let validatedPhone
@@ -1232,8 +1308,23 @@ router.post('/conversations/:id/assign-bot', verifyUserToken, async (req, res) =
 
     // Broadcast update via WebSocket
     const chatHandler = req.app.locals.chatHandler
-    if (chatHandler) {
-      chatHandler.broadcastConversationUpdate(conversation)
+    if (chatHandler && typeof chatHandler.broadcastConversationUpdate === 'function') {
+      try {
+        chatHandler.broadcastConversationUpdate(conversation)
+        logger.debug('WebSocket conversation update broadcast sent for bot assignment', { conversationId: id })
+      } catch (wsError) {
+        logger.warn('WebSocket broadcast failed for bot assignment', {
+          error: wsError.message,
+          conversationId: id,
+          userToken: req.userToken?.substring(0, 8)
+        })
+      }
+    } else {
+      logger.warn('WebSocket handler unavailable for bot assignment broadcast', {
+        conversationId: id,
+        hasHandler: !!chatHandler,
+        hasMethod: chatHandler ? typeof chatHandler.broadcastConversationUpdate === 'function' : false
+      })
     }
 
     res.json({ success: true, data: conversation })
@@ -1275,8 +1366,26 @@ router.post('/messages/:messageId/react', verifyUserToken, async (req, res) => {
 
     // Broadcast reaction via WebSocket
     const chatHandler = req.app.locals.chatHandler
-    if (chatHandler && !reaction.removed) {
-      chatHandler.broadcastReaction(reaction)
+    if (chatHandler && !reaction.removed && typeof chatHandler.broadcastReaction === 'function') {
+      try {
+        chatHandler.broadcastReaction(reaction)
+        logger.debug('WebSocket reaction broadcast sent', { messageId, emoji })
+      } catch (wsError) {
+        logger.warn('WebSocket broadcast failed for reaction', {
+          error: wsError.message,
+          messageId,
+          emoji,
+          userToken: req.userToken?.substring(0, 8)
+        })
+      }
+    } else {
+      logger.warn('WebSocket handler unavailable for reaction broadcast', {
+        messageId,
+        emoji,
+        reactionRemoved: reaction.removed,
+        hasHandler: !!chatHandler,
+        hasMethod: chatHandler ? typeof chatHandler.broadcastReaction === 'function' : false
+      })
     }
 
     res.json({ success: true, data: reaction })
@@ -1492,6 +1601,93 @@ router.post('/webhook/configure', verifyUserToken, async (req, res) => {
       error: error.message,
       response: error.response?.data 
     })
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ==================== Message Delete Route ====================
+
+/**
+ * DELETE /api/chat/inbox/messages/:messageId
+ * Delete a message from the database
+ * Requirements: Message deletion for user chat
+ */
+router.delete('/messages/:messageId', verifyUserToken, async (req, res) => {
+  try {
+    const { messageId } = req.params
+    
+    if (!supabaseService) {
+      return res.status(500).json({ success: false, error: 'Database not available' })
+    }
+
+    // Get the message to verify ownership
+    const { data: message, error: fetchError } = await supabaseService.getById('chat_messages', messageId)
+    
+    if (fetchError || !message) {
+      return res.status(404).json({ success: false, error: 'Mensagem não encontrada' })
+    }
+
+    // Get the conversation to verify user ownership
+    const chatService = new ChatService()
+    const conversation = await chatService.getConversation(req.userToken, message.conversation_id)
+    
+    if (!conversation) {
+      return res.status(403).json({ success: false, error: 'Acesso negado' })
+    }
+
+    // Delete the message
+    const { error: deleteError } = await supabaseService.delete('chat_messages', messageId)
+    
+    if (deleteError) {
+      logger.error('Error deleting message', { 
+        error: deleteError.message, 
+        messageId,
+        userToken: req.userToken?.substring(0, 8)
+      })
+      return res.status(500).json({ success: false, error: 'Erro ao excluir mensagem' })
+    }
+
+    logger.info('Message deleted', { 
+      messageId, 
+      conversationId: message.conversation_id,
+      userToken: req.userToken?.substring(0, 8)
+    })
+
+    // Broadcast message deletion via WebSocket using broadcastMessageUpdate
+    const chatHandler = req.app.locals.chatHandler
+    if (chatHandler && typeof chatHandler.broadcastMessageUpdate === 'function') {
+      try {
+        chatHandler.broadcastMessageUpdate(message.conversation_id, {
+          id: messageId,
+          content: '🚫 Esta mensagem foi apagada',
+          is_edited: false,
+          is_deleted: true
+        })
+        logger.debug('WebSocket message deletion broadcast sent', { 
+          messageId, 
+          conversationId: message.conversation_id 
+        })
+      } catch (wsError) {
+        // Log WebSocket error but don't fail the deletion operation
+        logger.warn('WebSocket broadcast failed for message deletion', {
+          error: wsError.message,
+          messageId,
+          conversationId: message.conversation_id,
+          userToken: req.userToken?.substring(0, 8)
+        })
+      }
+    } else {
+      logger.warn('WebSocket handler unavailable for message deletion broadcast', {
+        messageId,
+        conversationId: message.conversation_id,
+        hasHandler: !!chatHandler,
+        hasMethod: chatHandler ? typeof chatHandler.broadcastMessageUpdate === 'function' : false
+      })
+    }
+
+    res.json({ success: true, message: 'Mensagem excluída com sucesso' })
+  } catch (error) {
+    logger.error('Error deleting message', { error: error.message, messageId: req.params.messageId })
     res.status(500).json({ success: false, error: error.message })
   }
 })

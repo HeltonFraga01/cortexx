@@ -12,6 +12,7 @@ const { logger } = require('../utils/logger');
 const { requireAgentAuth } = require('../middleware/agentAuth');
 const InboxService = require('../services/InboxService');
 const AgentService = require('../services/AgentService');
+const SupabaseService = require('../services/SupabaseService');
 
 // Services will be initialized with db
 let inboxService = null;
@@ -1423,6 +1424,593 @@ router.get('/custom-themes/:id', requireAgentAuth(null), async (req, res) => {
       endpoint: '/api/agent/custom-themes/:id',
     });
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== CONTACT IMPORT ROUTES ====================
+
+const multer = require('multer');
+const axios = require('axios');
+const { validatePhoneFormat, normalizePhoneNumber, sanitizePhoneNumber } = require('../utils/phoneUtils');
+
+// Configurar multer para upload de arquivos CSV
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Apenas arquivos CSV são permitidos'));
+    }
+  }
+});
+
+/**
+ * Mapeia campos do contato WUZAPI para variáveis padrão
+ * @param {Object} contact - Contato do WUZAPI
+ * @param {string} phone - Telefone normalizado
+ * @returns {Object} Objeto com variáveis mapeadas
+ */
+function mapWuzapiContactToVariables(contact, phone) {
+  const nome = contact.FullName || contact.PushName || contact.FirstName || contact.BusinessName || '';
+  
+  const variables = {
+    nome: nome,
+    telefone: phone
+  };
+  
+  // Adicionar empresa se disponível
+  if (contact.BusinessName) {
+    variables.empresa = contact.BusinessName;
+  }
+  
+  return variables;
+}
+
+/**
+ * Normaliza nome de variável para garantir consistência
+ * @param {string} name - Nome da variável
+ * @returns {string} Nome normalizado
+ */
+function normalizeVariableName(name) {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '_')  // Substituir espaços por underscore
+    .replace(/[^a-z0-9_]/g, '');  // Remover caracteres especiais
+}
+
+// Valida número de telefone usando as novas funções de validação
+function validatePhoneNumber(phone) {
+  const result = validatePhoneFormat(phone);
+  
+  if (result.isValid) {
+    return { valid: true, normalized: result.normalized };
+  } else {
+    return { valid: false, reason: result.error };
+  }
+}
+
+// Parse CSV
+function parseCSV(content) {
+  const lines = content.split('\n').filter(line => line.trim());
+  
+  if (lines.length === 0) {
+    throw new Error('Arquivo CSV vazio');
+  }
+
+  // Normalizar headers
+  const rawHeaders = lines[0].split(',').map(h => h.trim());
+  const headers = rawHeaders.map(h => normalizeVariableName(h));
+  
+  if (!headers.includes('phone') && !headers.includes('telefone')) {
+    throw new Error('CSV deve conter coluna "phone" ou "telefone"');
+  }
+
+  const phoneIndex = headers.indexOf('phone') !== -1 ? headers.indexOf('phone') : headers.indexOf('telefone');
+  const nameIndex = headers.indexOf('name') !== -1 ? headers.indexOf('name') : headers.indexOf('nome');
+  const customVariables = headers.filter((h, i) => i !== phoneIndex && i !== nameIndex && h);
+
+  const contacts = [];
+  const errors = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+
+    const values = line.split(',').map(v => v.trim());
+    const phone = values[phoneIndex];
+    const name = nameIndex !== -1 ? values[nameIndex] : '';
+
+    // Mapear variáveis customizadas com nomes normalizados
+    const variables = {};
+    customVariables.forEach(varName => {
+      const varIndex = headers.indexOf(varName);
+      if (varIndex !== -1 && values[varIndex]) {
+        variables[varName] = values[varIndex].trim();
+      }
+    });
+
+    const validation = validatePhoneNumber(phone);
+    
+    if (validation.valid) {
+      contacts.push({
+        phone: validation.normalized,
+        name: name || null,
+        variables
+      });
+    } else {
+      errors.push({
+        line: i + 1,
+        phone,
+        reason: validation.reason
+      });
+    }
+  }
+
+  return { contacts, errors, customVariables };
+}
+
+/**
+ * POST /api/agent/contacts/import/wuzapi
+ * Import contacts from WUZAPI for agents
+ * Requirements: 1.2, 1.4
+ */
+router.post('/contacts/import/wuzapi', requireAgentAuth(null), async (req, res) => {
+  try {
+    initServices(req.app.locals.db);
+    
+    const agentId = req.agent.id;
+    const { instance, inboxId } = req.body;
+
+    if (!instance) {
+      return res.status(400).json({
+        error: 'Instância não fornecida',
+        message: 'Parâmetro instance é obrigatório'
+      });
+    }
+
+    // Validate agent has access to the inbox if specified
+    if (inboxId) {
+      const agentInboxes = await inboxService.listAgentInboxes(agentId);
+      const hasAccess = agentInboxes.some(inbox => inbox.id === parseInt(inboxId, 10));
+      
+      if (!hasAccess) {
+        return res.status(403).json({
+          error: 'Acesso negado',
+          message: 'Agente não tem acesso a esta caixa de entrada'
+        });
+      }
+    }
+
+    // Get agent's WUZAPI token from their assigned inboxes
+    const agentInboxes = await inboxService.listAgentInboxes(agentId);
+    const whatsappInbox = agentInboxes.find(inbox => 
+      inbox.channelType === 'whatsapp' && 
+      inbox.wuzapiToken &&
+      (!inboxId || inbox.id === parseInt(inboxId, 10))
+    );
+
+    if (!whatsappInbox) {
+      return res.status(400).json({
+        error: 'Token WUZAPI não encontrado',
+        message: 'Nenhuma caixa de entrada WhatsApp configurada encontrada'
+      });
+    }
+
+    const wuzapiBaseUrl = process.env.WUZAPI_BASE_URL || 'https://wzapi.wasend.com.br';
+
+    logger.info('Agent importing contacts from WUZAPI', {
+      instance,
+      agentId,
+      inboxId: whatsappInbox.id,
+      tokenPrefix: whatsappInbox.wuzapiToken.substring(0, 8) + '...'
+    });
+
+    // Fetch contacts via WUZAPI using agent's token
+    const response = await axios.get(
+      `${wuzapiBaseUrl}/user/contacts`,
+      {
+        headers: {
+          'token': whatsappInbox.wuzapiToken,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      }
+    );
+
+    const wuzapiResponse = response.data;
+
+    if (!wuzapiResponse || !wuzapiResponse.data) {
+      logger.error('Invalid WUZAPI response for agent', { wuzapiResponse, agentId });
+      throw new Error('Resposta inválida do WUZAPI');
+    }
+
+    const wuzapiContacts = wuzapiResponse.data;
+
+    // Transform contacts object to array
+    const contacts = Object.entries(wuzapiContacts)
+      .filter(([jid, contact]) => jid && jid.includes('@') && contact.Found)
+      .map(([jid, contact]) => {
+        const phone = jid.split('@')[0];
+        const validation = validatePhoneNumber(phone);
+        const normalizedPhone = validation.valid ? validation.normalized : phone;
+        
+        // Map WUZAPI fields to standard variables
+        const variables = mapWuzapiContactToVariables(contact, normalizedPhone);
+
+        return {
+          phone: normalizedPhone,
+          name: variables.nome || null,
+          variables: variables,
+          valid: validation.valid,
+          inboxId: whatsappInbox.id
+        };
+      })
+      .filter(contact => contact.valid);
+
+    logger.info('Agent contacts processed and validated', {
+      agentId,
+      inboxId: whatsappInbox.id,
+      total: contacts.length
+    });
+
+    // Persist contacts to database
+    const crypto = require('crypto');
+    const now = new Date().toISOString();
+    const contactsToUpsert = [];
+    
+    for (const contact of contacts) {
+      // Convert phone to JID format (phone@s.whatsapp.net)
+      const contactJid = contact.phone.includes('@') ? contact.phone : `${contact.phone}@s.whatsapp.net`;
+      
+      contactsToUpsert.push({
+        id: crypto.randomUUID(),
+        account_id: whatsappInbox.accountId,
+        contact_jid: contactJid,
+        contact_name: contact.name,
+        inbox_id: whatsappInbox.id,
+        status: 'open',
+        created_at: now,
+        updated_at: now
+      });
+    }
+    
+    let imported = 0;
+    let updated = 0;
+    
+    if (contactsToUpsert.length > 0) {
+      // Get existing contacts to know which are new vs updates
+      const contactJids = contactsToUpsert.map(c => c.contact_jid);
+      const { data: existingContacts } = await SupabaseService.adminClient
+        .from('conversations')
+        .select('contact_jid')
+        .eq('account_id', whatsappInbox.accountId)
+        .in('contact_jid', contactJids);
+      
+      const existingJids = new Set((existingContacts || []).map(c => c.contact_jid));
+      const newContacts = contactsToUpsert.filter(c => !existingJids.has(c.contact_jid));
+      const existingToUpdate = contactsToUpsert.filter(c => existingJids.has(c.contact_jid));
+      
+      // Batch upsert in chunks of 100 for better performance
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < contactsToUpsert.length; i += BATCH_SIZE) {
+        const batch = contactsToUpsert.slice(i, i + BATCH_SIZE);
+        
+        // Use upsert with onConflict to handle duplicates
+        const { data: upsertResult, error: upsertError } = await SupabaseService.adminClient
+          .from('conversations')
+          .upsert(batch, {
+            onConflict: 'account_id,contact_jid',
+            ignoreDuplicates: false
+          })
+          .select('id');
+        
+        if (upsertError) {
+          // If upsert fails, fall back to individual inserts
+          logger.warn('Batch upsert failed, falling back to individual inserts', { 
+            error: upsertError.message,
+            batchStart: i,
+            batchSize: batch.length
+          });
+          
+          for (const contact of batch) {
+            const { data: existing } = await SupabaseService.adminClient
+              .from('conversations')
+              .select('id')
+              .eq('account_id', whatsappInbox.accountId)
+              .eq('contact_jid', contact.contact_jid)
+              .limit(1);
+            
+            if (!existing || existing.length === 0) {
+              const { error: insertError } = await SupabaseService.adminClient
+                .from('conversations')
+                .insert(contact);
+              
+              if (!insertError) {
+                imported++;
+              }
+            } else if (contact.contact_name) {
+              // Update name if we have one
+              await SupabaseService.adminClient
+                .from('conversations')
+                .update({ 
+                  contact_name: contact.contact_name, 
+                  updated_at: now 
+                })
+                .eq('account_id', whatsappInbox.accountId)
+                .eq('contact_jid', contact.contact_jid);
+              updated++;
+            }
+          }
+        } else {
+          // Upsert succeeded
+          imported = newContacts.length;
+          updated = existingToUpdate.length;
+        }
+      }
+    }
+    
+    logger.info('Agent contacts persisted to database', {
+      agentId,
+      inboxId: whatsappInbox.id,
+      total: contacts.length,
+      imported,
+      updated
+    });
+
+    res.json({
+      success: true,
+      contacts: contacts.map(c => ({
+        phone: c.phone,
+        name: c.name,
+        variables: c.variables,
+        inboxId: c.inboxId
+      })),
+      total: contacts.length,
+      imported,
+      updated,
+      inboxId: whatsappInbox.id,
+      inboxName: whatsappInbox.name
+    });
+
+  } catch (error) {
+    logger.error('Error importing contacts from WUZAPI for agent:', {
+      error: error.message,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      responseData: error.response?.data,
+      code: error.code,
+      agentId: req.agent?.id,
+      instance,
+      inboxId,
+      endpoint: '/api/agent/contacts/import/wuzapi',
+      stack: error.stack
+    });
+
+    let statusCode = 500;
+    let errorMessage = error.message;
+
+    if (error.response?.status === 401) {
+      statusCode = 401;
+      errorMessage = 'Token WUZAPI inválido';
+    } else if (error.response?.status === 404) {
+      statusCode = 404;
+      errorMessage = 'Instância não encontrada';
+    } else if (error.code === 'ECONNREFUSED') {
+      statusCode = 503;
+      errorMessage = 'Serviço WUZAPI indisponível';
+    } else if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+      statusCode = 408;
+      errorMessage = 'Tempo limite excedido ao conectar com WUZAPI';
+    }
+
+    res.status(statusCode).json({
+      error: 'Erro ao importar contatos',
+      message: errorMessage
+    });
+  }
+});
+
+/**
+ * POST /api/agent/contacts/import/csv
+ * Validate and import contacts from CSV for agents
+ * Requirements: 1.3, 1.4
+ */
+router.post('/contacts/import/csv', requireAgentAuth(null), upload.single('file'), async (req, res) => {
+  try {
+    initServices(req.app.locals.db);
+    
+    const agentId = req.agent.id;
+    const { inboxId } = req.body;
+
+    if (!req.file) {
+      return res.status(400).json({
+        error: 'Arquivo não fornecido',
+        message: 'É necessário enviar um arquivo CSV'
+      });
+    }
+
+    // Validate agent has access to the inbox if specified
+    if (inboxId) {
+      const agentInboxes = await inboxService.listAgentInboxes(agentId);
+      const hasAccess = agentInboxes.some(inbox => inbox.id === parseInt(inboxId, 10));
+      
+      if (!hasAccess) {
+        return res.status(403).json({
+          error: 'Acesso negado',
+          message: 'Agente não tem acesso a esta caixa de entrada'
+        });
+      }
+    }
+
+    logger.info('Agent validating CSV file', {
+      agentId,
+      filename: req.file.originalname,
+      size: req.file.size,
+      inboxId
+    });
+
+    const content = req.file.buffer.toString('utf-8');
+    const result = parseCSV(content);
+
+    // Add inbox information to contacts
+    const contactsWithInbox = result.contacts.map(contact => ({
+      ...contact,
+      inboxId: inboxId ? parseInt(inboxId, 10) : null
+    }));
+
+    logger.info('Agent CSV validated', {
+      agentId,
+      totalContacts: result.contacts.length,
+      totalErrors: result.errors.length,
+      customVariables: result.customVariables,
+      inboxId
+    });
+
+    res.json({
+      success: true,
+      valid: result.errors.length === 0,
+      contacts: contactsWithInbox,
+      errors: result.errors,
+      customVariables: result.customVariables,
+      summary: {
+        total: result.contacts.length + result.errors.length,
+        valid: result.contacts.length,
+        invalid: result.errors.length
+      },
+      inboxId: inboxId ? parseInt(inboxId, 10) : null
+    });
+
+  } catch (error) {
+    logger.error('Error validating CSV for agent:', {
+      error: error.message,
+      agentId: req.agent?.id,
+      filename: req.file?.originalname,
+      fileSize: req.file?.size,
+      inboxId,
+      endpoint: '/api/agent/contacts/import/csv',
+      stack: error.stack
+    });
+    
+    res.status(400).json({
+      error: 'Erro ao processar CSV',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/agent/contacts/import/manual
+ * Validate manual phone numbers for agents
+ * Requirements: 1.3, 1.4
+ */
+router.post('/contacts/import/manual', requireAgentAuth(null), async (req, res) => {
+  try {
+    initServices(req.app.locals.db);
+    
+    const agentId = req.agent.id;
+    const { numbers, inboxId } = req.body;
+
+    if (!numbers || !Array.isArray(numbers)) {
+      return res.status(400).json({
+        error: 'Números inválidos',
+        message: 'É necessário fornecer um array de números'
+      });
+    }
+
+    if (numbers.length === 0) {
+      return res.status(400).json({
+        error: 'Lista vazia',
+        message: 'É necessário fornecer pelo menos um número'
+      });
+    }
+
+    if (numbers.length > 1000) {
+      return res.status(400).json({
+        error: 'Lista muito grande',
+        message: 'Máximo de 1000 números por vez'
+      });
+    }
+
+    // Validate agent has access to the inbox if specified
+    if (inboxId) {
+      const agentInboxes = await inboxService.listAgentInboxes(agentId);
+      const hasAccess = agentInboxes.some(inbox => inbox.id === parseInt(inboxId, 10));
+      
+      if (!hasAccess) {
+        return res.status(403).json({
+          error: 'Acesso negado',
+          message: 'Agente não tem acesso a esta caixa de entrada'
+        });
+      }
+    }
+
+    logger.info('Agent validating manual numbers', {
+      agentId,
+      total: numbers.length,
+      inboxId
+    });
+
+    const valid = [];
+    const invalid = [];
+
+    numbers.forEach((number, index) => {
+      const validation = validatePhoneNumber(number);
+      
+      if (validation.valid) {
+        valid.push({
+          phone: validation.normalized,
+          name: null,
+          variables: {},
+          inboxId: inboxId ? parseInt(inboxId, 10) : null
+        });
+      } else {
+        invalid.push({
+          number,
+          reason: validation.reason,
+          line: index + 1
+        });
+      }
+    });
+
+    logger.info('Agent numbers validated', {
+      agentId,
+      valid: valid.length,
+      invalid: invalid.length,
+      inboxId
+    });
+
+    res.json({
+      success: true,
+      valid,
+      invalid,
+      summary: {
+        total: numbers.length,
+        validCount: valid.length,
+        invalidCount: invalid.length
+      },
+      inboxId: inboxId ? parseInt(inboxId, 10) : null
+    });
+
+  } catch (error) {
+    logger.error('Error validating manual numbers for agent:', {
+      error: error.message,
+      agentId: req.agent?.id,
+      numbersCount: req.body?.numbers?.length || 0,
+      inboxId: req.body?.inboxId,
+      endpoint: '/api/agent/contacts/import/manual',
+      stack: error.stack
+    });
+    
+    res.status(500).json({
+      error: 'Erro ao validar números',
+      message: error.message
+    });
   }
 });
 

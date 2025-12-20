@@ -137,7 +137,7 @@ export async function getAgentConversations(
   }
 }
 
-export async function getAgentConversation(conversationId: number): Promise<Conversation> {
+export async function getAgentConversation(conversationId: string | number): Promise<Conversation> {
   const options = getRequestOptions()
   const response = await fetch(`${API_BASE}/api/agent/chat/conversations/${conversationId}`, options)
   const result = await response.json()

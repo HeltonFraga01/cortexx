@@ -43,7 +43,8 @@ import {
   Music,
   Github,
   Music2,
-  Globe
+  Globe,
+  Trash2
 } from 'lucide-react'
 import { formatWhatsAppText, hasWhatsAppFormatting } from '@/lib/whatsapp-formatter'
 import { detectPlatform, getGenericTitle, type PlatformInfo } from '@/lib/platform-detector'
@@ -53,11 +54,12 @@ import { truncateDescription } from '@/lib/utils'
 interface MessageBubbleProps {
   message: ChatMessage
   onReply: (message: ChatMessage) => void
+  onDelete?: (message: ChatMessage) => void
   searchQuery?: string
   showParticipant?: boolean // Show participant name for group messages
 }
 
-export function MessageBubble({ message, onReply, searchQuery, showParticipant = false }: MessageBubbleProps) {
+export function MessageBubble({ message, onReply, onDelete, searchQuery, showParticipant = false }: MessageBubbleProps) {
   const [showActions, setShowActions] = useState(false)
   const chatApi = useChatApi()
   const isOutgoing = message.direction === 'outgoing'
@@ -218,6 +220,15 @@ export function MessageBubble({ message, onReply, searchQuery, showParticipant =
                   <Copy className="h-3 w-3 mr-2" />
                   Copiar
                 </DropdownMenuItem>
+                {onDelete && (
+                  <DropdownMenuItem 
+                    onClick={() => onDelete(message)} 
+                    className="text-xs py-1.5 text-destructive focus:text-destructive"
+                  >
+                    <Trash2 className="h-3 w-3 mr-2" />
+                    Excluir
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

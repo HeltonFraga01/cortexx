@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Diagnosticar Erro ao Excluir Mensagem",
+  "description": "Quando acionado, usa MCP para reproduzir o erro de exclusão de mensagem no endpoint /user/chat, diagnostica as causas, cria um diagrama Mermaid com as possibilidades de correção e simula novamente para validar a solução.",
+  "version": "1",
+  "when": {
+    "type": "promptSubmit"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Diagnostique o erro ao excluir mensagem no endpoint http://cortexx.localhost:8080/user/chat seguindo estes passos:\n\n1. **Reproduzir o erro**: Use o MCP para fazer uma requisição DELETE ao endpoint de exclusão de mensagem e capture o erro exato retornado.\n\n2. **Analisar logs**: Verifique os arquivos em `server/logs/` e `logs/` para identificar stack traces e mensagens de erro relacionadas.\n\n3. **Investigar código**: Examine os arquivos relevantes:\n   - `server/routes/userChatRoutes.js` ou similar para o endpoint de chat\n   - `server/services/ChatService.js` para a lógica de exclusão\n   - `server/middleware/` para possíveis bloqueios de autenticação/autorização\n\n4. **Criar diagrama Mermaid**: Gere um diagrama flowchart mostrando:\n   - O fluxo atual da requisição\n   - Onde o erro ocorre\n   - Possíveis causas (auth, permissão, validação, DB)\n   - Soluções propostas para cada causa\n\n5. **Aplicar correção**: Implemente a correção mais provável baseada no diagnóstico.\n\n6. **Simular novamente**: Use o MCP para testar a exclusão de mensagem após a correção e confirme que funciona.\n\n7. **Documentar**: Resuma o problema encontrado, a solução aplicada e o resultado do teste."
+  }
+}
