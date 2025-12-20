@@ -18,17 +18,17 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': {
           target: 'http://localhost:3001',
-          changeOrigin: true,
+          changeOrigin: false, // Preserve original Host header for subdomain-based multi-tenancy
           secure: false,
         },
         '/health': {
           target: 'http://localhost:3001',
-          changeOrigin: true,
+          changeOrigin: false, // Preserve original Host header for subdomain-based multi-tenancy
           secure: false,
         },
         '/socket.io': {
           target: 'http://localhost:3001',
-          changeOrigin: true,
+          changeOrigin: false, // Preserve original Host header for subdomain-based multi-tenancy
           secure: false,
           ws: true,
         }

@@ -247,14 +247,28 @@ class SuperadminService {
    */
   async createTenant(data, superadminId) {
     try {
-      const { subdomain, name, settings = {} } = data;
+      const { subdomain, name, settings = {}, ownerEmail, ownerName, ownerPassword } = data;
 
       // Validate subdomain format
       if (!this.validateSubdomain(subdomain)) {
         throw new Error('Invalid subdomain format. Use lowercase alphanumeric with hyphens only.');
       }
 
-      // Start transaction
+      // Validate owner data if provided
+      if (ownerEmail && ownerPassword) {
+        // Check if email already exists
+        const { data: existingAgent } = await this.supabase.adminClient
+          .from('agents')
+          .select('id')
+          .eq('email', ownerEmail)
+          .single();
+
+        if (existingAgent) {
+          throw new Error('An agent with this email already exists');
+        }
+      }
+
+      // Start transaction - Create tenant
       const { data: tenant, error: tenantError } = await this.supabase.adminClient
         .from('tenants')
         .insert({
@@ -309,19 +323,106 @@ class SuperadminService {
           .insert(tenantPlans);
       }
 
+      // Create default account and owner agent if owner data provided
+      let account = null;
+      let ownerAgent = null;
+      
+      if (ownerEmail && ownerPassword) {
+        // Hash password using crypto.scrypt (same format as AgentService)
+        const passwordHash = await this.hashPasswordForAgent(ownerPassword);
+
+        // Step 1: Create owner agent first (without account_id initially)
+        // We need the agent ID to set as owner_user_id in the account
+        const { data: newAgent, error: agentError } = await this.supabase.adminClient
+          .from('agents')
+          .insert({
+            email: ownerEmail,
+            name: ownerName || name,
+            password_hash: passwordHash,
+            role: 'owner',
+            status: 'active',
+            availability: 'offline'
+          })
+          .select()
+          .single();
+
+        if (agentError) {
+          // Rollback tenant creation
+          await this.supabase.adminClient.from('tenants').delete().eq('id', tenant.id);
+          throw new Error(`Failed to create owner agent: ${agentError.message}`);
+        }
+        ownerAgent = newAgent;
+
+        // Step 2: Create account with owner_user_id set to the agent's ID
+        const { data: newAccount, error: accountError } = await this.supabase.adminClient
+          .from('accounts')
+          .insert({
+            tenant_id: tenant.id,
+            name: `${name} - Principal`,
+            owner_user_id: ownerAgent.id,
+            wuzapi_token: `wuzapi-${tenant.id.substring(0, 8)}`,
+            status: 'active',
+            settings: {}
+          })
+          .select()
+          .single();
+
+        if (accountError) {
+          // Rollback agent and tenant creation
+          await this.supabase.adminClient.from('agents').delete().eq('id', ownerAgent.id);
+          await this.supabase.adminClient.from('tenants').delete().eq('id', tenant.id);
+          throw new Error(`Failed to create account: ${accountError.message}`);
+        }
+        account = newAccount;
+
+        // Step 3: Update agent with account_id
+        const { error: updateAgentError } = await this.supabase.adminClient
+          .from('agents')
+          .update({ account_id: account.id })
+          .eq('id', ownerAgent.id);
+
+        if (updateAgentError) {
+          // Rollback everything
+          await this.supabase.adminClient.from('accounts').delete().eq('id', account.id);
+          await this.supabase.adminClient.from('agents').delete().eq('id', ownerAgent.id);
+          await this.supabase.adminClient.from('tenants').delete().eq('id', tenant.id);
+          throw new Error(`Failed to link agent to account: ${updateAgentError.message}`);
+        }
+
+        logger.info('Tenant owner account and agent created', {
+          tenantId: tenant.id,
+          accountId: account.id,
+          agentId: ownerAgent.id,
+          ownerEmail
+        });
+      }
+
       // Log the action
       await this.logAuditAction(superadminId, 'create', 'tenant', tenant.id, tenant.id, {
         subdomain,
-        name
+        name,
+        ownerEmail,
+        accountId: account?.id,
+        agentId: ownerAgent?.id
       });
 
       logger.info('Tenant created successfully', { 
         tenantId: tenant.id,
         subdomain,
-        superadminId 
+        superadminId,
+        hasOwner: !!ownerAgent
       });
 
-      return tenant;
+      return {
+        ...tenant,
+        account,
+        ownerAgent: ownerAgent ? {
+          id: ownerAgent.id,
+          email: ownerAgent.email,
+          name: ownerAgent.name,
+          role: ownerAgent.role
+        } : null
+      };
     } catch (error) {
       logger.error('Failed to create tenant', { 
         error: error.message,

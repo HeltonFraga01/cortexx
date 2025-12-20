@@ -1,27 +1,14 @@
 const express = require('express');
-const adminValidator = require('../validators/adminValidator');
 const brandingValidator = require('../validators/brandingValidator');
-const errorHandler = require('../middleware/errorHandler');
 const htmlSanitizer = require('../utils/htmlSanitizer');
 const { logger } = require('../utils/logger');
 const { requireAdmin } = require('../middleware/auth');
+const TenantBrandingService = require('../services/TenantBrandingService');
 
 // Importar função para invalidar cache de branding
-// TEMPORARIAMENTE DESABILITADO devido a dependência circular
 let invalidateBrandingCache = () => {
   logger.info('ℹ️ invalidateBrandingCache não disponível (modo de teste ou inicialização)');
 };
-
-// try {
-//   const serverModule = require('../index');
-//   invalidateBrandingCache = serverModule.invalidateBrandingCache;
-// } catch (error) {
-//   // Durante testes ou inicialização, o módulo pode não estar disponível
-//   logger.warn('⚠️ Não foi possível importar invalidateBrandingCache do index.js');
-//   invalidateBrandingCache = () => {
-//     logger.info('ℹ️ invalidateBrandingCache não disponível (modo de teste ou inicialização)');
-//   };
-// }
 
 const router = express.Router();
 
@@ -29,10 +16,11 @@ const router = express.Router();
  * Rota para obter configuração de branding (ADMIN)
  * GET /api/branding
  * 
- * Requer autenticação de admin via sessão.
+ * Requer autenticação de admin via sessão e contexto de tenant.
  * 
  * Responses:
  * - 200: Configuração de branding recuperada com sucesso
+ * - 400: Contexto de tenant ausente
  * - 401: Não autenticado ou sessão expirada
  * - 403: Não possui permissões administrativas
  * - 500: Erro interno do servidor
@@ -43,10 +31,27 @@ router.get('/',
     const startTime = Date.now();
     
     try {
-      // Sessão já foi validada pelo middleware requireAdmin
-      // Buscar configuração de branding do banco de dados
-      const db = req.app.locals.db;
-      const brandingConfig = await db.getBrandingConfig();
+      // Extract tenant context
+      const tenantId = req.context?.tenantId;
+      
+      if (!tenantId) {
+        logger.warn('Missing tenant context in branding GET request', {
+          url: req.url,
+          method: req.method,
+          context: req.context,
+          ip: req.ip
+        });
+        
+        return res.status(400).json({
+          success: false,
+          error: 'Contexto de tenant é obrigatório',
+          code: 'MISSING_TENANT_CONTEXT',
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Get branding from tenant-specific table
+      const brandingConfig = await TenantBrandingService.getBrandingByTenantId(tenantId);
       
       const responseTime = Date.now() - startTime;
       
@@ -54,6 +59,7 @@ router.get('/',
         url: req.url,
         method: req.method,
         response_time_ms: responseTime,
+        tenant_id: tenantId,
         config_id: brandingConfig.id,
         app_name: brandingConfig.appName,
         user_agent: req.get('User-Agent'),
@@ -73,6 +79,7 @@ router.get('/',
         url: req.url,
         method: req.method,
         response_time_ms: responseTime,
+        tenant_id: req.context?.tenantId,
         error_message: error.message,
         error_stack: error.stack,
         user_agent: req.get('User-Agent'),
@@ -93,7 +100,8 @@ router.get('/',
  * Rota para atualizar configuração de branding (ADMIN)
  * PUT /api/branding
  * 
- * Requer autenticação de admin via sessão.
+ * Requer autenticação de admin via sessão e contexto de tenant.
+ * Valida que o tenant da sessão corresponde ao tenant do contexto.
  * 
  * Body:
  * - appName: string (1-50 caracteres, obrigatório)
@@ -105,9 +113,9 @@ router.get('/',
  * 
  * Responses:
  * - 200: Configuração de branding atualizada com sucesso
- * - 400: Dados de entrada inválidos
+ * - 400: Dados de entrada inválidos ou contexto de tenant ausente
  * - 401: Não autenticado ou sessão expirada
- * - 403: Não possui permissões administrativas
+ * - 403: Não possui permissões administrativas ou acesso cross-tenant
  * - 500: Erro interno do servidor
  */
 router.put('/',
@@ -115,7 +123,6 @@ router.put('/',
   async (req, res) => {
     const startTime = Date.now();
     
-    // Log session state for debugging
     logger.info('📝 Branding PUT request received', {
       url: req.url,
       method: req.method,
@@ -123,13 +130,52 @@ router.put('/',
       hasSession: !!req.session,
       userId: req.session?.userId,
       role: req.session?.role,
-      hasUserToken: !!req.session?.userToken,
+      tenantId: req.context?.tenantId,
+      sessionTenantId: req.session?.tenantId,
       ip: req.ip,
       userAgent: req.get('User-Agent')
     });
     
     try {
-      // Session already validated by requireAdmin middleware
+      // Extract tenant context
+      const tenantId = req.context?.tenantId;
+      
+      if (!tenantId) {
+        logger.warn('Missing tenant context in branding PUT request', {
+          url: req.url,
+          method: req.method,
+          context: req.context,
+          ip: req.ip
+        });
+        
+        return res.status(400).json({
+          success: false,
+          error: 'Contexto de tenant é obrigatório',
+          code: 'MISSING_TENANT_CONTEXT',
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Cross-tenant access validation
+      if (req.session?.tenantId && req.session.tenantId !== tenantId) {
+        logger.warn('🚨 Cross-tenant branding access attempt detected', {
+          url: req.url,
+          method: req.method,
+          sessionTenantId: req.session.tenantId,
+          contextTenantId: tenantId,
+          userId: req.session?.userId,
+          ip: req.ip,
+          userAgent: req.get('User-Agent')
+        });
+        
+        return res.status(403).json({
+          success: false,
+          error: 'Acesso cross-tenant negado',
+          code: 'CROSS_TENANT_ACCESS_DENIED',
+          timestamp: new Date().toISOString()
+        });
+      }
+
       const brandingData = req.body;
 
       // Validação básica dos dados de entrada
@@ -146,14 +192,13 @@ router.put('/',
       logger.info('📥 Payload de branding recebido', {
         url: req.url,
         method: req.method,
+        tenant_id: tenantId,
         has_custom_html: brandingData.customHomeHtml !== undefined && brandingData.customHomeHtml !== null,
         custom_html_length: brandingData.customHomeHtml ? brandingData.customHomeHtml.length : 0,
-        custom_html_preview: brandingData.customHomeHtml ? brandingData.customHomeHtml.substring(0, 100) + '...' : null,
         app_name: brandingData.appName,
         has_primary_color: !!brandingData.primaryColor,
         has_secondary_color: !!brandingData.secondaryColor,
         has_support_phone: brandingData.supportPhone !== undefined,
-        support_phone: brandingData.supportPhone,
         user_agent: req.get('User-Agent'),
         ip: req.ip
       });
@@ -164,9 +209,8 @@ router.put('/',
         if (!hexColorPattern.test(brandingData.primaryColor)) {
           logger.warn('❌ Cor primária com formato inválido', {
             url: req.url,
-            method: req.method,
+            tenant_id: tenantId,
             primary_color: brandingData.primaryColor,
-            user_agent: req.get('User-Agent'),
             ip: req.ip
           });
           
@@ -177,15 +221,7 @@ router.put('/',
             timestamp: new Date().toISOString()
           });
         }
-        logger.info('✅ Cor primária validada', {
-          url: req.url,
-          primary_color: brandingData.primaryColor
-        });
       } else if (brandingData.primaryColor === '') {
-        // Cor vazia - definir como null para usar padrão
-        logger.info('🗑️ Cor primária vazia - será removida (usar padrão)', {
-          url: req.url
-        });
         brandingData.primaryColor = null;
       }
 
@@ -194,9 +230,8 @@ router.put('/',
         if (!hexColorPattern.test(brandingData.secondaryColor)) {
           logger.warn('❌ Cor secundária com formato inválido', {
             url: req.url,
-            method: req.method,
+            tenant_id: tenantId,
             secondary_color: brandingData.secondaryColor,
-            user_agent: req.get('User-Agent'),
             ip: req.ip
           });
           
@@ -207,15 +242,7 @@ router.put('/',
             timestamp: new Date().toISOString()
           });
         }
-        logger.info('✅ Cor secundária validada', {
-          url: req.url,
-          secondary_color: brandingData.secondaryColor
-        });
       } else if (brandingData.secondaryColor === '') {
-        // Cor vazia - definir como null para usar padrão
-        logger.info('🗑️ Cor secundária vazia - será removida (usar padrão)', {
-          url: req.url
-        });
         brandingData.secondaryColor = null;
       }
 
@@ -223,7 +250,7 @@ router.put('/',
       if (brandingData.customHomeHtml !== undefined && brandingData.customHomeHtml !== null && brandingData.customHomeHtml !== '') {
         logger.info('🔍 Iniciando validação e sanitização do HTML customizado', {
           original_length: brandingData.customHomeHtml.length,
-          url: req.url
+          tenant_id: tenantId
         });
 
         const htmlValidation = htmlSanitizer.validateAndSanitize(brandingData.customHomeHtml);
@@ -231,11 +258,9 @@ router.put('/',
         if (!htmlValidation.success) {
           logger.warn('❌ HTML customizado contém conteúdo perigoso ou inválido', {
             url: req.url,
-            method: req.method,
+            tenant_id: tenantId,
             errors: htmlValidation.errors,
             warnings: htmlValidation.warnings,
-            html_length: brandingData.customHomeHtml.length,
-            user_agent: req.get('User-Agent'),
             ip: req.ip
           });
           
@@ -249,39 +274,9 @@ router.put('/',
           });
         }
         
-        // Substituir HTML original pelo HTML sanitizado
-        const originalLength = brandingData.customHomeHtml.length;
         brandingData.customHomeHtml = htmlValidation.sanitized;
-        
-        logger.info('✅ HTML customizado sanitizado com sucesso', {
-          url: req.url,
-          original_length: originalLength,
-          sanitized_length: htmlValidation.sanitized.length,
-          size_diff: originalLength - htmlValidation.sanitized.length,
-          has_warnings: htmlValidation.warnings && htmlValidation.warnings.length > 0
-        });
-        
-        // Log de warnings se houver
-        if (htmlValidation.warnings && htmlValidation.warnings.length > 0) {
-          logger.info('⚠️ HTML customizado sanitizado com warnings', {
-            url: req.url,
-            method: req.method,
-            warnings: htmlValidation.warnings,
-            user_agent: req.get('User-Agent'),
-            ip: req.ip
-          });
-        }
       } else if (brandingData.customHomeHtml === '') {
-        // HTML vazio - definir como null para limpar no banco
-        logger.info('🗑️ HTML customizado vazio - será removido do banco', {
-          url: req.url
-        });
         brandingData.customHomeHtml = null;
-      } else {
-        logger.info('ℹ️ Nenhum HTML customizado fornecido no payload', {
-          url: req.url,
-          custom_html_value: brandingData.customHomeHtml
-        });
       }
 
       // Validar telefone de suporte se fornecido
@@ -291,10 +286,9 @@ router.put('/',
         if (!phoneValidation.isValid) {
           logger.warn('❌ Telefone de suporte com formato inválido', {
             url: req.url,
-            method: req.method,
+            tenant_id: tenantId,
             support_phone: brandingData.supportPhone,
             error: phoneValidation.error,
-            user_agent: req.get('User-Agent'),
             ip: req.ip
           });
           
@@ -306,42 +300,22 @@ router.put('/',
           });
         }
         
-        // Usar o valor sanitizado (apenas dígitos)
         brandingData.supportPhone = phoneValidation.sanitized;
-        
-        logger.info('✅ Telefone de suporte validado', {
-          url: req.url,
-          support_phone: brandingData.supportPhone
-        });
       }
 
-      // Update branding configuration in database
-      const db = req.app.locals.db;
-      
+      // Update branding using TenantBrandingService
       try {
-        logger.info('📤 Enviando dados para db.updateBrandingConfig()', {
+        logger.info('📤 Enviando dados para TenantBrandingService.updateBrandingByTenantId()', {
           url: req.url,
+          tenant_id: tenantId,
           app_name: brandingData.appName,
           has_logo: !!brandingData.logoUrl,
           has_primary_color: !!brandingData.primaryColor,
           has_secondary_color: !!brandingData.secondaryColor,
-          has_custom_html: !!brandingData.customHomeHtml,
-          custom_html_length: brandingData.customHomeHtml ? brandingData.customHomeHtml.length : 0,
-          support_phone: brandingData.supportPhone
+          has_custom_html: !!brandingData.customHomeHtml
         });
 
-        const updatedConfig = await db.updateBrandingConfig(brandingData);
-        
-        // Log específico para HTML customizado
-        if (updatedConfig.customHomeHtml) {
-          logger.info('✅ HTML customizado salvo com sucesso', {
-            url: req.url,
-            html_length: updatedConfig.customHomeHtml.length,
-            html_size_kb: Math.round(updatedConfig.customHomeHtml.length / 1024),
-            has_script_tags: /<script/i.test(updatedConfig.customHomeHtml),
-            has_style_tags: /<style/i.test(updatedConfig.customHomeHtml)
-          });
-        }
+        const updatedConfig = await TenantBrandingService.updateBrandingByTenantId(tenantId, brandingData);
         
         // Invalidar cache de branding após atualização bem-sucedida
         if (invalidateBrandingCache) {
@@ -355,15 +329,9 @@ router.put('/',
           url: req.url,
           method: req.method,
           response_time_ms: responseTime,
+          tenant_id: tenantId,
           config_id: updatedConfig.id,
           app_name: updatedConfig.appName,
-          has_logo: !!updatedConfig.logoUrl,
-          has_primary_color: !!updatedConfig.primaryColor,
-          has_secondary_color: !!updatedConfig.secondaryColor,
-          has_custom_html: !!updatedConfig.customHomeHtml,
-          custom_html_length: updatedConfig.customHomeHtml ? updatedConfig.customHomeHtml.length : 0,
-          support_phone: updatedConfig.supportPhone,
-          user_agent: req.get('User-Agent'),
           ip: req.ip
         });
 
@@ -375,25 +343,16 @@ router.put('/',
           timestamp: new Date().toISOString()
         });
       } catch (validationError) {
-        // Erro de validação dos dados de branding
         const responseTime = Date.now() - startTime;
         
         logger.warn('Erro de validação na atualização de branding', {
           url: req.url,
-          method: req.method,
+          tenant_id: tenantId,
           response_time_ms: responseTime,
           error_message: validationError.message,
-          branding_data: {
-            appName: brandingData.appName,
-            hasLogoUrl: !!brandingData.logoUrl,
-            hasPrimaryColor: !!brandingData.primaryColor,
-            hasSecondaryColor: !!brandingData.secondaryColor
-          },
-          user_agent: req.get('User-Agent'),
           ip: req.ip
         });
 
-        // Retornar mensagem de erro mais descritiva
         const errorMessage = validationError.message || 'Dados de configuração inválidos';
         return res.status(400).json({
           success: false,
@@ -410,10 +369,9 @@ router.put('/',
         url: req.url,
         method: req.method,
         response_time_ms: responseTime,
+        tenant_id: req.context?.tenantId,
         error_message: error.message,
         error_stack: error.stack,
-        branding_data: req.body,
-        user_agent: req.get('User-Agent'),
         ip: req.ip
       });
 
@@ -432,7 +390,7 @@ router.put('/',
  * GET /api/branding/landing-page (sem autenticação)
  * 
  * Esta rota é pública e não requer autenticação.
- * Retorna o HTML customizado da landing page se configurado.
+ * Usa o contexto de tenant do subdomínio para retornar o HTML correto.
  * 
  * Responses:
  * - 200: HTML da landing page recuperado com sucesso
@@ -444,9 +402,13 @@ router.get('/landing-page',
     const startTime = Date.now();
     
     try {
-      // Buscar configuração de branding do banco de dados
-      const db = req.app.locals.db;
-      const brandingConfig = await db.getBrandingConfig();
+      // Get tenant from context (set by subdomain router)
+      const tenantId = req.context?.tenantId;
+      
+      // Get branding - if no tenant, use defaults
+      const brandingConfig = tenantId 
+        ? await TenantBrandingService.getBrandingByTenantId(tenantId)
+        : TenantBrandingService.getDefaultBranding();
       
       // Verificar se há HTML customizado
       if (!brandingConfig.customHomeHtml) {
@@ -456,6 +418,7 @@ router.get('/landing-page',
           url: req.url,
           method: req.method,
           response_time_ms: responseTime,
+          tenant_id: tenantId,
           user_agent: req.get('User-Agent'),
           ip: req.ip
         });
@@ -474,13 +437,14 @@ router.get('/landing-page',
         url: req.url,
         method: req.method,
         response_time_ms: responseTime,
+        tenant_id: tenantId,
         html_length: brandingConfig.customHomeHtml.length,
         user_agent: req.get('User-Agent'),
         ip: req.ip
       });
 
       // Configurar cache para melhorar performance
-      res.set('Cache-Control', 'public, max-age=300'); // Cache por 5 minutos
+      res.set('Cache-Control', 'public, max-age=300');
 
       return res.status(200).json({
         success: true,
@@ -497,9 +461,9 @@ router.get('/landing-page',
         url: req.url,
         method: req.method,
         response_time_ms: responseTime,
+        tenant_id: req.context?.tenantId,
         error_message: error.message,
         error_stack: error.stack,
-        user_agent: req.get('User-Agent'),
         ip: req.ip
       });
 
@@ -518,8 +482,7 @@ router.get('/landing-page',
  * GET /api/branding/public (sem autenticação)
  * 
  * Esta rota é pública e não requer autenticação.
- * Retorna apenas informações de branding (nome, logo, cores) que são
- * necessárias para exibir a landing page e interface pública.
+ * Usa o contexto de tenant do subdomínio para retornar o branding correto.
  * 
  * Responses:
  * - 200: Configuração de branding recuperada com sucesso
@@ -530,9 +493,13 @@ router.get('/public',
     const startTime = Date.now();
     
     try {
-      // Buscar configuração de branding do banco de dados
-      const db = req.app.locals.db;
-      const brandingConfig = await db.getBrandingConfig();
+      // Get tenant from context (set by subdomain router)
+      const tenantId = req.context?.tenantId;
+      
+      // Get branding - if no tenant, use defaults
+      const brandingConfig = tenantId 
+        ? await TenantBrandingService.getBrandingByTenantId(tenantId)
+        : TenantBrandingService.getDefaultBranding();
       
       // Retornar apenas dados públicos (sem informações sensíveis)
       const publicBrandingData = {
@@ -551,15 +518,15 @@ router.get('/public',
         url: req.url,
         method: req.method,
         response_time_ms: responseTime,
+        tenant_id: tenantId,
         app_name: publicBrandingData.appName,
         has_custom_html: !!publicBrandingData.customHomeHtml,
-        has_support_phone: !!publicBrandingData.supportPhone,
         user_agent: req.get('User-Agent'),
         ip: req.ip
       });
 
       // Configurar cache para melhorar performance
-      res.set('Cache-Control', 'public, max-age=300'); // Cache por 5 minutos
+      res.set('Cache-Control', 'public, max-age=300');
 
       return res.status(200).json({
         success: true,
@@ -574,9 +541,9 @@ router.get('/public',
         url: req.url,
         method: req.method,
         response_time_ms: responseTime,
+        tenant_id: req.context?.tenantId,
         error_message: error.message,
         error_stack: error.stack,
-        user_agent: req.get('User-Agent'),
         ip: req.ip
       });
 

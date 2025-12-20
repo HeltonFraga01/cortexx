@@ -45,7 +45,14 @@ class Database {
   }
 
   // Branding config methods
+  /**
+   * @deprecated Use TenantBrandingService.getBrandingByTenantId(tenantId) instead.
+   * This method queries the global branding_config table which does not support
+   * multi-tenant isolation. It will be removed in a future version.
+   */
   async getBrandingConfig() {
+    logger.warn('⚠️ DEPRECATED: getBrandingConfig() is deprecated. Use TenantBrandingService.getBrandingByTenantId(tenantId) for proper tenant isolation.');
+    
     try {
       // Try to get the first branding config (there should only be one)
       const { data, error } = await SupabaseService.queryAsAdmin('branding_config', (query) =>
@@ -93,7 +100,14 @@ class Database {
     };
   }
 
+  /**
+   * @deprecated Use TenantBrandingService.updateBrandingByTenantId(tenantId, brandingData) instead.
+   * This method updates the global branding_config table which does not support
+   * multi-tenant isolation. It will be removed in a future version.
+   */
   async updateBrandingConfig(brandingData) {
+    logger.warn('⚠️ DEPRECATED: updateBrandingConfig() is deprecated. Use TenantBrandingService.updateBrandingByTenantId(tenantId, brandingData) for proper tenant isolation.');
+    
     try {
       // Validate required fields
       if (!brandingData.appName || brandingData.appName.trim().length === 0) {
@@ -315,6 +329,106 @@ class Database {
   // Note: External database methods (NocoDB, SQL) have been moved to dedicated services.
   // Use NocoDBService for NocoDB operations.
   // Use SupabaseService for direct database operations.
+
+  /**
+   * @deprecated Use TenantSettingsService.getSettings(tenantId) instead.
+   * This method queries the global system_settings table which does not support
+   * multi-tenant isolation. It will be removed in a future version.
+   * 
+   * Migration path:
+   * 1. Create tenant_settings table (migration 009)
+   * 2. Use TenantSettingsService.getSettings(tenantId) for tenant-scoped settings
+   * 3. Remove calls to this method
+   */
+  async getSystemSettings() {
+    logger.warn('⚠️ DEPRECATED: getSystemSettings() is deprecated. Use TenantSettingsService.getSettings(tenantId) for proper tenant isolation.');
+    
+    try {
+      const { data, error } = await SupabaseService.queryAsAdmin('system_settings', (query) =>
+        query.select('key, value, description, updated_by, updated_at')
+      );
+      
+      if (error) {
+        logger.error('Error fetching system settings:', error.message);
+        return {};
+      }
+
+      // Convert array to key-value object
+      const settings = {};
+      for (const row of (data || [])) {
+        settings[row.key] = {
+          value: row.value,
+          description: row.description,
+          updatedBy: row.updated_by,
+          updatedAt: row.updated_at
+        };
+      }
+
+      return settings;
+    } catch (error) {
+      logger.error('Error in getSystemSettings:', error.message);
+      return {};
+    }
+  }
+
+  /**
+   * @deprecated Use TenantSettingsService.updateSettings(tenantId, settings) instead.
+   * This method updates the global system_settings table which does not support
+   * multi-tenant isolation. It will be removed in a future version.
+   * 
+   * Migration path:
+   * 1. Create tenant_settings table (migration 009)
+   * 2. Use TenantSettingsService.updateSettings(tenantId, settings) for tenant-scoped settings
+   * 3. Remove calls to this method
+   */
+  async updateSystemSettings(key, value, description = null, updatedBy = null) {
+    logger.warn('⚠️ DEPRECATED: updateSystemSettings() is deprecated. Use TenantSettingsService.updateSettings(tenantId, settings) for proper tenant isolation.');
+    
+    try {
+      const now = new Date().toISOString();
+      
+      // Check if setting exists
+      const { data: existing } = await SupabaseService.queryAsAdmin('system_settings', (query) =>
+        query.select('id').eq('key', key).single()
+      );
+
+      if (existing) {
+        // Update existing setting
+        const updateData = {
+          value: String(value),
+          updated_at: now
+        };
+        if (description !== null) updateData.description = description;
+        if (updatedBy !== null) updateData.updated_by = updatedBy;
+
+        const { error } = await SupabaseService.adminClient
+          .from('system_settings')
+          .update(updateData)
+          .eq('key', key);
+
+        if (error) throw error;
+      } else {
+        // Insert new setting
+        const { error } = await SupabaseService.adminClient
+          .from('system_settings')
+          .insert({
+            key,
+            value: String(value),
+            description,
+            updated_by: updatedBy,
+            updated_at: now
+          });
+
+        if (error) throw error;
+      }
+
+      logger.info('System setting updated', { key, value });
+      return { key, value, description, updatedBy, updatedAt: now };
+    } catch (error) {
+      logger.error('Error in updateSystemSettings:', error.message);
+      throw error;
+    }
+  }
 
   async getDatabaseStats() {
     // Return mock stats since we're using Supabase

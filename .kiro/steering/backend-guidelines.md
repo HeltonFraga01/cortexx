@@ -316,6 +316,119 @@ const UserService = require('../services/UserService')
 const logger = require('@/utils/logger')
 ```
 
+## Multi-Tenant Isolation (CRITICAL)
+
+All admin routes MUST enforce tenant isolation to prevent cross-tenant data access.
+
+**Required tenant validation pattern:**
+```javascript
+// server/routes/admin[Feature]Routes.js
+const { requireAdmin } = require('../middleware/auth')
+const { validateUserTenant, filterUsersByTenant } = require('../middleware/tenantResourceValidator')
+const { logger } = require('../utils/logger')
+
+/**
+ * Helper to get tenant ID from request context
+ */
+function getTenantId(req) {
+  return req.context?.tenantId || null;
+}
+
+router.get('/:userId/data', requireAdmin, async (req, res) => {
+  try {
+    // 1. ALWAYS validate tenant context
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
+    // 2. ALWAYS validate user belongs to tenant before operations
+    const { valid, account } = await validateUserTenant(req.params.userId, tenantId);
+    if (!valid) {
+      logger.warn('Cross-tenant access blocked', {
+        type: 'security_violation',
+        tenantId,
+        targetUserId: req.params.userId,
+        adminId: req.session.userId,
+        endpoint: req.path
+      });
+      return res.status(403).json({ error: 'User not found or access denied' });
+    }
+
+    // 3. Proceed with tenant-scoped operation
+    const data = await SomeService.getData(req.params.userId, tenantId);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('Operation failed', { error: error.message, tenantId: req.context?.tenantId });
+    res.status(500).json({ error: error.message });
+  }
+});
+```
+
+**Bulk operations MUST filter userIds:**
+```javascript
+router.post('/bulk/action', requireAdmin, async (req, res) => {
+  const tenantId = getTenantId(req);
+  const { userIds } = req.body;
+
+  // CRITICAL: Filter to only users in this tenant
+  const { validUserIds, invalidUserIds } = await filterUsersByTenant(userIds, tenantId);
+
+  // Log cross-tenant attempts
+  if (invalidUserIds.length > 0) {
+    logger.warn('Bulk cross-tenant attempt blocked', {
+      tenantId,
+      invalidUserIds,
+      adminId: req.session.userId
+    });
+  }
+
+  // Process only valid users
+  for (const userId of validUserIds) {
+    // ... operation
+  }
+});
+```
+
+**Tenant-scoped services pattern:**
+```javascript
+// server/services/Tenant[Feature]Service.js
+class TenantFeatureService {
+  // All methods require tenantId parameter
+  static async getById(id, tenantId) {
+    const { data, error } = await SupabaseService.adminClient
+      .from('tenant_features')
+      .select('*')
+      .eq('id', id)
+      .eq('tenant_id', tenantId)  // ALWAYS filter by tenant
+      .single();
+    
+    if (error || !data) return null;
+    return data;
+  }
+
+  static async list(tenantId, filters = {}) {
+    const { data } = await SupabaseService.adminClient
+      .from('tenant_features')
+      .select('*')
+      .eq('tenant_id', tenantId)  // ALWAYS filter by tenant
+      .match(filters);
+    
+    return data || [];
+  }
+}
+```
+
+**Available tenant services:**
+- `TenantPlanService` - Subscription plans per tenant
+- `TenantSettingsService` - Configuration per tenant
+- `TenantCreditPackageService` - Credit packages per tenant
+
+**Security logging requirements:**
+- Log ALL cross-tenant access attempts as warnings
+- Include: `type: 'security_violation'`, `tenantId`, `targetUserId`, `adminId`, `endpoint`
+- Use generic error messages to avoid information leakage
+
 ## Implementation Checklist
 
 Before submitting backend code, verify:
@@ -323,6 +436,10 @@ Before submitting backend code, verify:
 - [ ] All async operations wrapped in try-catch
 - [ ] All database queries use SupabaseService methods
 - [ ] All user-scoped queries filter by `req.user.id` or account_id
+- [ ] All admin routes validate `req.context.tenantId` (MULTI-TENANT)
+- [ ] All admin operations verify resource belongs to tenant (MULTI-TENANT)
+- [ ] All bulk operations filter userIds by tenant (MULTI-TENANT)
+- [ ] Cross-tenant access attempts logged as warnings (MULTI-TENANT)
 - [ ] All errors logged with `logger.error()` including context
 - [ ] All responses use consistent shape `{ success, data?, error? }`
 - [ ] Auth middleware applied (unless explicitly public)

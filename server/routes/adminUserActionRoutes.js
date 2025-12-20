@@ -4,6 +4,9 @@
  * Endpoints for user actions: suspend, reactivate, reset password, delete, export, notify.
  * All routes require admin authentication.
  * 
+ * MULTI-TENANT ISOLATION: All operations validate that the target user
+ * belongs to the admin's tenant before executing.
+ * 
  * Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6
  */
 
@@ -15,6 +18,7 @@ const QuotaService = require('../services/QuotaService');
 const FeatureFlagService = require('../services/FeatureFlagService');
 const AdminAuditService = require('../services/AdminAuditService');
 const UsageTrackingService = require('../services/UsageTrackingService');
+const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
@@ -38,8 +42,45 @@ function getServices(req) {
 }
 
 /**
+ * Validate that a user belongs to the specified tenant
+ * @param {string} userId - User ID to validate
+ * @param {string} tenantId - Tenant ID to check against
+ * @returns {Promise<{valid: boolean, account: object|null}>}
+ */
+async function validateUserTenant(userId, tenantId) {
+  if (!userId || !tenantId) {
+    return { valid: false, account: null };
+  }
+
+  try {
+    // Query account by owner_user_id or wuzapi_token
+    const { data: accounts, error } = await SupabaseService.adminClient
+      .from('accounts')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .or(`owner_user_id.eq.${userId},wuzapi_token.eq.${userId}`)
+      .limit(1);
+
+    if (error) {
+      logger.error('Failed to validate user tenant', { error: error.message, userId, tenantId });
+      return { valid: false, account: null };
+    }
+
+    if (!accounts || accounts.length === 0) {
+      return { valid: false, account: null };
+    }
+
+    return { valid: true, account: accounts[0] };
+  } catch (error) {
+    logger.error('Error in validateUserTenant', { error: error.message, userId, tenantId });
+    return { valid: false, account: null };
+  }
+}
+
+/**
  * POST /api/admin/users/:userId/suspend
  * Suspend a user
+ * MULTI-TENANT: Validates user belongs to admin's tenant
  */
 router.post('/:userId/suspend', requireAdmin, async (req, res) => {
   try {
@@ -48,11 +89,28 @@ router.post('/:userId/suspend', requireAdmin, async (req, res) => {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
+    const tenantId = req.context?.tenantId;
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
     const { userId } = req.params;
     const { reason } = req.body;
 
     if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
       return res.status(400).json({ error: 'Suspension reason is required' });
+    }
+
+    // CRITICAL: Validate user belongs to this tenant
+    const { valid, account } = await validateUserTenant(userId, tenantId);
+    if (!valid) {
+      logger.warn('Cross-tenant suspend attempt blocked', {
+        tenantId,
+        adminId: req.session.userId,
+        targetUserId: userId,
+        endpoint: `/api/admin/users/${userId}/suspend`
+      });
+      return res.status(403).json({ error: 'User not found or access denied' });
     }
 
     const subscription = await services.subscriptionService.updateSubscriptionStatus(
@@ -65,14 +123,16 @@ router.post('/:userId/suspend', requireAdmin, async (req, res) => {
       req.session.userId,
       AdminAuditService.ACTION_TYPES.USER_SUSPENDED,
       userId,
-      { reason: reason.trim() },
+      { reason: reason.trim(), tenantId, accountId: account.id },
       req.ip,
       req.get('User-Agent')
     );
 
     logger.info('User suspended', {
       adminId: req.session.userId,
+      tenantId,
       targetUserId: userId,
+      accountId: account.id,
       reason: reason.trim(),
       endpoint: `/api/admin/users/${userId}/suspend`
     });
@@ -82,6 +142,7 @@ router.post('/:userId/suspend', requireAdmin, async (req, res) => {
     logger.error('Failed to suspend user', {
       error: error.message,
       adminId: req.session.userId,
+      tenantId: req.context?.tenantId,
       targetUserId: req.params.userId,
       endpoint: `/api/admin/users/${req.params.userId}/suspend`
     });
@@ -92,6 +153,7 @@ router.post('/:userId/suspend', requireAdmin, async (req, res) => {
 /**
  * POST /api/admin/users/:userId/reactivate
  * Reactivate a suspended user
+ * MULTI-TENANT: Validates user belongs to admin's tenant
  */
 router.post('/:userId/reactivate', requireAdmin, async (req, res) => {
   try {
@@ -100,7 +162,24 @@ router.post('/:userId/reactivate', requireAdmin, async (req, res) => {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
+    const tenantId = req.context?.tenantId;
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
     const { userId } = req.params;
+
+    // CRITICAL: Validate user belongs to this tenant
+    const { valid, account } = await validateUserTenant(userId, tenantId);
+    if (!valid) {
+      logger.warn('Cross-tenant reactivate attempt blocked', {
+        tenantId,
+        adminId: req.session.userId,
+        targetUserId: userId,
+        endpoint: `/api/admin/users/${userId}/reactivate`
+      });
+      return res.status(403).json({ error: 'User not found or access denied' });
+    }
 
     const subscription = await services.subscriptionService.updateSubscriptionStatus(
       userId, 
@@ -111,14 +190,16 @@ router.post('/:userId/reactivate', requireAdmin, async (req, res) => {
       req.session.userId,
       AdminAuditService.ACTION_TYPES.USER_REACTIVATED,
       userId,
-      {},
+      { tenantId, accountId: account.id },
       req.ip,
       req.get('User-Agent')
     );
 
     logger.info('User reactivated', {
       adminId: req.session.userId,
+      tenantId,
       targetUserId: userId,
+      accountId: account.id,
       endpoint: `/api/admin/users/${userId}/reactivate`
     });
 
@@ -127,6 +208,7 @@ router.post('/:userId/reactivate', requireAdmin, async (req, res) => {
     logger.error('Failed to reactivate user', {
       error: error.message,
       adminId: req.session.userId,
+      tenantId: req.context?.tenantId,
       targetUserId: req.params.userId,
       endpoint: `/api/admin/users/${req.params.userId}/reactivate`
     });
@@ -137,6 +219,7 @@ router.post('/:userId/reactivate', requireAdmin, async (req, res) => {
 /**
  * POST /api/admin/users/:userId/reset-password
  * Reset user password (generates new token or sends reset email)
+ * MULTI-TENANT: Validates user belongs to admin's tenant
  */
 router.post('/:userId/reset-password', requireAdmin, async (req, res) => {
   try {
@@ -145,8 +228,25 @@ router.post('/:userId/reset-password', requireAdmin, async (req, res) => {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
+    const tenantId = req.context?.tenantId;
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
     const { userId } = req.params;
     const { sendEmail = true } = req.body;
+
+    // CRITICAL: Validate user belongs to this tenant
+    const { valid, account } = await validateUserTenant(userId, tenantId);
+    if (!valid) {
+      logger.warn('Cross-tenant reset-password attempt blocked', {
+        tenantId,
+        adminId: req.session.userId,
+        targetUserId: userId,
+        endpoint: `/api/admin/users/${userId}/reset-password`
+      });
+      return res.status(403).json({ error: 'User not found or access denied' });
+    }
 
     // Note: Actual password reset implementation depends on auth system
     // This is a placeholder that logs the action
@@ -155,14 +255,16 @@ router.post('/:userId/reset-password', requireAdmin, async (req, res) => {
       req.session.userId,
       AdminAuditService.ACTION_TYPES.USER_PASSWORD_RESET,
       userId,
-      { sendEmail },
+      { sendEmail, tenantId, accountId: account.id },
       req.ip,
       req.get('User-Agent')
     );
 
     logger.info('User password reset initiated', {
       adminId: req.session.userId,
+      tenantId,
       targetUserId: userId,
+      accountId: account.id,
       sendEmail,
       endpoint: `/api/admin/users/${userId}/reset-password`
     });
@@ -177,6 +279,7 @@ router.post('/:userId/reset-password', requireAdmin, async (req, res) => {
     logger.error('Failed to reset password', {
       error: error.message,
       adminId: req.session.userId,
+      tenantId: req.context?.tenantId,
       targetUserId: req.params.userId,
       endpoint: `/api/admin/users/${req.params.userId}/reset-password`
     });
@@ -187,13 +290,18 @@ router.post('/:userId/reset-password', requireAdmin, async (req, res) => {
 /**
  * DELETE /api/admin/users/:userId
  * Delete a user and all related data
+ * MULTI-TENANT: Validates user belongs to admin's tenant
  */
 router.delete('/:userId', requireAdmin, async (req, res) => {
   try {
     const services = getServices(req);
-    const db = req.app.locals.db;
-    if (!services || !db) {
+    if (!services) {
       return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    const tenantId = req.context?.tenantId;
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
     }
 
     const { userId } = req.params;
@@ -205,38 +313,71 @@ router.delete('/:userId', requireAdmin, async (req, res) => {
       });
     }
 
-    // Delete related data in order (cascade)
-    const deletions = [];
+    // CRITICAL: Validate user belongs to this tenant
+    const { valid, account } = await validateUserTenant(userId, tenantId);
+    if (!valid) {
+      logger.warn('Cross-tenant delete attempt blocked', {
+        tenantId,
+        adminId: req.session.userId,
+        targetUserId: userId,
+        endpoint: `/api/admin/users/${userId}`
+      });
+      return res.status(403).json({ error: 'User not found or access denied' });
+    }
+
+    // Delete related data in order (cascade) - all scoped to the account
+    const accountId = account.id;
     
     // Delete quota usage
-    deletions.push(db.query('DELETE FROM user_quota_usage WHERE user_id = ?', [userId]));
+    await SupabaseService.adminClient
+      .from('user_quota_usage')
+      .delete()
+      .eq('account_id', accountId);
     
     // Delete quota overrides
-    deletions.push(db.query('DELETE FROM user_quota_overrides WHERE user_id = ?', [userId]));
+    await SupabaseService.adminClient
+      .from('user_quota_overrides')
+      .delete()
+      .eq('account_id', accountId);
     
     // Delete feature overrides
-    deletions.push(db.query('DELETE FROM user_feature_overrides WHERE user_id = ?', [userId]));
+    await SupabaseService.adminClient
+      .from('user_feature_overrides')
+      .delete()
+      .eq('account_id', accountId);
     
     // Delete usage metrics
-    deletions.push(db.query('DELETE FROM usage_metrics WHERE user_id = ?', [userId]));
+    await SupabaseService.adminClient
+      .from('usage_metrics')
+      .delete()
+      .eq('account_id', accountId);
     
     // Delete subscription
-    deletions.push(db.query('DELETE FROM user_subscriptions WHERE user_id = ?', [userId]));
+    await SupabaseService.adminClient
+      .from('user_subscriptions')
+      .delete()
+      .eq('account_id', accountId);
 
-    await Promise.all(deletions);
+    // Delete the account itself
+    await SupabaseService.adminClient
+      .from('accounts')
+      .delete()
+      .eq('id', accountId);
 
     await services.auditService.logAction(
       req.session.userId,
       AdminAuditService.ACTION_TYPES.USER_DELETED,
       userId,
-      { cascadeDeleted: true },
+      { cascadeDeleted: true, tenantId, accountId },
       req.ip,
       req.get('User-Agent')
     );
 
     logger.info('User deleted', {
       adminId: req.session.userId,
+      tenantId,
       targetUserId: userId,
+      accountId,
       endpoint: `/api/admin/users/${userId}`
     });
 
@@ -245,6 +386,7 @@ router.delete('/:userId', requireAdmin, async (req, res) => {
     logger.error('Failed to delete user', {
       error: error.message,
       adminId: req.session.userId,
+      tenantId: req.context?.tenantId,
       targetUserId: req.params.userId,
       endpoint: `/api/admin/users/${req.params.userId}`
     });
@@ -255,6 +397,7 @@ router.delete('/:userId', requireAdmin, async (req, res) => {
 /**
  * GET /api/admin/users/:userId/export
  * Export all user data
+ * MULTI-TENANT: Validates user belongs to admin's tenant
  */
 router.get('/:userId/export', requireAdmin, async (req, res) => {
   try {
@@ -263,8 +406,25 @@ router.get('/:userId/export', requireAdmin, async (req, res) => {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
+    const tenantId = req.context?.tenantId;
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
     const { userId } = req.params;
     const { format = 'json' } = req.query;
+
+    // CRITICAL: Validate user belongs to this tenant
+    const { valid, account } = await validateUserTenant(userId, tenantId);
+    if (!valid) {
+      logger.warn('Cross-tenant export attempt blocked', {
+        tenantId,
+        adminId: req.session.userId,
+        targetUserId: userId,
+        endpoint: `/api/admin/users/${userId}/export`
+      });
+      return res.status(403).json({ error: 'User not found or access denied' });
+    }
 
     // Gather all user data
     const [subscription, quotas, features, usageMetrics, auditHistory] = await Promise.all([
@@ -277,6 +437,8 @@ router.get('/:userId/export', requireAdmin, async (req, res) => {
 
     const exportData = {
       userId,
+      accountId: account.id,
+      tenantId,
       exportedAt: new Date().toISOString(),
       subscription,
       quotas,
@@ -289,14 +451,16 @@ router.get('/:userId/export', requireAdmin, async (req, res) => {
       req.session.userId,
       AdminAuditService.ACTION_TYPES.USER_DATA_EXPORTED,
       userId,
-      { format },
+      { format, tenantId, accountId: account.id },
       req.ip,
       req.get('User-Agent')
     );
 
     logger.info('User data exported', {
       adminId: req.session.userId,
+      tenantId,
       targetUserId: userId,
+      accountId: account.id,
       format,
       endpoint: `/api/admin/users/${userId}/export`
     });
@@ -315,6 +479,7 @@ router.get('/:userId/export', requireAdmin, async (req, res) => {
     logger.error('Failed to export user data', {
       error: error.message,
       adminId: req.session.userId,
+      tenantId: req.context?.tenantId,
       targetUserId: req.params.userId,
       endpoint: `/api/admin/users/${req.params.userId}/export`
     });
@@ -325,13 +490,18 @@ router.get('/:userId/export', requireAdmin, async (req, res) => {
 /**
  * POST /api/admin/users/:userId/notify
  * Send a notification to a user
+ * MULTI-TENANT: Validates user belongs to admin's tenant
  */
 router.post('/:userId/notify', requireAdmin, async (req, res) => {
   try {
     const services = getServices(req);
-    const db = req.app.locals.db;
-    if (!services || !db) {
+    if (!services) {
       return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    const tenantId = req.context?.tenantId;
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
     }
 
     const { userId } = req.params;
@@ -341,28 +511,47 @@ router.post('/:userId/notify', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'type, title, and message are required' });
     }
 
+    // CRITICAL: Validate user belongs to this tenant
+    const { valid, account } = await validateUserTenant(userId, tenantId);
+    if (!valid) {
+      logger.warn('Cross-tenant notify attempt blocked', {
+        tenantId,
+        adminId: req.session.userId,
+        targetUserId: userId,
+        endpoint: `/api/admin/users/${userId}/notify`
+      });
+      return res.status(403).json({ error: 'User not found or access denied' });
+    }
+
     const crypto = require('crypto');
     const notificationId = crypto.randomUUID();
     const now = new Date().toISOString();
 
-    await db.query(
-      `INSERT INTO admin_notifications (id, user_id, type, title, message, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [notificationId, userId, type, title, message, now]
-    );
+    await SupabaseService.insert('admin_notifications', {
+      id: notificationId,
+      user_id: userId,
+      account_id: account.id,
+      tenant_id: tenantId,
+      type,
+      title,
+      message,
+      created_at: now
+    });
 
     await services.auditService.logAction(
       req.session.userId,
       AdminAuditService.ACTION_TYPES.NOTIFICATION_SENT,
       userId,
-      { type, title },
+      { type, title, tenantId, accountId: account.id },
       req.ip,
       req.get('User-Agent')
     );
 
     logger.info('Notification sent to user', {
       adminId: req.session.userId,
+      tenantId,
       targetUserId: userId,
+      accountId: account.id,
       notificationType: type,
       endpoint: `/api/admin/users/${userId}/notify`
     });
@@ -376,6 +565,7 @@ router.post('/:userId/notify', requireAdmin, async (req, res) => {
     logger.error('Failed to send notification', {
       error: error.message,
       adminId: req.session.userId,
+      tenantId: req.context?.tenantId,
       targetUserId: req.params.userId,
       endpoint: `/api/admin/users/${req.params.userId}/notify`
     });

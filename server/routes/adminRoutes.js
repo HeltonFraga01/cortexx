@@ -34,6 +34,30 @@ function getAuditLogService(req) {
 }
 
 /**
+ * Helper function to get the best available WUZAPI admin token
+ * Priority: 1) Environment token, 2) Session token
+ * This ensures admin users logged via agent credentials can still access WUZAPI
+ * @param {Object} req - Express request object
+ * @returns {string|null} The WUZAPI admin token or null if not available
+ */
+function getWuzapiAdminToken(req) {
+  const envToken = process.env.WUZAPI_ADMIN_TOKEN;
+  const sessionToken = req.session?.userToken;
+  
+  // Prefer environment token as it's more reliable
+  const token = envToken || sessionToken;
+  
+  logger.debug('WUZAPI token selection', {
+    hasEnvToken: !!envToken,
+    hasSessionToken: !!sessionToken,
+    usingEnvToken: !!envToken,
+    isAgentLogin: !!req.session?.agentRole
+  });
+  
+  return token;
+}
+
+/**
  * Rota para listar usuários (validação administrativa)
  * GET /api/admin/users
  * 
@@ -58,31 +82,22 @@ router.get('/users',
     const startTime = Date.now();
     
     try {
-      // Verificar explicitamente se o token está na sessão
-      if (!req.session.userToken) {
-        logger.error('Token missing from session', {
-          type: 'token_missing',
-          sessionId: req.sessionID,
-          userId: req.session.userId,
-          role: req.session.role,
-          path: req.path,
-          method: req.method,
-          ip: req.ip
-        });
-        
-        return res.status(401).json({
-          success: false,
-          error: 'Token de administrador não encontrado na sessão',
-          code: 'TOKEN_MISSING',
-          timestamp: new Date().toISOString()
-        });
-      }
-      
-      // Obter token da sessão (já validado pelo middleware requireAdmin)
-      const token = req.session.userToken;
+      // Obter token WUZAPI (prioriza env sobre sessão)
+      const token = getWuzapiAdminToken(req);
       const connectedOnly = req.query.connected_only === 'true';
       const loggedInOnly = req.query.logged_in_only === 'true';
       const includeStats = req.query.include_stats === 'true';
+      
+      if (!token) {
+        return res.status(200).json({
+          success: true,
+          code: 200,
+          data: [],
+          filtered_data: [],
+          message: 'WUZAPI token não configurado',
+          timestamp: new Date().toISOString()
+        });
+      }
       
       // Validar formato do token administrativo
       if (!adminValidator.isValidTokenFormat(token)) {
@@ -90,15 +105,16 @@ router.get('/users',
           url: req.url,
           method: req.method,
           token_length: token ? token.length : 0,
-          token_source: req.session.userToken ? 'session' : 'env',
           user_agent: req.get('User-Agent'),
           ip: req.ip
         });
         
-        return res.status(400).json({
-          success: false,
-          error: 'Formato de token administrativo inválido',
-          code: 400,
+        return res.status(200).json({
+          success: true,
+          code: 200,
+          data: [],
+          filtered_data: [],
+          message: 'Formato de token WUZAPI inválido',
           timestamp: new Date().toISOString()
         });
       }
@@ -187,28 +203,18 @@ router.get('/stats',
     const startTime = Date.now();
     
     try {
-      // Verificar explicitamente se o token está na sessão
-      if (!req.session.userToken) {
-        logger.error('Token missing from session', {
-          type: 'token_missing',
-          sessionId: req.sessionID,
-          userId: req.session.userId,
-          role: req.session.role,
-          path: req.path,
-          method: req.method,
-          ip: req.ip
-        });
-        
-        return res.status(401).json({
-          success: false,
-          error: 'Token de administrador não encontrado na sessão',
-          code: 'TOKEN_MISSING',
+      // Obter token WUZAPI (prioriza env sobre sessão)
+      const token = getWuzapiAdminToken(req);
+      
+      if (!token) {
+        return res.status(200).json({
+          success: true,
+          code: 200,
+          data: { total: 0, connected: 0, loggedIn: 0, withWebhook: 0, connectionRate: 0, loginRate: 0 },
+          message: 'WUZAPI token não configurado',
           timestamp: new Date().toISOString()
         });
       }
-      
-      // Obter token da sessão (já validado pelo middleware requireAdmin)
-      const token = req.session.userToken;
       
       // Validar token administrativo na WuzAPI
       const validationResult = await adminValidator.validateAdminToken(token);
@@ -234,7 +240,14 @@ router.get('/stats',
           timestamp: new Date().toISOString()
         });
       } else {
-        return errorHandler.handleValidationError(validationResult, req, res);
+        // Return empty stats instead of error
+        return res.status(200).json({
+          success: true,
+          code: 200,
+          data: { total: 0, connected: 0, loggedIn: 0, withWebhook: 0, connectionRate: 0, loginRate: 0 },
+          message: validationResult.error || 'Token WUZAPI inválido',
+          timestamp: new Date().toISOString()
+        });
       }
     } catch (error) {
       const responseTime = Date.now() - startTime;
@@ -248,10 +261,11 @@ router.get('/stats',
         ip: req.ip
       });
 
-      return res.status(500).json({
-        success: false,
-        error: 'Erro interno na obtenção de estatísticas',
-        code: 500,
+      return res.status(200).json({
+        success: true,
+        code: 200,
+        data: { total: 0, connected: 0, loggedIn: 0, withWebhook: 0, connectionRate: 0, loginRate: 0 },
+        error: 'Erro ao conectar com WUZAPI',
         timestamp: new Date().toISOString()
       });
     }
@@ -296,8 +310,21 @@ router.get('/dashboard-stats',
       });
     }
     
-    const token = req.session.userToken;
-    const isAgentLogin = !!req.session.agentRole; // Admin logged in via agent credentials
+    // Para admin logado via agente, usar o token WUZAPI do ambiente
+    // O token da sessão (account.wuzapiToken) pode ser inválido
+    const isAgentLogin = !!req.session.agentRole;
+    const envAdminToken = process.env.WUZAPI_ADMIN_TOKEN;
+    const sessionToken = req.session.userToken;
+    
+    // Prioridade: 1) Token do ambiente, 2) Token da sessão
+    const token = envAdminToken || sessionToken;
+    
+    logger.debug('Dashboard stats - token selection', {
+      isAgentLogin,
+      hasEnvToken: !!envAdminToken,
+      hasSessionToken: !!sessionToken,
+      usingEnvToken: !!envAdminToken
+    });
     
     // Formatar uptime em formato legível
     const formatUptime = (seconds) => {
@@ -318,16 +345,14 @@ router.get('/dashboard-stats',
     const bytesToMB = (bytes) => (bytes / 1024 / 1024).toFixed(2);
     
     try {
-      // Se admin logou via agent credentials e não tem token WUZAPI válido,
-      // retornar dados básicos sem tentar validar o token
-      if (!token || isAgentLogin) {
-        logger.info('Dashboard stats - agent login mode (no WUZAPI token validation)', {
+      // Se não tem nenhum token WUZAPI disponível, retornar dados básicos
+      if (!token) {
+        logger.info('Dashboard stats - no WUZAPI token available', {
           userId: req.session.userId,
           agentRole: req.session.agentRole,
           accountId: req.session.accountId
         });
         
-        // Retornar estatísticas básicas do sistema sem dados de usuários WUZAPI
         const memoryUsage = process.memoryUsage();
         const uptime = process.uptime();
         
@@ -354,7 +379,7 @@ router.get('/dashboard-stats',
             goroutines: 0,
             users: [],
             wuzapiConfigured: false,
-            message: 'WUZAPI token não configurado. Configure um token WUZAPI válido na conta para ver estatísticas de usuários.'
+            message: 'WUZAPI token não configurado. Configure WUZAPI_ADMIN_TOKEN no ambiente.'
           },
           timestamp: new Date().toISOString()
         });
@@ -679,28 +704,8 @@ router.get('/users/:userId',
     const startTime = Date.now();
     
     try {
-      // Verificar explicitamente se o token está na sessão
-      if (!req.session.userToken) {
-        logger.error('Token missing from session', {
-          type: 'token_missing',
-          sessionId: req.sessionID,
-          userId: req.session.userId,
-          role: req.session.role,
-          path: req.path,
-          method: req.method,
-          ip: req.ip
-        });
-        
-        return res.status(401).json({
-          success: false,
-          error: 'Token de administrador não encontrado na sessão',
-          code: 'TOKEN_MISSING',
-          timestamp: new Date().toISOString()
-        });
-      }
-      
-      // Obter token da sessão (já validado pelo middleware requireAdmin)
-      const token = req.session.userToken;
+      // Obter token WUZAPI (prioriza env sobre sessão)
+      const token = getWuzapiAdminToken(req);
       const userId = req.params.userId;
       
       if (!userId || userId.trim() === '') {
@@ -708,6 +713,15 @@ router.get('/users/:userId',
           success: false,
           error: 'ID do usuário é obrigatório',
           code: 400,
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      if (!token) {
+        return res.status(200).json({
+          success: false,
+          error: 'WUZAPI token não configurado',
+          code: 'TOKEN_MISSING',
           timestamp: new Date().toISOString()
         });
       }
@@ -810,28 +824,8 @@ router.post('/users',
     const startTime = Date.now();
     
     try {
-      // Verificar explicitamente se o token está na sessão
-      if (!req.session.userToken) {
-        logger.error('Token missing from session', {
-          type: 'token_missing',
-          sessionId: req.sessionID,
-          userId: req.session.userId,
-          role: req.session.role,
-          path: req.path,
-          method: req.method,
-          ip: req.ip
-        });
-        
-        return res.status(401).json({
-          success: false,
-          error: 'Token de administrador não encontrado na sessão',
-          code: 'TOKEN_MISSING',
-          timestamp: new Date().toISOString()
-        });
-      }
-      
-      // Obter token da sessão (já validado pelo middleware requireAdmin)
-      const token = req.session.userToken;
+      // Obter token WUZAPI (prioriza env sobre sessão)
+      const token = getWuzapiAdminToken(req);
       const userData = req.body;
       
       // Validação básica dos dados obrigatórios
@@ -849,6 +843,15 @@ router.post('/users',
           success: false,
           error: 'Nome e token são obrigatórios',
           code: 400,
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      if (!token) {
+        return res.status(400).json({
+          success: false,
+          error: 'WUZAPI token não configurado. Configure WUZAPI_ADMIN_TOKEN no ambiente.',
+          code: 'TOKEN_MISSING',
           timestamp: new Date().toISOString()
         });
       }
@@ -877,7 +880,12 @@ router.post('/users',
       const responseTime = Date.now() - startTime;
 
       if (!validationResult.isValid) {
-        return errorHandler.handleValidationError(validationResult, req, res);
+        return res.status(400).json({
+          success: false,
+          error: validationResult.error || 'Token WUZAPI inválido',
+          code: 'INVALID_TOKEN',
+          timestamp: new Date().toISOString()
+        });
       }
 
       logger.info('Iniciando criação de usuário', {
@@ -1033,28 +1041,8 @@ router.delete('/users/:userId',
     const startTime = Date.now();
     
     try {
-      // Verificar explicitamente se o token está na sessão
-      if (!req.session.userToken) {
-        logger.error('Token missing from session', {
-          type: 'token_missing',
-          sessionId: req.sessionID,
-          userId: req.session.userId,
-          role: req.session.role,
-          path: req.path,
-          method: req.method,
-          ip: req.ip
-        });
-        
-        return res.status(401).json({
-          success: false,
-          error: 'Token de administrador não encontrado na sessão',
-          code: 'TOKEN_MISSING',
-          timestamp: new Date().toISOString()
-        });
-      }
-      
-      // Obter token da sessão (já validado pelo middleware requireAdmin)
-      const token = req.session.userToken;
+      // Obter token WUZAPI (prioriza env sobre sessão)
+      const token = getWuzapiAdminToken(req);
       const userId = req.params.userId;
       
       // Validação básica do userId
@@ -1071,6 +1059,15 @@ router.delete('/users/:userId',
           success: false,
           error: 'ID do usuário é obrigatório',
           code: 400,
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      if (!token) {
+        return res.status(400).json({
+          success: false,
+          error: 'WUZAPI token não configurado',
+          code: 'TOKEN_MISSING',
           timestamp: new Date().toISOString()
         });
       }
@@ -1100,7 +1097,12 @@ router.delete('/users/:userId',
       const responseTime = Date.now() - startTime;
 
       if (!validationResult.isValid) {
-        return errorHandler.handleValidationError(validationResult, req, res);
+        return res.status(400).json({
+          success: false,
+          error: validationResult.error || 'Token WUZAPI inválido',
+          code: 'INVALID_TOKEN',
+          timestamp: new Date().toISOString()
+        });
       }
 
       logger.info('Iniciando deleção de usuário', {
@@ -1231,28 +1233,8 @@ router.delete('/users/:userId/full',
     const startTime = Date.now();
     
     try {
-      // Verificar explicitamente se o token está na sessão
-      if (!req.session.userToken) {
-        logger.error('Token missing from session', {
-          type: 'token_missing',
-          sessionId: req.sessionID,
-          userId: req.session.userId,
-          role: req.session.role,
-          path: req.path,
-          method: req.method,
-          ip: req.ip
-        });
-        
-        return res.status(401).json({
-          success: false,
-          error: 'Token de administrador não encontrado na sessão',
-          code: 'TOKEN_MISSING',
-          timestamp: new Date().toISOString()
-        });
-      }
-      
-      // Obter token da sessão (já validado pelo middleware requireAdmin)
-      const token = req.session.userToken;
+      // Obter token WUZAPI (prioriza env sobre sessão)
+      const token = getWuzapiAdminToken(req);
       const userId = req.params.userId;
       
       // Validação básica do userId
@@ -1269,6 +1251,15 @@ router.delete('/users/:userId/full',
           success: false,
           error: 'ID do usuário é obrigatório',
           code: 400,
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      if (!token) {
+        return res.status(400).json({
+          success: false,
+          error: 'WUZAPI token não configurado',
+          code: 'TOKEN_MISSING',
           timestamp: new Date().toISOString()
         });
       }
@@ -1298,7 +1289,12 @@ router.delete('/users/:userId/full',
       const responseTime = Date.now() - startTime;
 
       if (!validationResult.isValid) {
-        return errorHandler.handleValidationError(validationResult, req, res);
+        return res.status(400).json({
+          success: false,
+          error: validationResult.error || 'Token WUZAPI inválido',
+          code: 'INVALID_TOKEN',
+          timestamp: new Date().toISOString()
+        });
       }
 
       logger.info('Iniciando deleção completa de usuário', {

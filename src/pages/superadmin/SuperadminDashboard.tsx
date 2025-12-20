@@ -138,11 +138,28 @@ const SuperadminDashboard = () => {
     fetchDashboardData(true);
   };
 
+  // Helper to get CSRF token
+  const getCsrfToken = async (): Promise<string | null> => {
+    try {
+      const response = await fetch('/api/auth/csrf-token', {
+        credentials: 'include'
+      });
+      const data = await response.json();
+      return data.csrfToken || null;
+    } catch {
+      return null;
+    }
+  };
+
   const handleImpersonateTenant = async (tenantId: string) => {
     try {
+      const csrfToken = await getCsrfToken();
       const response = await fetch(`/api/superadmin/impersonate/${tenantId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(csrfToken && { 'CSRF-Token': csrfToken })
+        },
         credentials: 'include'
       });
 
@@ -153,9 +170,16 @@ const SuperadminDashboard = () => {
       const data = await response.json();
       
       if (data.success) {
-        toast.success(`Now impersonating ${data.data.tenantName}`);
-        // Redirect to tenant admin panel
-        window.location.href = `https://${data.data.subdomain}.${window.location.hostname}/admin`;
+        const tenantName = data.data.tenant?.name || data.data.impersonation?.tenantName;
+        const subdomain = data.data.tenant?.subdomain || data.data.impersonation?.tenantSubdomain;
+        
+        toast.success(`Now impersonating ${tenantName}`);
+        // In localhost, just show a message since subdomains don't work
+        if (window.location.hostname === 'localhost') {
+          toast.info(`Impersonation started for ${subdomain}. In production, you would be redirected to the tenant admin panel.`);
+        } else {
+          window.location.href = `https://${subdomain}.${window.location.hostname}/admin`;
+        }
       } else {
         throw new Error(data.error || 'Failed to start impersonation');
       }

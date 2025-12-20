@@ -86,6 +86,9 @@ const { logger, requestLogger } = require('./utils/logger');
 const { metrics } = require('./utils/metrics');
 const { alertManager } = require('./utils/alerts');
 
+// Importar middleware de subdomínio para multi-tenant
+const { subdomainRouter } = require('./middleware/subdomainRouter');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 const NODE_ENV = process.env.NODE_ENV || 'development';
@@ -119,6 +122,10 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
 // Session middleware (DEVE vir antes do CSRF)
 app.use(session(sessionConfig));
+
+// Subdomain router middleware (DEVE vir depois da sessão, antes das rotas)
+// Este middleware extrai o subdomínio e define req.context com tenantId
+app.use(subdomainRouter);
 
 // CSRF protection (DEVE vir depois da sessão)
 // Excluir rotas específicas do CSRF

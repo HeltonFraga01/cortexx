@@ -191,15 +191,20 @@ function setupRoutes(app) {
     
     next();
   }, async (req, res) => {
-    const adminToken = req.session.userToken;
-    const isAgentLogin = !!req.session.agentRole; // Admin logged in via agent credentials
+    // Priorizar token do ambiente sobre token da sessão
+    const envAdminToken = process.env.WUZAPI_ADMIN_TOKEN;
+    const sessionToken = req.session.userToken;
+    const adminToken = envAdminToken || sessionToken;
+    const isAgentLogin = !!req.session.agentRole;
     
     // Log de extração de token
     logger.debug('Dashboard stats request', {
       type: 'dashboard_stats',
       sessionId: req.sessionID,
       userId: req.session.userId,
-      hasToken: !!adminToken,
+      hasEnvToken: !!envAdminToken,
+      hasSessionToken: !!sessionToken,
+      usingEnvToken: !!envAdminToken,
       isAgentLogin,
       agentRole: req.session.agentRole,
       path: req.path
@@ -220,10 +225,9 @@ function setupRoutes(app) {
         logger.warn('Failed to fetch WUZAPI health', { error: healthError.message });
       }
       
-      // Se admin logou via agent credentials e não tem token WUZAPI válido,
-      // retornar dados básicos sem tentar validar o token
-      if (!adminToken || isAgentLogin) {
-        logger.info('Admin dashboard stats - agent login mode (no WUZAPI token validation)', {
+      // Se não tem nenhum token WUZAPI disponível, retornar dados básicos
+      if (!adminToken) {
+        logger.info('Admin dashboard stats - no WUZAPI token available', {
           userId: req.session.userId,
           agentRole: req.session.agentRole,
           accountId: req.session.accountId
@@ -263,7 +267,7 @@ function setupRoutes(app) {
             goroutines: healthData.goroutines || 0,
             users: [],
             wuzapiConfigured: false,
-            message: 'WUZAPI token não configurado. Configure um token WUZAPI válido na conta para ver estatísticas de usuários.'
+            message: 'WUZAPI token não configurado. Configure WUZAPI_ADMIN_TOKEN no ambiente.'
           }
         });
       }

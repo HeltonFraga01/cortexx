@@ -4,6 +4,9 @@
  * Endpoints for bulk operations on users.
  * All routes require admin authentication.
  * 
+ * MULTI-TENANT ISOLATION: All bulk operations filter userIds by tenant
+ * to prevent cross-tenant data access.
+ * 
  * Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6
  */
 
@@ -13,6 +16,7 @@ const { logger } = require('../utils/logger');
 const SubscriptionService = require('../services/SubscriptionService');
 const PlanService = require('../services/PlanService');
 const AdminAuditService = require('../services/AdminAuditService');
+const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
@@ -32,14 +36,67 @@ function getServices(req) {
 }
 
 /**
+ * Filter userIds to only include users belonging to the specified tenant
+ * CRITICAL: This prevents cross-tenant bulk operations
+ * @param {string[]} userIds - Array of user IDs to filter
+ * @param {string} tenantId - Tenant ID to filter by
+ * @returns {Promise<{validUserIds: string[], invalidUserIds: string[]}>}
+ */
+async function filterUsersByTenant(userIds, tenantId) {
+  if (!userIds || userIds.length === 0) {
+    return { validUserIds: [], invalidUserIds: [] };
+  }
+
+  if (!tenantId) {
+    logger.warn('filterUsersByTenant called without tenantId');
+    return { validUserIds: [], invalidUserIds: userIds };
+  }
+
+  try {
+    // Query accounts that belong to this tenant and match the provided userIds
+    const { data: validAccounts, error } = await SupabaseService.adminClient
+      .from('accounts')
+      .select('owner_user_id, wuzapi_token')
+      .eq('tenant_id', tenantId)
+      .or(`owner_user_id.in.(${userIds.join(',')}),wuzapi_token.in.(${userIds.join(',')})`);
+
+    if (error) {
+      logger.error('Failed to filter users by tenant', { error: error.message, tenantId });
+      return { validUserIds: [], invalidUserIds: userIds };
+    }
+
+    // Build set of valid user IDs (both owner_user_id and wuzapi_token)
+    const validUserIdSet = new Set();
+    (validAccounts || []).forEach(account => {
+      if (account.owner_user_id) validUserIdSet.add(account.owner_user_id);
+      if (account.wuzapi_token) validUserIdSet.add(account.wuzapi_token);
+    });
+
+    const validUserIds = userIds.filter(id => validUserIdSet.has(id));
+    const invalidUserIds = userIds.filter(id => !validUserIdSet.has(id));
+
+    return { validUserIds, invalidUserIds };
+  } catch (error) {
+    logger.error('Error in filterUsersByTenant', { error: error.message, tenantId });
+    return { validUserIds: [], invalidUserIds: userIds };
+  }
+}
+
+/**
  * POST /api/admin/users/bulk/assign-plan
  * Assign a plan to multiple users
+ * MULTI-TENANT: Filters userIds to only include users from admin's tenant
  */
 router.post('/assign-plan', requireAdmin, async (req, res) => {
   try {
     const services = getServices(req);
     if (!services) {
       return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    const tenantId = req.context?.tenantId;
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
     }
 
     const { userIds, planId } = req.body;
@@ -53,19 +110,47 @@ router.post('/assign-plan', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'planId is required' });
     }
 
-    // Verify plan exists
-    const plan = await services.planService.getPlanById(planId);
-    if (!plan) {
-      return res.status(404).json({ error: 'Plan not found' });
+    // Verify plan exists AND belongs to this tenant
+    const { data: plan, error: planError } = await SupabaseService.adminClient
+      .from('tenant_plans')
+      .select('*')
+      .eq('id', planId)
+      .eq('tenant_id', tenantId)
+      .single();
+
+    if (planError || !plan) {
+      return res.status(404).json({ error: 'Plan not found or does not belong to your tenant' });
+    }
+
+    // CRITICAL: Filter userIds to only include users from this tenant
+    const { validUserIds, invalidUserIds } = await filterUsersByTenant(userIds, tenantId);
+
+    // Log cross-tenant attempt if any invalid IDs
+    if (invalidUserIds.length > 0) {
+      logger.warn('Bulk assign-plan cross-tenant attempt blocked', {
+        tenantId,
+        adminId: req.session.userId,
+        invalidUserIds,
+        validUserIds: validUserIds.length,
+        endpoint: '/api/admin/users/bulk/assign-plan'
+      });
+    }
+
+    if (validUserIds.length === 0) {
+      return res.status(400).json({ 
+        error: 'No valid users found for this tenant',
+        invalidCount: invalidUserIds.length
+      });
     }
 
     const results = {
       successful: [],
-      failed: []
+      failed: [],
+      skipped: invalidUserIds.map(id => ({ userId: id, reason: 'User not in tenant' }))
     };
 
-    // Process each user
-    for (const userId of userIds) {
+    // Process each valid user
+    for (const userId of validUserIds) {
       try {
         await services.subscriptionService.assignPlan(userId, planId, req.session.userId);
         results.successful.push({ userId, planId });
@@ -83,9 +168,12 @@ router.post('/assign-plan', requireAdmin, async (req, res) => {
         action: 'assign_plan',
         planId,
         planName: plan.name,
-        totalUsers: userIds.length,
+        tenantId,
+        totalRequested: userIds.length,
+        totalValid: validUserIds.length,
         successful: results.successful.length,
-        failed: results.failed.length
+        failed: results.failed.length,
+        skipped: results.skipped.length
       },
       req.ip,
       req.get('User-Agent')
@@ -93,8 +181,10 @@ router.post('/assign-plan', requireAdmin, async (req, res) => {
 
     logger.info('Bulk plan assignment completed', {
       adminId: req.session.userId,
+      tenantId,
       planId,
-      totalUsers: userIds.length,
+      totalRequested: userIds.length,
+      totalValid: validUserIds.length,
       successful: results.successful.length,
       failed: results.failed.length,
       endpoint: '/api/admin/users/bulk/assign-plan'
@@ -106,12 +196,13 @@ router.post('/assign-plan', requireAdmin, async (req, res) => {
     res.status(statusCode).json({
       success: results.failed.length === 0,
       data: results,
-      message: `Plan assigned to ${results.successful.length} of ${userIds.length} users`
+      message: `Plan assigned to ${results.successful.length} of ${validUserIds.length} valid users`
     });
   } catch (error) {
     logger.error('Failed to bulk assign plan', {
       error: error.message,
       adminId: req.session.userId,
+      tenantId: req.context?.tenantId,
       endpoint: '/api/admin/users/bulk/assign-plan'
     });
     res.status(500).json({ error: error.message });
@@ -121,12 +212,18 @@ router.post('/assign-plan', requireAdmin, async (req, res) => {
 /**
  * POST /api/admin/users/bulk/suspend
  * Suspend multiple users
+ * MULTI-TENANT: Filters userIds to only include users from admin's tenant
  */
 router.post('/suspend', requireAdmin, async (req, res) => {
   try {
     const services = getServices(req);
     if (!services) {
       return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    const tenantId = req.context?.tenantId;
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
     }
 
     const { userIds, reason } = req.body;
@@ -140,13 +237,35 @@ router.post('/suspend', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'reason is required' });
     }
 
+    // CRITICAL: Filter userIds to only include users from this tenant
+    const { validUserIds, invalidUserIds } = await filterUsersByTenant(userIds, tenantId);
+
+    // Log cross-tenant attempt if any invalid IDs
+    if (invalidUserIds.length > 0) {
+      logger.warn('Bulk suspend cross-tenant attempt blocked', {
+        tenantId,
+        adminId: req.session.userId,
+        invalidUserIds,
+        validUserIds: validUserIds.length,
+        endpoint: '/api/admin/users/bulk/suspend'
+      });
+    }
+
+    if (validUserIds.length === 0) {
+      return res.status(400).json({ 
+        error: 'No valid users found for this tenant',
+        invalidCount: invalidUserIds.length
+      });
+    }
+
     const results = {
       successful: [],
-      failed: []
+      failed: [],
+      skipped: invalidUserIds.map(id => ({ userId: id, reason: 'User not in tenant' }))
     };
 
-    // Process each user
-    for (const userId of userIds) {
+    // Process each valid user
+    for (const userId of validUserIds) {
       try {
         await services.subscriptionService.updateSubscriptionStatus(
           userId,
@@ -167,9 +286,12 @@ router.post('/suspend', requireAdmin, async (req, res) => {
       {
         action: 'suspend',
         reason: reason.trim(),
-        totalUsers: userIds.length,
+        tenantId,
+        totalRequested: userIds.length,
+        totalValid: validUserIds.length,
         successful: results.successful.length,
-        failed: results.failed.length
+        failed: results.failed.length,
+        skipped: results.skipped.length
       },
       req.ip,
       req.get('User-Agent')
@@ -177,8 +299,10 @@ router.post('/suspend', requireAdmin, async (req, res) => {
 
     logger.info('Bulk suspension completed', {
       adminId: req.session.userId,
+      tenantId,
       reason: reason.trim(),
-      totalUsers: userIds.length,
+      totalRequested: userIds.length,
+      totalValid: validUserIds.length,
       successful: results.successful.length,
       failed: results.failed.length,
       endpoint: '/api/admin/users/bulk/suspend'
@@ -189,12 +313,13 @@ router.post('/suspend', requireAdmin, async (req, res) => {
     res.status(statusCode).json({
       success: results.failed.length === 0,
       data: results,
-      message: `Suspended ${results.successful.length} of ${userIds.length} users`
+      message: `Suspended ${results.successful.length} of ${validUserIds.length} valid users`
     });
   } catch (error) {
     logger.error('Failed to bulk suspend', {
       error: error.message,
       adminId: req.session.userId,
+      tenantId: req.context?.tenantId,
       endpoint: '/api/admin/users/bulk/suspend'
     });
     res.status(500).json({ error: error.message });
@@ -204,12 +329,18 @@ router.post('/suspend', requireAdmin, async (req, res) => {
 /**
  * POST /api/admin/users/bulk/reactivate
  * Reactivate multiple users
+ * MULTI-TENANT: Filters userIds to only include users from admin's tenant
  */
 router.post('/reactivate', requireAdmin, async (req, res) => {
   try {
     const services = getServices(req);
     if (!services) {
       return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    const tenantId = req.context?.tenantId;
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
     }
 
     const { userIds } = req.body;
@@ -219,13 +350,35 @@ router.post('/reactivate', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'userIds must be a non-empty array' });
     }
 
+    // CRITICAL: Filter userIds to only include users from this tenant
+    const { validUserIds, invalidUserIds } = await filterUsersByTenant(userIds, tenantId);
+
+    // Log cross-tenant attempt if any invalid IDs
+    if (invalidUserIds.length > 0) {
+      logger.warn('Bulk reactivate cross-tenant attempt blocked', {
+        tenantId,
+        adminId: req.session.userId,
+        invalidUserIds,
+        validUserIds: validUserIds.length,
+        endpoint: '/api/admin/users/bulk/reactivate'
+      });
+    }
+
+    if (validUserIds.length === 0) {
+      return res.status(400).json({ 
+        error: 'No valid users found for this tenant',
+        invalidCount: invalidUserIds.length
+      });
+    }
+
     const results = {
       successful: [],
-      failed: []
+      failed: [],
+      skipped: invalidUserIds.map(id => ({ userId: id, reason: 'User not in tenant' }))
     };
 
-    // Process each user
-    for (const userId of userIds) {
+    // Process each valid user
+    for (const userId of validUserIds) {
       try {
         await services.subscriptionService.updateSubscriptionStatus(
           userId,
@@ -244,9 +397,12 @@ router.post('/reactivate', requireAdmin, async (req, res) => {
       null,
       {
         action: 'reactivate',
-        totalUsers: userIds.length,
+        tenantId,
+        totalRequested: userIds.length,
+        totalValid: validUserIds.length,
         successful: results.successful.length,
-        failed: results.failed.length
+        failed: results.failed.length,
+        skipped: results.skipped.length
       },
       req.ip,
       req.get('User-Agent')
@@ -254,7 +410,9 @@ router.post('/reactivate', requireAdmin, async (req, res) => {
 
     logger.info('Bulk reactivation completed', {
       adminId: req.session.userId,
-      totalUsers: userIds.length,
+      tenantId,
+      totalRequested: userIds.length,
+      totalValid: validUserIds.length,
       successful: results.successful.length,
       failed: results.failed.length,
       endpoint: '/api/admin/users/bulk/reactivate'
@@ -265,12 +423,13 @@ router.post('/reactivate', requireAdmin, async (req, res) => {
     res.status(statusCode).json({
       success: results.failed.length === 0,
       data: results,
-      message: `Reactivated ${results.successful.length} of ${userIds.length} users`
+      message: `Reactivated ${results.successful.length} of ${validUserIds.length} valid users`
     });
   } catch (error) {
     logger.error('Failed to bulk reactivate', {
       error: error.message,
       adminId: req.session.userId,
+      tenantId: req.context?.tenantId,
       endpoint: '/api/admin/users/bulk/reactivate'
     });
     res.status(500).json({ error: error.message });
@@ -280,13 +439,18 @@ router.post('/reactivate', requireAdmin, async (req, res) => {
 /**
  * POST /api/admin/users/bulk/notify
  * Send notification to multiple users
+ * MULTI-TENANT: Filters userIds to only include users from admin's tenant
  */
 router.post('/notify', requireAdmin, async (req, res) => {
   try {
     const services = getServices(req);
-    const db = req.app.locals.db;
-    if (!services || !db) {
+    if (!services) {
       return res.status(500).json({ error: 'Database not initialized' });
+    }
+
+    const tenantId = req.context?.tenantId;
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
     }
 
     const { userIds, type, title, message } = req.body;
@@ -300,22 +464,48 @@ router.post('/notify', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'type, title, and message are required' });
     }
 
+    // CRITICAL: Filter userIds to only include users from this tenant
+    const { validUserIds, invalidUserIds } = await filterUsersByTenant(userIds, tenantId);
+
+    // Log cross-tenant attempt if any invalid IDs
+    if (invalidUserIds.length > 0) {
+      logger.warn('Bulk notify cross-tenant attempt blocked', {
+        tenantId,
+        adminId: req.session.userId,
+        invalidUserIds,
+        validUserIds: validUserIds.length,
+        endpoint: '/api/admin/users/bulk/notify'
+      });
+    }
+
+    if (validUserIds.length === 0) {
+      return res.status(400).json({ 
+        error: 'No valid users found for this tenant',
+        invalidCount: invalidUserIds.length
+      });
+    }
+
     const crypto = require('crypto');
     const now = new Date().toISOString();
     const results = {
       successful: [],
-      failed: []
+      failed: [],
+      skipped: invalidUserIds.map(id => ({ userId: id, reason: 'User not in tenant' }))
     };
 
-    // Process each user
-    for (const userId of userIds) {
+    // Process each valid user
+    for (const userId of validUserIds) {
       try {
         const notificationId = crypto.randomUUID();
-        await db.query(
-          `INSERT INTO admin_notifications (id, user_id, type, title, message, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [notificationId, userId, type, title, message, now]
-        );
+        await SupabaseService.insert('admin_notifications', {
+          id: notificationId,
+          user_id: userId,
+          tenant_id: tenantId,
+          type,
+          title,
+          message,
+          created_at: now
+        });
         results.successful.push({ userId, notificationId });
       } catch (error) {
         results.failed.push({ userId, error: error.message });
@@ -331,9 +521,12 @@ router.post('/notify', requireAdmin, async (req, res) => {
         action: 'notify',
         type,
         title,
-        totalUsers: userIds.length,
+        tenantId,
+        totalRequested: userIds.length,
+        totalValid: validUserIds.length,
         successful: results.successful.length,
-        failed: results.failed.length
+        failed: results.failed.length,
+        skipped: results.skipped.length
       },
       req.ip,
       req.get('User-Agent')
@@ -341,8 +534,10 @@ router.post('/notify', requireAdmin, async (req, res) => {
 
     logger.info('Bulk notification completed', {
       adminId: req.session.userId,
+      tenantId,
       notificationType: type,
-      totalUsers: userIds.length,
+      totalRequested: userIds.length,
+      totalValid: validUserIds.length,
       successful: results.successful.length,
       failed: results.failed.length,
       endpoint: '/api/admin/users/bulk/notify'
@@ -353,12 +548,13 @@ router.post('/notify', requireAdmin, async (req, res) => {
     res.status(statusCode).json({
       success: results.failed.length === 0,
       data: results,
-      message: `Notification sent to ${results.successful.length} of ${userIds.length} users`
+      message: `Notification sent to ${results.successful.length} of ${validUserIds.length} valid users`
     });
   } catch (error) {
     logger.error('Failed to bulk notify', {
       error: error.message,
       adminId: req.session.userId,
+      tenantId: req.context?.tenantId,
       endpoint: '/api/admin/users/bulk/notify'
     });
     res.status(500).json({ error: error.message });

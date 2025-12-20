@@ -13,6 +13,7 @@ const TenantService = require('../services/TenantService');
  * 
  * Development:
  *   - localhost:5173?tenant=xxx → uses query param
+ *   - acmecorp.localhost:8080 → extracts 'acmecorp' (most common local dev pattern)
  *   - tenant.cortexx.local:5173 → extracts 'tenant'
  *   - X-Tenant-Subdomain header → uses header value
  * 
@@ -57,6 +58,19 @@ function extractSubdomain(hostname, req = null) {
     // The frontend should redirect to login or show tenant selection
     logger.debug('Localhost detected without tenant specification');
     return null;
+  }
+  
+  // ============================================
+  // LOCAL DEVELOPMENT WITH *.localhost
+  // ============================================
+  
+  // For development with subdomain.localhost (e.g., acmecorp.localhost)
+  // This is the most common local development pattern
+  if (parts.length === 2 && parts[1] === 'localhost') {
+    // Handle: acmecorp.localhost → 'acmecorp'
+    const subdomain = parts[0];
+    logger.debug('Extracted subdomain from *.localhost pattern', { subdomain, hostname });
+    return subdomain;
   }
   
   // ============================================

@@ -59,17 +59,21 @@ function requireSuperadmin(req, res, next) {
       });
     }
 
-    // Validate superadmin context
-    if (req.context && req.context.role !== 'superadmin') {
-      logger.warn('Invalid context for superadmin request', {
+    // Override context role for superadmin session
+    // This allows superadmin to work without subdomain (e.g., localhost:8080/superadmin/*)
+    // Requirements: 1.1, 1.4 - Session takes priority over subdomain context
+    const previousContextRole = req.context?.role;
+    if (!req.context) {
+      req.context = {};
+    }
+    req.context.role = 'superadmin';
+
+    if (previousContextRole && previousContextRole !== 'superadmin') {
+      logger.debug('Superadmin context overridden from session', {
         userId: req.session.userId,
-        contextRole: req.context.role,
+        previousContextRole,
+        newContextRole: 'superadmin',
         path: req.path
-      });
-      
-      return res.status(403).json({
-        error: 'Invalid context',
-        message: 'This resource requires superadmin context.'
       });
     }
 

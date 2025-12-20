@@ -1,42 +1,92 @@
 /**
  * Admin Credit Packages Routes
  * 
- * CRUD operations for credit packages (one-time token purchases).
+ * CRUD operations for tenant-scoped credit packages (one-time token purchases).
+ * All routes require admin authentication and use tenant context.
+ * 
+ * Requirements: REQ-13 (Multi-Tenant Isolation Audit)
  */
 
 const router = require('express').Router();
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
-const SupabaseService = require('../services/SupabaseService');
+const TenantCreditPackageService = require('../services/TenantCreditPackageService');
+
+/**
+ * Get tenant ID from request context
+ * @param {Object} req - Express request
+ * @returns {string|null} Tenant ID
+ */
+function getTenantId(req) {
+  return req.context?.tenantId || null;
+}
 
 /**
  * GET /api/admin/credit-packages
- * List all credit packages
+ * List all credit packages for the tenant
  */
 router.get('/', authenticate, requireAdmin, async (req, res) => {
   try {
-    const { data: packages, error } = await SupabaseService.adminClient
-      .from('plans')
-      .select('*')
-      .eq('is_credit_package', true)
-      .order('credit_amount', { ascending: true });
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
 
-    if (error) throw error;
+    const { status, activeOnly } = req.query;
+    const filters = {};
+    
+    if (status) {
+      filters.status = status;
+    }
+    if (activeOnly === 'true') {
+      filters.activeOnly = true;
+    }
 
-    const formatted = (packages || []).map(pkg => ({
-      id: pkg.id,
-      name: pkg.name,
-      description: pkg.description,
-      creditAmount: pkg.credit_amount,
-      priceCents: pkg.price_cents,
-      status: pkg.status,
-      stripeProductId: pkg.stripe_product_id,
-      stripePriceId: pkg.stripe_price_id,
-    }));
+    const packages = await TenantCreditPackageService.listPackages(tenantId, filters);
 
-    res.json({ success: true, data: formatted });
+    logger.debug('Credit packages listed', {
+      tenantId,
+      count: packages.length,
+      endpoint: '/api/admin/credit-packages'
+    });
+
+    res.json({ success: true, data: packages });
   } catch (error) {
-    logger.error('Failed to list credit packages', { error: error.message });
+    logger.error('Failed to list credit packages', {
+      error: error.message,
+      tenantId: getTenantId(req),
+      endpoint: '/api/admin/credit-packages'
+    });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/admin/credit-packages/:id
+ * Get a specific credit package
+ */
+router.get('/:id', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
+    const { id } = req.params;
+    const pkg = await TenantCreditPackageService.getPackageById(id, tenantId);
+
+    if (!pkg) {
+      return res.status(404).json({ error: 'Credit package not found' });
+    }
+
+    res.json({ success: true, data: pkg });
+  } catch (error) {
+    logger.error('Failed to get credit package', {
+      error: error.message,
+      packageId: req.params.id,
+      tenantId: getTenantId(req),
+      endpoint: `/api/admin/credit-packages/${req.params.id}`
+    });
     res.status(500).json({ error: error.message });
   }
 });
@@ -47,45 +97,48 @@ router.get('/', authenticate, requireAdmin, async (req, res) => {
  */
 router.post('/', authenticate, requireAdmin, async (req, res) => {
   try {
-    const { name, description, creditAmount, priceCents } = req.body;
-
-    if (!name || !creditAmount || creditAmount <= 0 || priceCents < 0) {
-      return res.status(400).json({ error: 'Invalid package data' });
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
     }
 
-    const { data: pkg, error } = await SupabaseService.adminClient
-      .from('plans')
-      .insert({
-        name,
-        description: description || null,
-        credit_amount: creditAmount,
-        price_cents: priceCents,
-        is_credit_package: true,
-        billing_cycle: 'lifetime', // One-time purchase
-        status: 'active',
-        quotas: {}, // No quotas for credit packages
-        features: {},
-      })
-      .select()
-      .single();
+    const { name, description, creditAmount, priceCents } = req.body;
 
-    if (error) throw error;
+    if (!name || !creditAmount || creditAmount <= 0) {
+      return res.status(400).json({ error: 'Invalid package data: name and creditAmount are required' });
+    }
 
-    logger.info('Credit package created', { packageId: pkg.id, name });
+    if (priceCents !== undefined && priceCents < 0) {
+      return res.status(400).json({ error: 'Price cannot be negative' });
+    }
 
-    res.json({
-      success: true,
-      data: {
-        id: pkg.id,
-        name: pkg.name,
-        description: pkg.description,
-        creditAmount: pkg.credit_amount,
-        priceCents: pkg.price_cents,
-        status: pkg.status,
-      },
+    const pkg = await TenantCreditPackageService.createPackage(tenantId, {
+      name,
+      description,
+      creditAmount,
+      priceCents: priceCents || 0
     });
+
+    logger.info('Credit package created', {
+      packageId: pkg.id,
+      name,
+      tenantId,
+      adminId: req.session?.userId,
+      endpoint: '/api/admin/credit-packages'
+    });
+
+    res.status(201).json({ success: true, data: pkg });
   } catch (error) {
-    logger.error('Failed to create credit package', { error: error.message });
+    logger.error('Failed to create credit package', {
+      error: error.message,
+      tenantId: getTenantId(req),
+      endpoint: '/api/admin/credit-packages'
+    });
+    
+    if (error.message.includes('already exists')) {
+      return res.status(409).json({ error: error.message });
+    }
+    
     res.status(500).json({ error: error.message });
   }
 });
@@ -96,45 +149,46 @@ router.post('/', authenticate, requireAdmin, async (req, res) => {
  */
 router.put('/:id', authenticate, requireAdmin, async (req, res) => {
   try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
     const { id } = req.params;
     const { name, description, creditAmount, priceCents, status } = req.body;
 
     const updates = {};
     if (name !== undefined) updates.name = name;
     if (description !== undefined) updates.description = description;
-    if (creditAmount !== undefined) updates.credit_amount = creditAmount;
-    if (priceCents !== undefined) updates.price_cents = priceCents;
+    if (creditAmount !== undefined) updates.creditAmount = creditAmount;
+    if (priceCents !== undefined) updates.priceCents = priceCents;
     if (status !== undefined) updates.status = status;
-    updates.updated_at = new Date().toISOString();
 
-    const { data: pkg, error } = await SupabaseService.adminClient
-      .from('plans')
-      .update(updates)
-      .eq('id', id)
-      .eq('is_credit_package', true)
-      .select()
-      .single();
+    const pkg = await TenantCreditPackageService.updatePackage(id, tenantId, updates);
 
-    if (error) throw error;
-    if (!pkg) {
-      return res.status(404).json({ error: 'Credit package not found' });
-    }
-
-    logger.info('Credit package updated', { packageId: id });
-
-    res.json({
-      success: true,
-      data: {
-        id: pkg.id,
-        name: pkg.name,
-        description: pkg.description,
-        creditAmount: pkg.credit_amount,
-        priceCents: pkg.price_cents,
-        status: pkg.status,
-      },
+    logger.info('Credit package updated', {
+      packageId: id,
+      tenantId,
+      adminId: req.session?.userId,
+      endpoint: `/api/admin/credit-packages/${id}`
     });
+
+    res.json({ success: true, data: pkg });
   } catch (error) {
-    logger.error('Failed to update credit package', { error: error.message, id: req.params.id });
+    logger.error('Failed to update credit package', {
+      error: error.message,
+      packageId: req.params.id,
+      tenantId: getTenantId(req),
+      endpoint: `/api/admin/credit-packages/${req.params.id}`
+    });
+    
+    if (error.message === 'Credit package not found') {
+      return res.status(404).json({ error: error.message });
+    }
+    if (error.message.includes('already exists')) {
+      return res.status(409).json({ error: error.message });
+    }
+    
     res.status(500).json({ error: error.message });
   }
 });
@@ -145,21 +199,35 @@ router.put('/:id', authenticate, requireAdmin, async (req, res) => {
  */
 router.delete('/:id', authenticate, requireAdmin, async (req, res) => {
   try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
     const { id } = req.params;
 
-    const { error } = await SupabaseService.adminClient
-      .from('plans')
-      .update({ status: 'inactive', updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .eq('is_credit_package', true);
+    await TenantCreditPackageService.deletePackage(id, tenantId);
 
-    if (error) throw error;
+    logger.info('Credit package deleted', {
+      packageId: id,
+      tenantId,
+      adminId: req.session?.userId,
+      endpoint: `/api/admin/credit-packages/${id}`
+    });
 
-    logger.info('Credit package deleted', { packageId: id });
-
-    res.json({ success: true });
+    res.json({ success: true, message: 'Credit package deleted' });
   } catch (error) {
-    logger.error('Failed to delete credit package', { error: error.message, id: req.params.id });
+    logger.error('Failed to delete credit package', {
+      error: error.message,
+      packageId: req.params.id,
+      tenantId: getTenantId(req),
+      endpoint: `/api/admin/credit-packages/${req.params.id}`
+    });
+    
+    if (error.message === 'Credit package not found') {
+      return res.status(404).json({ error: error.message });
+    }
+    
     res.status(500).json({ error: error.message });
   }
 });

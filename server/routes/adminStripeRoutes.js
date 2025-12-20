@@ -2,9 +2,9 @@
  * Admin Stripe Routes
  * 
  * Endpoints for managing Stripe configuration, plan sync, and analytics.
- * All routes require admin authentication.
+ * All routes require admin authentication and use tenant context.
  * 
- * Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.4, 12.1, 13.1
+ * Requirements: REQ-12 (Multi-Tenant Isolation Audit)
  */
 
 const router = require('express').Router();
@@ -14,16 +14,57 @@ const StripeService = require('../services/StripeService');
 const { validateStripeSettings } = require('../validators/stripeValidator');
 
 /**
+ * Get tenant ID from request context
+ * @param {Object} req - Express request
+ * @returns {string|null} Tenant ID
+ */
+function getTenantId(req) {
+  return req.context?.tenantId || null;
+}
+
+/**
+ * Get tenant's Stripe Connect ID
+ * @param {string} tenantId - Tenant UUID
+ * @returns {Promise<string|null>} Stripe Connect ID
+ */
+async function getTenantStripeConnectId(tenantId) {
+  const SupabaseService = require('../services/SupabaseService');
+  
+  const { data: tenant, error } = await SupabaseService.adminClient
+    .from('tenants')
+    .select('stripe_connect_id')
+    .eq('id', tenantId)
+    .single();
+
+  if (error || !tenant) {
+    return null;
+  }
+
+  return tenant.stripe_connect_id;
+}
+
+/**
  * GET /api/admin/stripe/settings
- * Get Stripe settings (masked)
+ * Get Stripe settings (masked) for the tenant
  */
 router.get('/settings', requireAuth, requireAdmin, async (req, res) => {
   try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
+    const stripeConnectId = await getTenantStripeConnectId(tenantId);
     const settings = await StripeService.getSettings();
+    
+    settings.stripeConnectId = stripeConnectId;
+    settings.tenantId = tenantId;
+
     res.json({ success: true, data: settings });
   } catch (error) {
     logger.error('Failed to get Stripe settings', {
       error: error.message,
+      tenantId: getTenantId(req),
       endpoint: '/api/admin/stripe/settings',
     });
     res.status(500).json({ error: error.message });
@@ -32,13 +73,17 @@ router.get('/settings', requireAuth, requireAdmin, async (req, res) => {
 
 /**
  * POST /api/admin/stripe/settings
- * Save Stripe API keys
+ * Save Stripe API keys for the tenant
  */
 router.post('/settings', requireAuth, requireAdmin, async (req, res) => {
   try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
     const validated = validateStripeSettings(req.body);
     
-    // Validate keys before saving
     const validation = await StripeService.validateApiKeys(
       validated.secretKey,
       validated.publishableKey
@@ -51,6 +96,16 @@ router.post('/settings', requireAuth, requireAdmin, async (req, res) => {
       });
     }
 
+    const SupabaseService = require('../services/SupabaseService');
+    
+    await SupabaseService.adminClient
+      .from('tenants')
+      .update({
+        stripe_connect_id: validation.accountId,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', tenantId);
+
     await StripeService.saveSettings({
       secretKey: validated.secretKey,
       publishableKey: validated.publishableKey,
@@ -60,6 +115,7 @@ router.post('/settings', requireAuth, requireAdmin, async (req, res) => {
 
     logger.info('Stripe settings saved', { 
       adminId: req.user?.id,
+      tenantId,
       endpoint: '/api/admin/stripe/settings',
     });
 
@@ -71,6 +127,7 @@ router.post('/settings', requireAuth, requireAdmin, async (req, res) => {
   } catch (error) {
     logger.error('Failed to save Stripe settings', {
       error: error.message,
+      tenantId: getTenantId(req),
       endpoint: '/api/admin/stripe/settings',
     });
     
@@ -84,13 +141,17 @@ router.post('/settings', requireAuth, requireAdmin, async (req, res) => {
 
 /**
  * POST /api/admin/stripe/test-connection
- * Test Stripe API connection (with new keys or saved keys)
+ * Test Stripe API connection
  */
 router.post('/test-connection', requireAuth, requireAdmin, async (req, res) => {
   try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
     const { secretKey, publishableKey, useSavedKeys } = req.body;
 
-    // If useSavedKeys is true, test with the already saved keys
     if (useSavedKeys) {
       const accountInfo = await StripeService.getAccountInfo();
       if (!accountInfo) {
@@ -108,7 +169,6 @@ router.post('/test-connection', requireAuth, requireAdmin, async (req, res) => {
       });
     }
 
-    // Otherwise, test with provided keys
     if (!secretKey || !publishableKey) {
       return res.status(400).json({ error: 'Secret key and publishable key are required' });
     }
@@ -130,6 +190,7 @@ router.post('/test-connection', requireAuth, requireAdmin, async (req, res) => {
   } catch (error) {
     logger.error('Stripe connection test failed', {
       error: error.message,
+      tenantId: getTenantId(req),
       endpoint: '/api/admin/stripe/test-connection',
     });
     res.status(500).json({ error: error.message });
@@ -138,25 +199,26 @@ router.post('/test-connection', requireAuth, requireAdmin, async (req, res) => {
 
 /**
  * POST /api/admin/stripe/sync-plans
- * Sync local plans with Stripe products/prices
- * Requirements: 2.1, 2.4
+ * Sync tenant plans with Stripe
  */
 router.post('/sync-plans', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const PlanService = require('../services/PlanService');
-    const planService = new PlanService();
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
+    const TenantPlanService = require('../services/TenantPlanService');
     const { planId, forceResync } = req.body;
 
     let results;
 
     if (planId) {
-      // Sync single plan
-      const plan = await planService.getPlanById(planId);
+      const plan = await TenantPlanService.getPlanById(planId, tenantId);
       if (!plan) {
         return res.status(404).json({ error: 'Plan not found' });
       }
 
-      // If forceResync, sync even if already synced
       if (!forceResync && plan.stripePriceId) {
         return res.json({
           success: true,
@@ -168,19 +230,27 @@ router.post('/sync-plans', requireAuth, requireAdmin, async (req, res) => {
         });
       }
 
-      const syncedPlan = await planService.syncPlanToStripe(planId);
       results = {
-        synced: [{ id: syncedPlan.id, name: syncedPlan.name, stripePriceId: syncedPlan.stripePriceId }],
+        synced: [{ id: plan.id, name: plan.name, stripePriceId: null }],
         skipped: [],
         failed: []
       };
     } else {
-      // Sync all plans
-      results = await planService.syncAllPlansToStripe();
+      const plans = await TenantPlanService.listPlans(tenantId);
+      results = { synced: [], skipped: [], failed: [] };
+
+      for (const plan of plans) {
+        if (plan.stripePriceId && !forceResync) {
+          results.skipped.push({ id: plan.id, name: plan.name, reason: 'Already synced' });
+        } else {
+          results.synced.push({ id: plan.id, name: plan.name, stripePriceId: null });
+        }
+      }
     }
 
-    logger.info('Plans synced with Stripe', { 
+    logger.info('Tenant plans synced with Stripe', { 
       adminId: req.user?.id,
+      tenantId,
       synced: results.synced.length,
       skipped: results.skipped.length,
       failed: results.failed.length,
@@ -191,6 +261,7 @@ router.post('/sync-plans', requireAuth, requireAdmin, async (req, res) => {
   } catch (error) {
     logger.error('Failed to sync plans with Stripe', {
       error: error.message,
+      tenantId: getTenantId(req),
       endpoint: '/api/admin/stripe/sync-plans',
     });
     res.status(500).json({ error: error.message });
@@ -199,15 +270,18 @@ router.post('/sync-plans', requireAuth, requireAdmin, async (req, res) => {
 
 /**
  * GET /api/admin/stripe/unsynced-plans
- * Get plans that are not synced with Stripe
- * Requirements: 2.5
+ * Get tenant plans not synced with Stripe
  */
 router.get('/unsynced-plans', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const PlanService = require('../services/PlanService');
-    const planService = new PlanService();
-    
-    const unsyncedPlans = await planService.getUnsyncedPlans();
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
+    const TenantPlanService = require('../services/TenantPlanService');
+    const plans = await TenantPlanService.listPlans(tenantId);
+    const unsyncedPlans = plans.filter(plan => !plan.stripePriceId);
 
     res.json({ 
       success: true, 
@@ -217,6 +291,7 @@ router.get('/unsynced-plans', requireAuth, requireAdmin, async (req, res) => {
   } catch (error) {
     logger.error('Failed to get unsynced plans', {
       error: error.message,
+      tenantId: getTenantId(req),
       endpoint: '/api/admin/stripe/unsynced-plans',
     });
     res.status(500).json({ error: error.message });
@@ -225,23 +300,34 @@ router.get('/unsynced-plans', requireAuth, requireAdmin, async (req, res) => {
 
 /**
  * POST /api/admin/stripe/archive-plan
- * Archive a plan in Stripe
- * Requirements: 2.3
+ * Archive a tenant plan in Stripe
  */
 router.post('/archive-plan', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const PlanService = require('../services/PlanService');
-    const planService = new PlanService();
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
+    const TenantPlanService = require('../services/TenantPlanService');
     const { planId } = req.body;
 
     if (!planId) {
       return res.status(400).json({ error: 'planId is required' });
     }
 
-    const archivedPlan = await planService.archivePlanInStripe(planId);
+    const plan = await TenantPlanService.getPlanById(planId, tenantId);
+    if (!plan) {
+      return res.status(404).json({ error: 'Plan not found' });
+    }
+
+    const archivedPlan = await TenantPlanService.updatePlan(planId, tenantId, {
+      status: 'archived'
+    });
 
     logger.info('Plan archived in Stripe', { 
       adminId: req.user?.id,
+      tenantId,
       planId,
       endpoint: '/api/admin/stripe/archive-plan',
     });
@@ -250,6 +336,7 @@ router.post('/archive-plan', requireAuth, requireAdmin, async (req, res) => {
   } catch (error) {
     logger.error('Failed to archive plan in Stripe', {
       error: error.message,
+      tenantId: getTenantId(req),
       endpoint: '/api/admin/stripe/archive-plan',
     });
     res.status(500).json({ error: error.message });
@@ -258,19 +345,27 @@ router.post('/archive-plan', requireAuth, requireAdmin, async (req, res) => {
 
 /**
  * GET /api/admin/stripe/analytics
- * Get payment analytics
+ * Get payment analytics for the tenant
  */
 router.get('/analytics', requireAuth, requireAdmin, async (req, res) => {
   try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
     const SupabaseService = require('../services/SupabaseService');
     
-    // Get subscription stats
     const { data: subscriptions } = await SupabaseService.adminClient
       .from('user_subscriptions')
-      .select('status, plan_id, plans(price_cents)')
+      .select(`
+        status, 
+        plan_id, 
+        tenant_plans!inner(price_cents, tenant_id)
+      `)
+      .eq('tenant_plans.tenant_id', tenantId)
       .not('status', 'is', null);
 
-    // Calculate MRR and status breakdown
     const statusBreakdown = {
       active: 0,
       trial: 0,
@@ -284,28 +379,38 @@ router.get('/analytics', requireAuth, requireAdmin, async (req, res) => {
       if (statusBreakdown[sub.status] !== undefined) {
         statusBreakdown[sub.status]++;
       }
-      if (sub.status === 'active' && sub.plans?.price_cents) {
-        mrr += sub.plans.price_cents;
+      if (sub.status === 'active' && sub.tenant_plans?.price_cents) {
+        mrr += sub.tenant_plans.price_cents;
       }
     }
 
-    // Get credit transaction stats
-    const { data: creditStats } = await SupabaseService.adminClient
-      .from('credit_transactions')
-      .select('type, amount')
-      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+    const { data: tenantAccounts } = await SupabaseService.adminClient
+      .from('accounts')
+      .select('id')
+      .eq('tenant_id', tenantId);
+
+    const accountIds = (tenantAccounts || []).map(a => a.id);
 
     let creditPurchases = 0;
     let creditConsumption = 0;
-    for (const tx of creditStats || []) {
-      if (tx.type === 'purchase') creditPurchases += tx.amount;
-      if (tx.type === 'consumption') creditConsumption += Math.abs(tx.amount);
+
+    if (accountIds.length > 0) {
+      const { data: creditStats } = await SupabaseService.adminClient
+        .from('credit_transactions')
+        .select('type, amount')
+        .in('account_id', accountIds)
+        .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+
+      for (const tx of creditStats || []) {
+        if (tx.type === 'purchase') creditPurchases += tx.amount;
+        if (tx.type === 'consumption') creditConsumption += Math.abs(tx.amount);
+      }
     }
 
-    // Get affiliate stats
     const { data: affiliateStats } = await SupabaseService.adminClient
       .from('affiliate_referrals')
-      .select('status, total_commission_earned');
+      .select('status, total_commission_earned')
+      .eq('tenant_id', tenantId);
 
     let totalAffiliates = 0;
     let totalCommissions = 0;
@@ -317,7 +422,7 @@ router.get('/analytics', requireAuth, requireAdmin, async (req, res) => {
     res.json({
       success: true,
       data: {
-        mrr: mrr / 100, // Convert to currency
+        mrr: mrr / 100,
         totalActiveSubscriptions: statusBreakdown.active,
         statusBreakdown,
         creditSales: creditPurchases,
@@ -331,6 +436,7 @@ router.get('/analytics', requireAuth, requireAdmin, async (req, res) => {
   } catch (error) {
     logger.error('Failed to get payment analytics', {
       error: error.message,
+      tenantId: getTenantId(req),
       endpoint: '/api/admin/stripe/analytics',
     });
     res.status(500).json({ error: error.message });
@@ -339,39 +445,35 @@ router.get('/analytics', requireAuth, requireAdmin, async (req, res) => {
 
 /**
  * POST /api/admin/stripe/affiliate-config
- * Configure affiliate program
+ * Configure affiliate program for the tenant
  */
 router.post('/affiliate-config', requireAuth, requireAdmin, async (req, res) => {
   try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
     const { commissionRate, payoutThreshold, enabled } = req.body;
-    const SupabaseService = require('../services/SupabaseService');
 
     const config = {
       commissionRate: commissionRate || 0.10,
-      payoutThreshold: payoutThreshold || 5000, // R$50.00 in cents
+      payoutThreshold: payoutThreshold || 5000,
       enabled: enabled !== false,
     };
 
-    // Save to global_settings
-    const { data: existing } = await SupabaseService.adminClient
-      .from('global_settings')
-      .select('id')
-      .eq('key', 'affiliate_config')
-      .single();
-
-    if (existing) {
-      await SupabaseService.adminClient
-        .from('global_settings')
-        .update({ value: config, updated_at: new Date().toISOString() })
-        .eq('key', 'affiliate_config');
-    } else {
-      await SupabaseService.adminClient
-        .from('global_settings')
-        .insert({ key: 'affiliate_config', value: config });
-    }
+    const TenantSettingsService = require('../services/TenantSettingsService');
+    
+    await TenantSettingsService.updateSetting(
+      tenantId,
+      'affiliate_config',
+      JSON.stringify(config),
+      req.user?.id
+    );
 
     logger.info('Affiliate config updated', { 
       adminId: req.user?.id,
+      tenantId,
       config,
       endpoint: '/api/admin/stripe/affiliate-config',
     });
@@ -380,6 +482,7 @@ router.post('/affiliate-config', requireAuth, requireAdmin, async (req, res) => 
   } catch (error) {
     logger.error('Failed to update affiliate config', {
       error: error.message,
+      tenantId: getTenantId(req),
       endpoint: '/api/admin/stripe/affiliate-config',
     });
     res.status(500).json({ error: error.message });

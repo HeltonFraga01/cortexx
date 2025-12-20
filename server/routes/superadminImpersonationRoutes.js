@@ -44,11 +44,7 @@ router.post('/impersonate/:tenantId', requireSuperadmin, auditSuperadminAction, 
     const impersonationResult = await superadminService.impersonateTenant(
       superadminId, 
       tenantId, 
-      {
-        reason,
-        ip: req.ip,
-        userAgent: req.get('User-Agent')
-      }
+      req.ip
     );
 
     // Store impersonation context in session

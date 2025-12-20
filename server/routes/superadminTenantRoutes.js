@@ -140,14 +140,41 @@ router.post('/tenants/validate-subdomain', skipCsrf, requireSuperadmin, async (r
  */
 router.post('/tenants', requireSuperadmin, auditSuperadminAction, async (req, res) => {
   try {
-    const { subdomain, name, ownerEmail, settings = {} } = req.body;
+    const { subdomain, name, ownerEmail, ownerName, ownerPassword, settings = {} } = req.body;
 
     // Validate required fields
-    if (!subdomain || !name || !ownerEmail) {
+    if (!subdomain || !name) {
       return res.status(400).json({
         success: false,
-        error: 'Subdomain, name, and owner email are required'
+        error: 'Subdomain and name are required'
       });
+    }
+
+    // Validate owner fields if any owner field is provided
+    if (ownerEmail || ownerPassword) {
+      if (!ownerEmail || !ownerPassword) {
+        return res.status(400).json({
+          success: false,
+          error: 'Both owner email and password are required to create an admin account'
+        });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(ownerEmail)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid email format'
+        });
+      }
+
+      // Validate password strength
+      if (ownerPassword.length < 8) {
+        return res.status(400).json({
+          success: false,
+          error: 'Password must be at least 8 characters long'
+        });
+      }
     }
 
     // Create tenant
@@ -155,9 +182,11 @@ router.post('/tenants', requireSuperadmin, auditSuperadminAction, async (req, re
       subdomain,
       name,
       ownerEmail,
+      ownerName,
+      ownerPassword,
       settings,
       createdBy: req.session.userId
-    });
+    }, req.session.userId);
 
     logger.info('Tenant created by superadmin', {
       superadminId: req.session.userId,
@@ -316,7 +345,7 @@ router.delete('/tenants/:id', requireSuperadmin, auditSuperadminAction, async (r
     }
 
     // Delete tenant (cascade delete handled in service)
-    await superadminService.deleteTenant(id);
+    await superadminService.deleteTenant(id, req.session.userId);
 
     logger.warn('Tenant deleted by superadmin', {
       superadminId: req.session.userId,
