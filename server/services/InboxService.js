@@ -668,10 +668,12 @@ class InboxService {
    */
   async checkAccess(agentId, inboxId) {
     try {
+      logger.debug('Checking inbox access', { agentId, inboxId });
       const { count, error } = await this.supabase.count('inbox_members', { 
         inbox_id: inboxId, 
         agent_id: agentId 
       });
+      logger.debug('Inbox access count result', { agentId, inboxId, count, error: error?.message });
       if (error) throw error;
       return (count || 0) > 0;
     } catch (error) {

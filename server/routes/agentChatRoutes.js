@@ -37,10 +37,30 @@ async function getAgentInboxIds(agentId) {
 /**
  * Helper to get WUZAPI token from agent's account
  * The account's WUZAPI token is needed to access WUZAPI
+ * 
+ * Since req.account is loaded by requireAgentAuth middleware,
+ * we can use req.account.wuzapiToken directly.
+ * This function is kept for backward compatibility but now just
+ * returns the token from the account object.
+ */
+function getAccountUserTokenFromRequest(req) {
+  return req.account?.wuzapiToken || null;
+}
+
+/**
+ * Legacy helper - queries database for WUZAPI token
+ * Use getAccountUserTokenFromRequest(req) instead when req.account is available
  */
 async function getAccountUserToken(db, accountId) {
-  const result = await db.query('SELECT wuzapi_token FROM accounts WHERE id = ?', [accountId]);
-  return result?.rows?.[0]?.wuzapi_token || null;
+  const SupabaseService = require('../services/SupabaseService');
+  const { data, error } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+    query.select('wuzapi_token').eq('id', accountId).single()
+  );
+  if (error || !data) {
+    logger.warn('Failed to get account WUZAPI token', { accountId, error: error?.message });
+    return null;
+  }
+  return data.wuzapi_token || null;
 }
 
 /**
@@ -48,8 +68,15 @@ async function getAccountUserToken(db, accountId) {
  * The inbox's WUZAPI token is needed to send messages via WUZAPI
  */
 async function getInboxWuzapiToken(db, inboxId) {
-  const result = await db.query('SELECT wuzapi_token FROM inboxes WHERE id = ?', [inboxId]);
-  return result?.rows?.[0]?.wuzapi_token || null;
+  const SupabaseService = require('../services/SupabaseService');
+  const { data, error } = await SupabaseService.queryAsAdmin('inboxes', (query) =>
+    query.select('wuzapi_token').eq('id', inboxId).single()
+  );
+  if (error || !data) {
+    logger.warn('Failed to get inbox WUZAPI token', { inboxId, error: error?.message });
+    return null;
+  }
+  return data.wuzapi_token || null;
 }
 
 // ==================== Conversation Routes ====================
@@ -83,8 +110,8 @@ router.get('/conversations', requireAgentAuth(null), requirePermission('conversa
       });
     }
     
-    // Get account's user token for WUZAPI access
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    // Get account's user token for WUZAPI access (from req.account loaded by middleware)
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       logger.error('Account user token not found', { accountId, agentId });
@@ -169,7 +196,7 @@ router.get('/conversations/search', requireAgentAuth(null), requirePermission('c
       return res.json({ success: true, data: [] });
     }
     
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -209,9 +236,11 @@ router.post('/conversations/start', requireAgentAuth(null), requirePermission('c
       return res.status(400).json({ success: false, error: 'Nenhuma caixa de entrada atribuída' });
     }
     
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    // Use req.account.wuzapiToken directly (loaded by requireAgentAuth middleware)
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
+      logger.error('Account WUZAPI token not found', { accountId, agentId });
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
     }
     
@@ -257,7 +286,7 @@ router.get('/conversations/:id', requireAgentAuth(null), requirePermission('conv
     const { id } = req.params;
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -295,7 +324,7 @@ router.patch('/conversations/:id', requireAgentAuth(null), requirePermission('co
     const { status, isMuted, assignedBotId } = req.body;
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -337,7 +366,7 @@ router.post('/conversations/:id/read', requireAgentAuth(null), requirePermission
     const { id } = req.params;
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -377,7 +406,7 @@ router.get('/conversations/:id/messages', requireAgentAuth(null), requirePermiss
     const { limit = 50, before, after } = req.query;
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -429,7 +458,7 @@ router.post('/conversations/:id/messages', requireAgentAuth(null), requirePermis
     }
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -661,7 +690,7 @@ router.post('/conversations/:id/fetch-avatar', requireAgentAuth(null), requirePe
     const { id } = req.params;
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -779,7 +808,7 @@ router.get('/labels', requireAgentAuth(null), requirePermission('conversations:v
     initServices(req.app.locals.db);
     
     const accountId = req.account.id;
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -808,7 +837,7 @@ router.post('/conversations/:id/labels', requireAgentAuth(null), requirePermissi
     const { labelId } = req.body;
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -845,7 +874,7 @@ router.delete('/conversations/:id/labels/:labelId', requireAgentAuth(null), requ
     const { id, labelId } = req.params;
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -881,7 +910,7 @@ router.get('/canned-responses', requireAgentAuth(null), requirePermission('conve
     
     const accountId = req.account.id;
     const { search } = req.query;
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -908,7 +937,7 @@ router.get('/messages/:messageId/media', requireAgentAuth(null), requirePermissi
     
     const accountId = req.account.id;
     const { messageId } = req.params;
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -935,7 +964,7 @@ router.get('/contacts/:contactJid/attributes', requireAgentAuth(null), requirePe
     
     const accountId = req.account.id;
     const { contactJid } = req.params;
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -960,7 +989,7 @@ router.get('/contacts/:contactJid/notes', requireAgentAuth(null), requirePermiss
     
     const accountId = req.account.id;
     const { contactJid } = req.params;
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -987,7 +1016,7 @@ router.post('/contacts/:contactJid/notes', requireAgentAuth(null), requirePermis
     const agentId = req.agent.id;
     const { contactJid } = req.params;
     const { content } = req.body;
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1015,7 +1044,7 @@ router.get('/conversations/:id/info', requireAgentAuth(null), requirePermission(
     const { id } = req.params;
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1065,7 +1094,7 @@ router.post('/conversations/:id/pickup', requireAgentAuth(null), requirePermissi
     const { id } = req.params;
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1127,7 +1156,7 @@ router.post('/conversations/:id/transfer', requireAgentAuth(null), requirePermis
     }
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1201,7 +1230,7 @@ router.post('/conversations/:id/release', requireAgentAuth(null), requirePermiss
     const { id } = req.params;
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1242,7 +1271,7 @@ router.get('/conversations/:id/transferable-agents', requireAgentAuth(null), req
     const { id } = req.params;
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1282,7 +1311,7 @@ router.get('/bots', requireAgentAuth(null), requirePermission('conversations:vie
     initServices(req.app.locals.db);
     
     const accountId = req.account.id;
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1326,7 +1355,7 @@ router.post('/conversations/:id/assign-bot', requireAgentAuth(null), requirePerm
     const { botId } = req.body; // null to remove bot
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1392,7 +1421,7 @@ router.get('/macros', requireAgentAuth(null), requirePermission('conversations:v
     
     const db = req.app.locals.db;
     const accountId = req.account.id;
-    const userToken = await getAccountUserToken(db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1446,7 +1475,7 @@ router.post('/macros/:id/execute', requireAgentAuth(null), requirePermission('co
     }
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1542,7 +1571,7 @@ router.get('/contacts/:contactJid/conversations', requireAgentAuth(null), requir
     const { excludeId } = req.query;
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = await getAccountUserToken(db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1603,7 +1632,7 @@ router.post('/contacts/:contactJid/attributes', requireAgentAuth(null), requireP
     const accountId = req.account.id;
     const { contactJid } = req.params;
     const { name, value } = req.body;
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1633,7 +1662,7 @@ router.put('/contacts/:contactJid/attributes/:attributeId', requireAgentAuth(nul
     const accountId = req.account.id;
     const { contactJid, attributeId } = req.params;
     const { value } = req.body;
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1662,7 +1691,7 @@ router.delete('/contacts/:contactJid/attributes/:attributeId', requireAgentAuth(
     
     const accountId = req.account.id;
     const { contactJid, attributeId } = req.params;
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
@@ -1687,7 +1716,7 @@ router.delete('/contacts/:contactJid/notes/:noteId', requireAgentAuth(null), req
     
     const accountId = req.account.id;
     const { contactJid, noteId } = req.params;
-    const userToken = await getAccountUserToken(req.app.locals.db, accountId);
+    const userToken = getAccountUserTokenFromRequest(req);
     
     if (!userToken) {
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });

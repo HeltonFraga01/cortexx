@@ -44,19 +44,30 @@ async function getAgentInboxIds(agentId) {
  * Helper to get account owner's user ID for quota consumption
  */
 async function getAccountOwnerId(db, accountId) {
-  const result = await db.query('SELECT owner_user_id FROM accounts WHERE id = ?', [accountId]);
-  return result?.rows?.[0]?.owner_user_id || null;
+  const SupabaseService = require('../services/SupabaseService');
+  const { data, error } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+    query.select('owner_user_id').eq('id', accountId).single()
+  );
+  if (error || !data) {
+    logger.warn('Failed to get account owner ID', { accountId, error: error?.message });
+    return null;
+  }
+  return data.owner_user_id || null;
 }
 
 /**
  * Helper to get inbox details including WUZAPI token
  */
 async function getInboxDetails(db, inboxId) {
-  const result = await db.query(
-    'SELECT id, name, wuzapi_token, phone_number, wuzapi_connected FROM inboxes WHERE id = ?',
-    [inboxId]
+  const SupabaseService = require('../services/SupabaseService');
+  const { data, error } = await SupabaseService.queryAsAdmin('inboxes', (query) =>
+    query.select('id, name, wuzapi_token, phone_number, wuzapi_connected').eq('id', inboxId).single()
   );
-  return result?.rows?.[0] || null;
+  if (error || !data) {
+    logger.warn('Failed to get inbox details', { inboxId, error: error?.message });
+    return null;
+  }
+  return data;
 }
 
 /**

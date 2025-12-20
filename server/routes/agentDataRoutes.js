@@ -51,6 +51,243 @@ router.get('/my/inboxes', requireAgentAuth(null), async (req, res) => {
 });
 
 /**
+ * GET /api/agent/my/inboxes/status
+ * Get connection status for all inboxes assigned to the current agent
+ * Returns status for each WhatsApp inbox and a summary
+ */
+router.get('/my/inboxes/status', requireAgentAuth(null), async (req, res) => {
+  try {
+    initServices(req.app.locals.db);
+    const wuzapiClient = require('../utils/wuzapiClient');
+    
+    const agentId = req.agent.id;
+    
+    // Get inboxes where this agent is a member
+    const inboxes = await inboxService.listAgentInboxes(agentId);
+    
+    // Initialize summary counters
+    let online = 0;
+    let offline = 0;
+    let connecting = 0;
+    
+    // Get status for each inbox
+    const statuses = await Promise.all(inboxes.map(async (inbox) => {
+      const baseStatus = {
+        inboxId: inbox.id,
+        inboxName: inbox.name,
+        channelType: inbox.channelType
+      };
+      
+      // Only check status for WhatsApp inboxes
+      if (inbox.channelType !== 'whatsapp') {
+        return {
+          ...baseStatus,
+          status: 'not_applicable',
+          connected: false,
+          loggedIn: false
+        };
+      }
+      
+      // If no WUZAPI token configured
+      if (!inbox.wuzapiToken) {
+        offline++;
+        return {
+          ...baseStatus,
+          status: 'not_configured',
+          connected: false,
+          loggedIn: false
+        };
+      }
+      
+      try {
+        // Get session status from WUZAPI
+        const statusResult = await wuzapiClient.get('/session/status', {
+          headers: { 'token': inbox.wuzapiToken }
+        });
+        
+        // Handle nested data structure from WUZAPI
+        const responseData = statusResult.data || {};
+        const innerData = responseData.data || responseData;
+        const connected = statusResult.success && (innerData.Connected || innerData.connected || false);
+        const loggedIn = statusResult.success && (innerData.LoggedIn || innerData.loggedIn || false);
+        
+        // Determine status and update counters
+        let status;
+        if (loggedIn) {
+          status = 'connected';
+          online++;
+        } else if (connected) {
+          status = 'connecting';
+          connecting++;
+        } else {
+          status = 'disconnected';
+          offline++;
+        }
+        
+        return {
+          ...baseStatus,
+          status,
+          connected,
+          loggedIn
+        };
+      } catch (error) {
+        logger.warn('Failed to get inbox status from WUZAPI', {
+          inboxId: inbox.id,
+          error: error.message
+        });
+        offline++;
+        return {
+          ...baseStatus,
+          status: 'unknown',
+          connected: false,
+          loggedIn: false
+        };
+      }
+    }));
+    
+    logger.info('Agent inbox statuses fetched', {
+      agentId,
+      total: inboxes.length,
+      online,
+      offline,
+      connecting
+    });
+    
+    res.json({
+      success: true,
+      data: statuses,
+      summary: {
+        total: inboxes.length,
+        online,
+        offline,
+        connecting
+      }
+    });
+  } catch (error) {
+    logger.error('Failed to get agent inbox statuses', {
+      error: error.message,
+      agentId: req.agent?.id
+    });
+    res.status(500).json({ error: 'Erro ao carregar status das caixas de entrada' });
+  }
+});
+
+/**
+ * GET /api/agent/my/inboxes/:inboxId/status
+ * Get connection status for a specific inbox assigned to the current agent
+ */
+router.get('/my/inboxes/:inboxId/status', requireAgentAuth(null), async (req, res) => {
+  try {
+    initServices(req.app.locals.db);
+    const wuzapiClient = require('../utils/wuzapiClient');
+    
+    const agentId = req.agent.id;
+    const { inboxId } = req.params;
+    
+    // Verify agent has access to this inbox
+    const hasAccess = await inboxService.checkAccess(agentId, inboxId);
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Acesso negado a esta caixa de entrada' });
+    }
+    
+    // Get inbox details
+    const inbox = await inboxService.getInboxById(inboxId);
+    if (!inbox) {
+      return res.status(404).json({ error: 'Caixa de entrada não encontrada' });
+    }
+    
+    // Only check status for WhatsApp inboxes
+    if (inbox.channelType !== 'whatsapp') {
+      return res.json({
+        success: true,
+        data: {
+          inboxId: inbox.id,
+          status: 'not_applicable',
+          connected: false,
+          loggedIn: false
+        }
+      });
+    }
+    
+    // If no WUZAPI token configured
+    if (!inbox.wuzapiToken) {
+      return res.json({
+        success: true,
+        data: {
+          inboxId: inbox.id,
+          status: 'not_configured',
+          connected: false,
+          loggedIn: false
+        }
+      });
+    }
+    
+    try {
+      // Get session status from WUZAPI
+      const statusResult = await wuzapiClient.get('/session/status', {
+        headers: { 'token': inbox.wuzapiToken }
+      });
+      
+      // Handle nested data structure from WUZAPI
+      const responseData = statusResult.data || {};
+      const innerData = responseData.data || responseData;
+      const connected = statusResult.success && (innerData.Connected || innerData.connected || false);
+      const loggedIn = statusResult.success && (innerData.LoggedIn || innerData.loggedIn || false);
+      
+      // Determine status
+      let status;
+      if (loggedIn) {
+        status = 'connected';
+      } else if (connected) {
+        status = 'connecting';
+      } else {
+        status = 'disconnected';
+      }
+      
+      logger.debug('Agent inbox status fetched', {
+        agentId,
+        inboxId,
+        status,
+        connected,
+        loggedIn
+      });
+      
+      res.json({
+        success: true,
+        data: {
+          inboxId: inbox.id,
+          status,
+          connected,
+          loggedIn,
+          details: statusResult.data || null
+        }
+      });
+    } catch (error) {
+      logger.warn('Failed to get inbox status from WUZAPI', {
+        inboxId,
+        error: error.message
+      });
+      res.json({
+        success: true,
+        data: {
+          inboxId: inbox.id,
+          status: 'unknown',
+          connected: false,
+          loggedIn: false
+        }
+      });
+    }
+  } catch (error) {
+    logger.error('Failed to get agent inbox status', {
+      error: error.message,
+      agentId: req.agent?.id,
+      inboxId: req.params.inboxId
+    });
+    res.status(500).json({ error: 'Erro ao carregar status da caixa de entrada' });
+  }
+});
+
+/**
  * GET /api/agent/my/conversations
  * Get conversations assigned to the current agent
  */
@@ -88,15 +325,20 @@ router.get('/my/conversations', requireAgentAuth(null), async (req, res) => {
 router.get('/my/contacts', requireAgentAuth(null), async (req, res) => {
   try {
     initServices(req.app.locals.db);
+    const SupabaseService = require('../services/SupabaseService');
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
     const { search, limit = 50, offset = 0 } = req.query;
-    const db = req.app.locals.db;
     
-    // Get agent's assigned inbox IDs
+    // Cap limit at 10000 to prevent excessive queries
+    const maxLimit = Math.min(parseInt(limit), 10000);
+    
+    // Get agent's assigned inbox IDs (for validation)
     const inboxes = await inboxService.listAgentInboxes(agentId);
     const inboxIds = inboxes.map(inbox => inbox.id);
+    
+    logger.debug('Agent contacts query', { agentId, accountId, inboxIds, search, limit: maxLimit });
     
     if (inboxIds.length === 0) {
       return res.json({
@@ -106,75 +348,110 @@ router.get('/my/contacts', requireAgentAuth(null), async (req, res) => {
       });
     }
     
-    // Build query to get unique contacts from conversations in agent's inboxes
-    // Group only by contact_jid to avoid duplicates when same contact has different names/avatars
-    const placeholders = inboxIds.map(() => '?').join(',');
-    let sql = `
-      SELECT 
-        c.contact_jid as id,
-        MAX(c.contact_name) as name,
-        c.contact_jid as phone,
-        MAX(c.contact_avatar_url) as avatarUrl,
-        MAX(c.last_message_at) as lastContactAt,
-        COUNT(c.id) as conversationCount
-      FROM conversations c
-      WHERE c.inbox_id IN (${placeholders})
-    `;
+    // For large limits, fetch in batches to overcome Supabase's 1000 row limit
+    let allConversations = [];
+    const BATCH_SIZE = 1000;
+    let currentOffset = parseInt(offset);
+    let hasMore = true;
     
-    const params = [...inboxIds];
-    
-    if (search) {
-      sql += ' AND (c.contact_name LIKE ? OR c.contact_jid LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`);
+    while (hasMore && allConversations.length < maxLimit) {
+      const batchLimit = Math.min(BATCH_SIZE, maxLimit - allConversations.length);
+      
+      let query = SupabaseService.adminClient
+        .from('conversations')
+        .select('contact_jid, contact_name, contact_avatar_url, last_message_at')
+        .eq('account_id', accountId)
+        .in('inbox_id', inboxIds);
+      
+      if (search) {
+        query = query.or(`contact_name.ilike.%${search}%,contact_jid.ilike.%${search}%`);
+      }
+      
+      const { data: conversations, error: convError } = await query
+        .order('last_message_at', { ascending: false, nullsFirst: false })
+        .range(currentOffset, currentOffset + batchLimit - 1);
+      
+      if (convError) {
+        logger.error('Failed to query conversations', { error: convError.message });
+        throw convError;
+      }
+      
+      if (!conversations || conversations.length === 0) {
+        hasMore = false;
+      } else {
+        allConversations = allConversations.concat(conversations);
+        currentOffset += conversations.length;
+        
+        // If we got less than requested, there's no more data
+        if (conversations.length < batchLimit) {
+          hasMore = false;
+        }
+      }
     }
     
-    sql += ' GROUP BY c.contact_jid';
-    sql += ' ORDER BY lastContactAt DESC NULLS LAST';
-    sql += ' LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), parseInt(offset));
+    // Deduplicate by contact_jid and transform
+    const contactMap = new Map();
+    allConversations.forEach(conv => {
+      if (!conv.contact_jid) return;
+      
+      if (!contactMap.has(conv.contact_jid)) {
+        contactMap.set(conv.contact_jid, {
+          id: conv.contact_jid,
+          name: conv.contact_name || conv.contact_jid?.replace('@s.whatsapp.net', ''),
+          phone: conv.contact_jid?.replace('@s.whatsapp.net', ''),
+          avatarUrl: conv.contact_avatar_url,
+          lastContactAt: conv.last_message_at,
+          conversationCount: 1
+        });
+      } else {
+        const existing = contactMap.get(conv.contact_jid);
+        existing.conversationCount++;
+        // Keep the most recent name/avatar
+        if (conv.contact_name && !existing.name) {
+          existing.name = conv.contact_name;
+        }
+        if (conv.contact_avatar_url && !existing.avatarUrl) {
+          existing.avatarUrl = conv.contact_avatar_url;
+        }
+      }
+    });
     
-    const { rows: contacts } = await db.query(sql, params);
+    const transformedContacts = Array.from(contactMap.values());
     
     // Get total count
-    let countSql = `
-      SELECT COUNT(DISTINCT c.contact_jid) as total
-      FROM conversations c
-      WHERE c.inbox_id IN (${placeholders})
-    `;
-    const countParams = [...inboxIds];
+    let countQuery = SupabaseService.adminClient
+      .from('conversations')
+      .select('contact_jid', { count: 'exact', head: true })
+      .eq('account_id', accountId)
+      .in('inbox_id', inboxIds);
     
     if (search) {
-      countSql += ' AND (c.contact_name LIKE ? OR c.contact_jid LIKE ?)';
-      countParams.push(`%${search}%`, `%${search}%`);
+      countQuery = countQuery.or(`contact_name.ilike.%${search}%,contact_jid.ilike.%${search}%`);
     }
     
-    const { rows: countRows } = await db.query(countSql, countParams);
-    const total = countRows[0]?.total || 0;
+    const { count: total, error: countError } = await countQuery;
     
-    // Transform contacts to clean format
-    const transformedContacts = contacts.map(contact => ({
-      id: contact.id,
-      name: contact.name || contact.phone?.replace('@s.whatsapp.net', ''),
-      phone: contact.phone?.replace('@s.whatsapp.net', ''),
-      avatarUrl: contact.avatarUrl,
-      lastContactAt: contact.lastContactAt,
-      conversationCount: contact.conversationCount
-    }));
+    if (countError) {
+      logger.warn('Failed to get contacts count', { error: countError.message });
+    }
     
     logger.info('Agent contacts retrieved', { 
       agentId, 
+      accountId,
+      inboxCount: inboxIds.length,
       count: transformedContacts.length, 
-      total 
+      total: total || transformedContacts.length 
     });
     
     res.json({
       success: true,
       data: transformedContacts,
-      total
+      total: total || transformedContacts.length
     });
   } catch (error) {
     logger.error('Failed to get agent contacts', { 
       error: error.message, 
+      stack: error.stack,
       agentId: req.agent?.id 
     });
     res.status(500).json({ error: 'Erro ao carregar contatos' });
@@ -188,7 +465,7 @@ router.get('/my/contacts', requireAgentAuth(null), async (req, res) => {
 router.get('/my/stats', requireAgentAuth(null), async (req, res) => {
   try {
     initServices(req.app.locals.db);
-    const db = req.app.locals.db;
+    const SupabaseService = require('../services/SupabaseService');
     
     const agentId = req.agent.id;
     
@@ -203,38 +480,52 @@ router.get('/my/stats', requireAgentAuth(null), async (req, res) => {
     
     // Get conversation and contact stats if agent has access to any inboxes
     if (inboxIds.length > 0) {
-      const placeholders = inboxIds.map(() => '?').join(',');
+      // Conversations: Count only those assigned to this agent
+      const { count: convTotal, error: convError } = await SupabaseService.adminClient
+        .from('conversations')
+        .select('*', { count: 'exact', head: true })
+        .in('inbox_id', inboxIds)
+        .eq('assigned_agent_id', agentId);
       
-      // Conversations: Count only those assigned to this agent (not unassigned)
-      // This shows the conversations the agent is actively handling
-      const convResult = await db.query(
-        `SELECT 
-          COUNT(*) as total,
-          SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
-          SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_count
-        FROM conversations 
-        WHERE inbox_id IN (${placeholders})
-          AND assigned_agent_id = ?`,
-        [...inboxIds, agentId]
-      );
+      if (!convError) {
+        totalConversations = convTotal || 0;
+      }
       
-      if (convResult.rows && convResult.rows.length > 0) {
-        totalConversations = convResult.rows[0].total || 0;
-        openConversations = convResult.rows[0].open_count || 0;
-        pendingConversations = convResult.rows[0].pending_count || 0;
+      // Open conversations
+      const { count: openCount, error: openError } = await SupabaseService.adminClient
+        .from('conversations')
+        .select('*', { count: 'exact', head: true })
+        .in('inbox_id', inboxIds)
+        .eq('assigned_agent_id', agentId)
+        .eq('status', 'open');
+      
+      if (!openError) {
+        openConversations = openCount || 0;
+      }
+      
+      // Pending conversations
+      const { count: pendingCount, error: pendingError } = await SupabaseService.adminClient
+        .from('conversations')
+        .select('*', { count: 'exact', head: true })
+        .in('inbox_id', inboxIds)
+        .eq('assigned_agent_id', agentId)
+        .eq('status', 'pending');
+      
+      if (!pendingError) {
+        pendingConversations = pendingCount || 0;
       }
       
       // Contacts: Count unique contacts from conversations in agent's inboxes
-      // This matches the logic in /my/contacts route
-      const contactResult = await db.query(
-        `SELECT COUNT(DISTINCT contact_jid) as total
-         FROM conversations 
-         WHERE inbox_id IN (${placeholders})`,
-        inboxIds
-      );
+      const { data: contactData, error: contactError } = await SupabaseService.adminClient
+        .from('conversations')
+        .select('contact_jid')
+        .in('inbox_id', inboxIds)
+        .not('contact_jid', 'is', null);
       
-      if (contactResult.rows && contactResult.rows.length > 0) {
-        totalContacts = contactResult.rows[0].total || 0;
+      if (!contactError && contactData) {
+        // Count unique contact_jid values
+        const uniqueContacts = new Set(contactData.map(c => c.contact_jid));
+        totalContacts = uniqueContacts.size;
       }
     }
     
@@ -263,19 +554,26 @@ router.get('/my/stats', requireAgentAuth(null), async (req, res) => {
 /**
  * POST /api/agent/my/inboxes/:inboxId/import-contacts
  * Import contacts from WUZAPI for a specific inbox
+ * Optimized with batch upsert for better performance
  */
 router.post('/my/inboxes/:inboxId/import-contacts', requireAgentAuth(null), async (req, res) => {
   try {
     initServices(req.app.locals.db);
     const axios = require('axios');
+    const SupabaseService = require('../services/SupabaseService');
+    const crypto = require('crypto');
     
     const agentId = req.agent.id;
     const { inboxId } = req.params;
-    const db = req.app.locals.db;
+    
+    logger.debug('Import contacts request', { agentId, inboxId });
     
     // Verify agent has access to this inbox
     const hasAccess = await inboxService.checkAccess(agentId, inboxId);
+    logger.debug('Access check result', { agentId, inboxId, hasAccess });
+    
     if (!hasAccess) {
+      logger.warn('Agent access denied to inbox', { agentId, inboxId });
       return res.status(403).json({ error: 'Acesso negado a esta caixa de entrada' });
     }
     
@@ -324,9 +622,10 @@ router.post('/my/inboxes/:inboxId/import-contacts', requireAgentAuth(null), asyn
     }
     
     const wuzapiContacts = wuzapiResponse.data.data;
-    let imported = 0;
+    const now = new Date().toISOString();
     
-    // Process contacts from WUZAPI response (it's an object with JID as keys)
+    // Prepare contacts for batch upsert
+    const contactsToUpsert = [];
     for (const [jid, contact] of Object.entries(wuzapiContacts)) {
       // Skip groups, LID contacts, and contacts not found
       if (!jid || !jid.includes('@s.whatsapp.net') || jid.includes('@g.us') || jid.includes('@lid')) {
@@ -337,69 +636,137 @@ router.post('/my/inboxes/:inboxId/import-contacts', requireAgentAuth(null), asyn
         continue;
       }
       
-      const contactJid = jid;
       const contactName = contact.PushName || contact.FullName || contact.FirstName || null;
       
-      // Check if conversation already exists
-      const existingConv = await db.query(
-        'SELECT id FROM conversations WHERE inbox_id = ? AND contact_jid = ?',
-        [inboxId, contactJid]
-      );
+      contactsToUpsert.push({
+        id: crypto.randomUUID(),
+        account_id: inbox.accountId,
+        contact_jid: jid,
+        contact_name: contactName,
+        inbox_id: inboxId,
+        status: 'open',
+        created_at: now,
+        updated_at: now
+      });
+    }
+    
+    logger.debug('Contacts prepared for upsert', { 
+      inboxId, 
+      totalFromWuzapi: Object.keys(wuzapiContacts).length,
+      validContacts: contactsToUpsert.length 
+    });
+    
+    let imported = 0;
+    let updated = 0;
+    
+    if (contactsToUpsert.length > 0) {
+      // First, get existing contacts to know which are new vs updates
+      const contactJids = contactsToUpsert.map(c => c.contact_jid);
+      const { data: existingContacts } = await SupabaseService.adminClient
+        .from('conversations')
+        .select('contact_jid')
+        .eq('account_id', inbox.accountId)
+        .in('contact_jid', contactJids);
       
-      if (existingConv.rows.length === 0) {
-        // Create new conversation (id is auto-generated)
-        const now = new Date().toISOString();
+      const existingJids = new Set((existingContacts || []).map(c => c.contact_jid));
+      const newContacts = contactsToUpsert.filter(c => !existingJids.has(c.contact_jid));
+      const existingToUpdate = contactsToUpsert.filter(c => existingJids.has(c.contact_jid));
+      
+      // Batch upsert in chunks of 100 for better performance
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < contactsToUpsert.length; i += BATCH_SIZE) {
+        const batch = contactsToUpsert.slice(i, i + BATCH_SIZE);
         
-        await db.query(`
-          INSERT INTO conversations (
-            user_id, contact_jid, contact_name, inbox_id, 
-            status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `, [
-          inbox.accountId,
-          contactJid,
-          contactName,
-          inboxId,
-          'open',
-          now,
-          now
-        ]);
+        // Use upsert with onConflict to handle duplicates
+        // Note: unique constraint is on (account_id, contact_jid), not (inbox_id, contact_jid)
+        const { data: upsertResult, error: upsertError } = await SupabaseService.adminClient
+          .from('conversations')
+          .upsert(batch, {
+            onConflict: 'account_id,contact_jid',
+            ignoreDuplicates: false
+          })
+          .select('id');
         
-        imported++;
-      } else if (contactName) {
-        // Update contact name if we have a new one
-        await db.query(
-          'UPDATE conversations SET contact_name = ?, updated_at = ? WHERE inbox_id = ? AND contact_jid = ?',
-          [contactName, new Date().toISOString(), inboxId, contactJid]
-        );
+        if (upsertError) {
+          // If upsert fails (e.g., no unique constraint), fall back to individual inserts
+          logger.warn('Batch upsert failed, falling back to individual inserts', { 
+            error: upsertError.message,
+            batchStart: i,
+            batchSize: batch.length
+          });
+          
+          // Fall back: check existing and insert only new ones
+          for (const contact of batch) {
+            const { data: existing } = await SupabaseService.adminClient
+              .from('conversations')
+              .select('id')
+              .eq('account_id', inbox.accountId)
+              .eq('contact_jid', contact.contact_jid)
+              .limit(1);
+            
+            if (!existing || existing.length === 0) {
+              const { error: insertError } = await SupabaseService.adminClient
+                .from('conversations')
+                .insert(contact);
+              
+              if (!insertError) {
+                imported++;
+              }
+            } else if (contact.contact_name) {
+              // Update name if we have one
+              await SupabaseService.adminClient
+                .from('conversations')
+                .update({ 
+                  contact_name: contact.contact_name, 
+                  updated_at: now 
+                })
+                .eq('account_id', inbox.accountId)
+                .eq('contact_jid', contact.contact_jid);
+              updated++;
+            }
+          }
+        }
       }
+      
+      // Count new contacts from successful upsert
+      imported = newContacts.length;
+      updated = existingToUpdate.length;
     }
     
     logger.info('Contacts imported from WUZAPI', { 
       agentId, 
       inboxId, 
       total: Object.keys(wuzapiContacts).length, 
-      imported 
+      imported,
+      updated
     });
     
-    // Return updated contacts list
-    const { rows: contacts } = await db.query(`
-      SELECT DISTINCT
-        c.contact_jid as id,
-        c.contact_name as name,
-        c.contact_jid as phone,
-        c.contact_avatar_url as avatarUrl
-      FROM conversations c
-      WHERE c.inbox_id = ?
-      ORDER BY c.contact_name
-    `, [inboxId]);
+    // Return updated contacts list using Supabase
+    const { data: contacts, error: listError } = await SupabaseService.adminClient
+      .from('conversations')
+      .select('contact_jid, contact_name, contact_avatar_url')
+      .eq('inbox_id', inboxId)
+      .order('contact_name');
     
-    const transformedContacts = contacts.map(contact => ({
-      id: contact.id,
-      name: contact.name || contact.phone?.replace('@s.whatsapp.net', ''),
-      phone: contact.phone?.replace('@s.whatsapp.net', ''),
-      avatarUrl: contact.avatarUrl
-    }));
+    if (listError) {
+      logger.error('Error listing contacts after import', { error: listError.message });
+      throw listError;
+    }
+    
+    // Deduplicate by contact_jid
+    const contactMap = new Map();
+    (contacts || []).forEach(c => {
+      if (c.contact_jid && !contactMap.has(c.contact_jid)) {
+        contactMap.set(c.contact_jid, {
+          id: c.contact_jid,
+          name: c.contact_name || c.contact_jid?.replace('@s.whatsapp.net', ''),
+          phone: c.contact_jid?.replace('@s.whatsapp.net', ''),
+          avatarUrl: c.contact_avatar_url
+        });
+      }
+    });
+    
+    const transformedContacts = Array.from(contactMap.values());
     
     res.json({
       success: true,

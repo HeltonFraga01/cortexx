@@ -107,7 +107,7 @@ class SupabaseService {
    * @param {string} token - User's JWT token
    * @param {string} table - Table name
    * @param {Function} queryBuilder - Function that builds the query
-   * @returns {Promise<{data: any, error: any}>}
+   * @returns {Promise<{data: any, count: number|null, error: any}>}
    */
   async queryAsUser(token, table, queryBuilder) {
     try {
@@ -119,13 +119,13 @@ class SupabaseService {
         throw this.translateError(result.error);
       }
       
-      return { data: result.data, error: null };
+      return { data: result.data, count: result.count, error: null };
     } catch (error) {
       logger.error('queryAsUser failed', {
         table,
         error: error.message
       });
-      return { data: null, error: this.translateError(error) };
+      return { data: null, count: null, error: this.translateError(error) };
     }
   }
 
@@ -134,7 +134,7 @@ class SupabaseService {
    * Use for system operations like audit logging
    * @param {string} table - Table name
    * @param {Function} queryBuilder - Function that builds the query
-   * @returns {Promise<{data: any, error: any}>}
+   * @returns {Promise<{data: any, count: number|null, error: any}>}
    */
   async queryAsAdmin(table, queryBuilder) {
     try {
@@ -145,13 +145,13 @@ class SupabaseService {
         throw this.translateError(result.error);
       }
       
-      return { data: result.data, error: null };
+      return { data: result.data, count: result.count, error: null };
     } catch (error) {
       logger.error('queryAsAdmin failed', {
         table,
         error: error.message
       });
-      return { data: null, error: this.translateError(error) };
+      return { data: null, count: null, error: this.translateError(error) };
     }
   }
 

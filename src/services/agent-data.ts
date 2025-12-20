@@ -82,6 +82,26 @@ export interface AgentContact {
   conversationCount?: number
 }
 
+// Inbox Status Types
+export type InboxConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'not_configured' | 'not_applicable' | 'unknown'
+
+export interface InboxStatus {
+  inboxId: string
+  inboxName: string
+  channelType: string
+  status: InboxConnectionStatus
+  connected: boolean
+  loggedIn: boolean
+  details?: Record<string, unknown>
+}
+
+export interface InboxStatusSummary {
+  total: number
+  online: number
+  offline: number
+  connecting: number
+}
+
 /**
  * Get inboxes assigned to the current agent
  */
@@ -211,4 +231,43 @@ export async function importContactsFromInbox(inboxId: string): Promise<{
     total: result.data?.total || 0,
     imported: result.data?.imported || 0
   }
+}
+
+/**
+ * Get connection status for all inboxes assigned to the current agent
+ * Returns status for each WhatsApp inbox and a summary
+ */
+export async function getMyInboxesStatus(): Promise<{
+  statuses: InboxStatus[]
+  summary: InboxStatusSummary
+}> {
+  const options = getRequestOptions()
+  
+  const response = await fetch(`${API_BASE}/api/agent/my/inboxes/status`, options)
+  const result = await response.json()
+
+  if (!response.ok) {
+    throw new Error(result.error || 'Falha ao carregar status das caixas de entrada')
+  }
+
+  return {
+    statuses: result.data || [],
+    summary: result.summary || { total: 0, online: 0, offline: 0, connecting: 0 }
+  }
+}
+
+/**
+ * Get connection status for a specific inbox assigned to the current agent
+ */
+export async function getAgentInboxStatus(inboxId: string): Promise<InboxStatus> {
+  const options = getRequestOptions()
+  
+  const response = await fetch(`${API_BASE}/api/agent/my/inboxes/${inboxId}/status`, options)
+  const result = await response.json()
+
+  if (!response.ok) {
+    throw new Error(result.error || 'Falha ao carregar status da caixa de entrada')
+  }
+
+  return result.data
 }

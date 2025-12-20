@@ -85,7 +85,7 @@ export function useAgentContacts(): UseAgentContactsReturn {
 
     try {
       // Buscar todos os contatos (sem paginação no hook, paginação é feita no componente)
-      const result = await getMyContacts({ limit: 1000 })
+      const result = await getMyContacts({ limit: 10000 })
       
       const convertedContacts = result.contacts.map(agentContactToContact)
       // Remove duplicados que podem vir de múltiplas inboxes
@@ -117,23 +117,28 @@ export function useAgentContacts(): UseAgentContactsReturn {
     setError(null)
 
     try {
-      let totalImported = 0
-      
-      // Importar de cada inbox
-      for (const inbox of inboxes) {
+      // Import from all inboxes in parallel for better performance
+      const importPromises = inboxes.map(async (inbox) => {
         try {
           const result = await importContactsFromInbox(inbox.id)
-          totalImported += result.imported
+          return { inbox: inbox.name, imported: result.imported, success: true }
         } catch (err: any) {
           console.error(`Erro ao importar da inbox ${inbox.name}:`, err)
-          // Continue with other inboxes
+          return { inbox: inbox.name, imported: 0, success: false, error: err.message }
         }
-      }
+      })
+
+      const results = await Promise.all(importPromises)
+      
+      const totalImported = results.reduce((sum, r) => sum + r.imported, 0)
+      const failedInboxes = results.filter(r => !r.success)
 
       // Recarregar contatos após importação
       await fetchContacts()
 
-      if (totalImported > 0) {
+      if (failedInboxes.length > 0 && failedInboxes.length === inboxes.length) {
+        toast.error('Erro ao importar contatos de todas as caixas')
+      } else if (totalImported > 0) {
         toast.success(`${totalImported} contato(s) importado(s) com sucesso`)
       } else {
         toast.info('Nenhum novo contato para importar')

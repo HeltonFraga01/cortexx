@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAgentAuth } from '@/contexts/AgentAuthContext'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,9 +14,10 @@ import {
   User,
   Clock,
   Send,
-  ChevronRight
+  ChevronRight,
+  Wifi
 } from 'lucide-react'
-import { getMyStats } from '@/services/agent-data'
+import { getMyStats, getMyInboxesStatus, type InboxStatusSummary } from '@/services/agent-data'
 
 // Helper to get availability color
 const getAvailabilityBgColor = (status: string) => {
@@ -38,11 +39,32 @@ export default function AgentOverview() {
     pendingConversations: 0, 
     totalContacts: 0 
   })
+  const [statusSummary, setStatusSummary] = useState<InboxStatusSummary>({ 
+    total: 0, 
+    online: 0, 
+    offline: 0, 
+    connecting: 0 
+  })
   const [isLoadingStats, setIsLoadingStats] = useState(true)
+
+  const loadStatusSummary = useCallback(async () => {
+    try {
+      const { summary } = await getMyInboxesStatus()
+      setStatusSummary(summary)
+    } catch (error) {
+      console.error('Failed to load inbox status summary:', error)
+    }
+  }, [])
 
   useEffect(() => {
     loadStats()
   }, [])
+
+  useEffect(() => {
+    if (!isLoadingStats && stats.totalInboxes > 0) {
+      loadStatusSummary()
+    }
+  }, [isLoadingStats, stats.totalInboxes, loadStatusSummary])
 
   const loadStats = async () => {
     try {
@@ -101,12 +123,20 @@ export default function AgentOverview() {
       </div>
 
       {/* Stats Cards - Using StatsCard with gradient backgrounds */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5">
         <StatsCard
           title="Caixas de Entrada"
           value={stats.totalInboxes}
           icon={Inbox}
           variant="blue"
+        />
+
+        <StatsCard
+          title="Caixas Online"
+          value={`${statusSummary.online}/${statusSummary.total}`}
+          icon={Wifi}
+          variant={statusSummary.online > 0 ? 'green' : 'red'}
+          description={statusSummary.online === 0 && statusSummary.total > 0 ? 'Nenhuma conectada' : undefined}
         />
 
         <StatsCard
