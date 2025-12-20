@@ -66,7 +66,7 @@ export const clearApiCredentials = (): void => {
 // CSRF Token management
 let csrfToken: string | null = null;
 
-// Get CSRF token from server - always fetch fresh for reliability
+// Get CSRF token from server
 export const getCsrfToken = async (forceRefresh = false): Promise<string> => {
   // Return cached token if available and not forcing refresh
   if (csrfToken && !forceRefresh) {
@@ -90,15 +90,16 @@ export const getCsrfToken = async (forceRefresh = false): Promise<string> => {
   return '';
 };
 
-// Clear CSRF token (call on logout)
+// Clear CSRF token (call on logout or on CSRF error)
 export const clearCsrfToken = (): void => {
   csrfToken = null;
 };
 
-// Base fetch with session-based authentication
+// Base fetch with session-based authentication and CSRF retry
 const apiFetch = async <T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  retryOnCsrf = true
 ): Promise<ApiResponse<T>> => {
   // Usar URL relativa - o backend cuida do proxy
   const url = `/api${endpoint}`;
@@ -125,6 +126,24 @@ const apiFetch = async <T>(
       headers,
       credentials: 'include' // IMPORTANTE: Envia cookies de sessão
     });
+
+    // Handle CSRF token errors with automatic retry
+    if (response.status === 403 && retryOnCsrf) {
+      const errorData = await response.json();
+      if (errorData.code === 'CSRF_VALIDATION_FAILED') {
+        // Clear cached token and retry with fresh token
+        clearCsrfToken();
+        if (import.meta.env.DEV) {
+          console.debug('[API] CSRF token expired, refreshing and retrying...');
+        }
+        return apiFetch<T>(endpoint, options, false); // Retry once without CSRF retry
+      }
+      return {
+        status: response.status,
+        error: errorData.error || `Error: ${response.statusText}`,
+        response: errorData.response,
+      };
+    }
 
     if (!response.ok) {
       const errorData = await response.json();

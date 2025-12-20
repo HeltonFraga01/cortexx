@@ -36,8 +36,11 @@ router.post('/admin-login', async (req, res) => {
       });
     }
     
-    // Find agent by email
-    const agent = await agentService.getAgentByEmailOnly(email);
+    // Get tenant context from subdomain (set by subdomainRouter middleware)
+    const tenantId = req.context?.tenantId || null;
+    
+    // Find agent by email (filtered by tenant if available)
+    const agent = await agentService.getAgentByEmailOnly(email, tenantId);
     
     if (!agent) {
       securityLogger.logLoginAttempt(false, {

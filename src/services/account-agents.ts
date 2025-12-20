@@ -17,19 +17,17 @@ import type {
 
 const API_BASE = ''
 
-// CSRF token cache
-let csrfToken: string | null = null
-
+/**
+ * Get fresh CSRF token from server
+ * Always fetches a new token to avoid stale token issues
+ */
 async function getCsrfToken(): Promise<string | null> {
-  if (csrfToken) return csrfToken
-  
   try {
     const response = await fetch(`${API_BASE}/api/auth/csrf-token`, {
       credentials: 'include'
     })
     const data = await response.json()
-    csrfToken = data.csrfToken
-    return csrfToken
+    return data.csrfToken || null
   } catch (error) {
     console.error('Failed to get CSRF token:', error)
     return null

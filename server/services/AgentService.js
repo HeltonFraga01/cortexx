@@ -313,20 +313,28 @@ class AgentService {
   /**
    * Get agent by email only (searches across all accounts)
    * @param {string} email - Agent email
+   * @param {string} [tenantId] - Optional tenant ID to filter by
    * @returns {Promise<Object|null>} Agent with password hash and account info or null
    */
-  async getAgentByEmailOnly(email) {
+  async getAgentByEmailOnly(email, tenantId = null) {
     try {
-      const queryFn = (query) => query
-        .select(`
-          *,
-          accounts!inner(name, status)
-        `)
-        .eq('email', email)
-        .eq('status', 'active')
-        .eq('accounts.status', 'active')
-        .limit(1)
-        .single();
+      const queryFn = (query) => {
+        let q = query
+          .select(`
+            *,
+            accounts!inner(name, status, tenant_id)
+          `)
+          .eq('email', email)
+          .eq('status', 'active')
+          .eq('accounts.status', 'active');
+        
+        // Filter by tenant if provided
+        if (tenantId) {
+          q = q.eq('accounts.tenant_id', tenantId);
+        }
+        
+        return q.limit(1).single();
+      };
 
       const { data: agent, error } = await supabaseService.queryAsAdmin('agents', queryFn);
 
@@ -343,10 +351,11 @@ class AgentService {
         failedLoginAttempts: agent.failed_login_attempts,
         lockedUntil: agent.locked_until,
         accountName: agent.accounts?.name,
-        accountStatus: agent.accounts?.status
+        accountStatus: agent.accounts?.status,
+        tenantId: agent.accounts?.tenant_id
       };
     } catch (error) {
-      logger.error('Failed to get agent by email only', { error: error.message, email });
+      logger.error('Failed to get agent by email only', { error: error.message, email, tenantId });
       throw error;
     }
   }
