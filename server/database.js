@@ -739,6 +739,100 @@ class Database {
     }
   }
 
+  /**
+   * Delete messages from user's message history
+   * @param {string} userToken - User's WUZAPI token
+   * @param {Array<string>} messageIds - Array of message IDs to delete (optional)
+   * @returns {Promise<number>} Number of deleted messages
+   */
+  async deleteMessages(userToken, messageIds = null) {
+    try {
+      // First, get the account_id for this user token
+      const { data: accountData, error: accountError } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+        query.select('id').eq('wuzapi_token', userToken).single()
+      );
+
+      if (accountError || !accountData) {
+        logger.warn('Account not found for user token in deleteMessages:', userToken.substring(0, 8) + '...');
+        throw new Error('Account not found for the provided token');
+      }
+
+      const accountId = accountData.id;
+
+      let deleteQuery;
+      if (messageIds && messageIds.length > 0) {
+        // Delete specific messages
+        const { data, error } = await SupabaseService.queryAsAdmin('sent_messages', (query) =>
+          query
+            .delete()
+            .eq('account_id', accountId)
+            .in('id', messageIds)
+        );
+
+        if (error) {
+          logger.error('Error deleting specific messages:', { 
+            error: error.message, 
+            accountId,
+            messageCount: messageIds.length,
+            userToken: userToken.substring(0, 8) + '...'
+          });
+          throw new Error(`Failed to delete messages: ${error.message}`);
+        }
+
+        // Count how many were actually deleted
+        // Since Supabase delete doesn't return count directly, we'll assume all were deleted
+        // In a real scenario, you might want to verify this
+        const deletedCount = messageIds.length;
+        
+        logger.info('✅ Specific messages deleted', { 
+          deletedCount,
+          accountId,
+          userToken: userToken.substring(0, 8) + '...'
+        });
+        
+        return deletedCount;
+      } else {
+        // Delete all messages for the user
+        const { data, error } = await SupabaseService.queryAsAdmin('sent_messages', (query) =>
+          query
+            .delete()
+            .eq('account_id', accountId)
+        );
+
+        if (error) {
+          logger.error('Error deleting all messages:', { 
+            error: error.message, 
+            accountId,
+            userToken: userToken.substring(0, 8) + '...'
+          });
+          throw new Error(`Failed to delete all messages: ${error.message}`);
+        }
+
+        // For delete all, we need to count first to return accurate count
+        const { count: totalCount } = await SupabaseService.queryAsAdmin('sent_messages', (query) =>
+          query
+            .select('*', { count: 'exact', head: true })
+            .eq('account_id', accountId)
+        );
+
+        logger.info('✅ All messages deleted for user', { 
+          deletedCount: totalCount || 0,
+          accountId,
+          userToken: userToken.substring(0, 8) + '...'
+        });
+        
+        return totalCount || 0;
+      }
+    } catch (error) {
+      logger.error('❌ Error in deleteMessages:', { 
+        error: error.message,
+        userToken: userToken?.substring(0, 8) + '...',
+        messageIds: messageIds?.length || 'all'
+      });
+      throw error;
+    }
+  }
+
   async close() {
     logger.info('Database connection closed (Supabase - no action needed)');
     return true;

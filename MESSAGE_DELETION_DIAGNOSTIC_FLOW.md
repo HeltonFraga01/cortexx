@@ -1,122 +1,91 @@
-# Message Deletion Diagnostic Flow
+# Message Deletion Flow Diagnostic
 
-## Current Request Flow Analysis
+## Current Flow Analysis
 
 ```mermaid
 flowchart TD
-    A[Frontend: DELETE request to /api/chat/inbox/messages/:messageId] --> B[CSRF Middleware]
-    B --> C{CSRF Token Valid?}
-    C -->|No| D[403 Forbidden - CSRF_VALIDATION_FAILED]
-    C -->|Yes| E[verifyUserToken Middleware]
-    E --> F{User Token Valid?}
-    F -->|No| G[401 Unauthorized - INVALID_TOKEN]
-    F -->|Yes| H[Get message from DB]
-    H --> I{Message exists?}
-    I -->|No| J[404 Not Found - Message not found]
-    I -->|Yes| K[Get conversation for ownership check]
-    K --> L{User owns conversation?}
-    L -->|No| M[403 Forbidden - Access denied]
-    L -->|Yes| N[Delete message from chat_messages table]
-    N --> O[Log deletion]
-    O --> P[Broadcast WebSocket update]
-    P --> Q{WebSocket handler available?}
-    Q -->|No| R[Log warning - continue]
-    Q -->|Yes| S[Call chatHandler.broadcastMessageUpdate]
-    R --> T[200 OK - Success response]
-    S --> T
+    A[DELETE /api/chat/inbox/messages/:messageId] --> B[Extract messageId from params]
+    B --> C[Check if supabaseService available]
+    C --> D[Get message by ID from database]
+    D --> E[Check if message exists]
+    E --> F[Create ChatService instance]
+    F --> G[Call getConversation with WRONG parameters]
+    G --> H{Method call fails}
+    H -->|Error| I[❌ TypeError: Method parameters mismatch]
+    H -->|Success| J[Verify user ownership]
+    J --> K[Delete message from database]
+    K --> L[Log success]
+    L --> M[Get chatHandler from app.locals]
+    M --> N{Check if broadcastMessageUpdate exists}
+    N -->|Yes| O[Broadcast WebSocket update]
+    N -->|No| P[Log warning about missing method]
+    O --> Q[Return success response]
+    P --> Q
+
+    style I fill:#ffcccc
+    style G fill:#ffffcc
+    style N fill:#ffffcc
 ```
 
-## Error Points Identified
+## Issues Identified
 
-### 1. CSRF Protection (403 Forbidden)
-**Current Issue**: All requests to `/api/chat/inbox/messages/:messageId` require CSRF token
-- **Error**: `{"error":"Invalid or missing CSRF token","code":"CSRF_VALIDATION_FAILED"}`
-- **Cause**: CSRF middleware is applied globally, message deletion endpoint not in exempt list
-- **Solution**: Frontend must obtain CSRF token via `GET /api/auth/csrf-token` and include in request headers
+### Issue 1: Parameter Order Mismatch in getConversation
+**Location**: `server/routes/chatInboxRoutes.js:1632`
+**Current Call**: `chatService.getConversation(req.userToken, message.conversation_id)`
+**Expected Signature**: `getConversation(userId, conversationId, token = null)`
+**Problem**: Parameters are in wrong order - userToken should be userId, conversationId should be second parameter
 
-### 2. Token Authentication (401 Unauthorized)
-**Potential Issue**: User token validation with WUZAPI
-- **Error**: `{"error":"Token inválido ou expirado","code":"INVALID_TOKEN"}`
-- **Cause**: `verifyUserToken` middleware validates token against WUZAPI `/session/status`
-- **Solution**: Ensure valid WUZAPI user token is provided
+### Issue 2: Similar Issue in deleteConversation
+**Location**: `server/routes/chatInboxRoutes.js:246`
+**Current Call**: `chatService.deleteConversation(req.userToken, id)`
+**Expected Signature**: `deleteConversation(userId, conversationId, token = null)`
+**Problem**: Same parameter order issue
 
-### 3. Message Ownership (403 Forbidden)
-**Potential Issue**: User doesn't own the conversation containing the message
-- **Error**: `{"error":"Acesso negado"}`
-- **Cause**: Backend verifies user owns conversation before allowing deletion
-- **Solution**: Ensure user is authenticated and owns the conversation
+### Issue 3: Missing broadcastMessageDeleted Method
+**Location**: Error logs show calls to `chatHandler.broadcastMessageDeleted`
+**Problem**: Method doesn't exist, should use `broadcastMessageUpdate` instead
 
-### 4. WebSocket Broadcasting (Warning)
-**Non-blocking Issue**: WebSocket handler may not be available
-- **Effect**: Message deleted but real-time updates may not work
-- **Cause**: `chatHandler.broadcastMessageUpdate` method may not exist or fail
-- **Solution**: Ensure WebSocket handler is properly initialized
+## Root Causes
 
-## Test Results
+1. **Method Signature Confusion**: The ChatService methods expect `(userId, conversationId, token)` but are being called with `(userToken, conversationId)`
+2. **Inconsistent WebSocket Method Names**: Code tries to call `broadcastMessageDeleted` which doesn't exist
+3. **Parameter Mapping Issue**: `req.userToken` is being passed as `userId` but should be passed as `token` parameter
 
-### CSRF Token Test
-```bash
-curl -X DELETE http://localhost:3001/api/chat/inbox/messages/test-message-id \
-  -H "Content-Type: application/json" \
-  -H "token: test-user-token"
-```
-**Result**: `403 Forbidden - CSRF_VALIDATION_FAILED`
-**Status**: ✅ CONFIRMED - CSRF protection is working as expected
+## Proposed Solutions
 
-### Token Validation Test
-**Status**: ⏳ PENDING - Need valid WUZAPI token to test
-
-### Message Deletion Test
-**Status**: ⏳ PENDING - Need to bypass CSRF and provide valid token
-
-## Recommended Fix Implementation
-
-### 1. Frontend CSRF Token Handling
-```typescript
-// Get CSRF token after login
-const csrfResponse = await fetch('/api/auth/csrf-token');
-const { csrfToken } = await csrfResponse.json();
-
-// Include in DELETE request
-await fetch(`/api/chat/inbox/messages/${messageId}`, {
-  method: 'DELETE',
-  headers: {
-    'Content-Type': 'application/json',
-    'CSRF-Token': csrfToken,
-    'token': userToken
-  }
-});
-```
-
-### 2. Backend WebSocket Error Handling
-The current implementation already has proper error handling:
+### Solution 1: Fix Parameter Order (High Priority)
 ```javascript
-// Existing code in chatInboxRoutes.js (lines ~150-170)
-if (chatHandler && typeof chatHandler.broadcastMessageUpdate === 'function') {
-  try {
-    chatHandler.broadcastMessageUpdate(message.conversation_id, {
-      id: messageId,
-      content: '🚫 Esta mensagem foi apagada',
-      is_edited: false,
-      is_deleted: true
-    })
-  } catch (wsError) {
-    // Log but don't fail the deletion
-    logger.warn('WebSocket broadcast failed', { error: wsError.message })
-  }
-}
+// Current (WRONG):
+const conversation = await chatService.getConversation(req.userToken, message.conversation_id)
+
+// Fixed (CORRECT):
+const conversation = await chatService.getConversation(req.userToken, message.conversation_id, req.userToken)
 ```
 
-## Next Steps
+### Solution 2: Fix deleteConversation Call
+```javascript
+// Current (WRONG):
+await chatService.deleteConversation(req.userToken, id)
 
-1. ✅ **Reproduce CSRF Error** - Confirmed via curl test
-2. ⏳ **Test with Valid Token** - Need to start frontend and get valid session
-3. ⏳ **Test End-to-End Flow** - Navigate to chat interface and attempt deletion
-4. ⏳ **Verify WebSocket Handling** - Check if real-time updates work
-5. ⏳ **Document Solution** - Create fix if issues found
+// Fixed (CORRECT):
+await chatService.deleteConversation(req.userToken, id, req.userToken)
+```
 
-## Status: 🔍 DIAGNOSIS IN PROGRESS
+### Solution 3: Ensure Consistent WebSocket Method Usage
+- Always use `broadcastMessageUpdate` instead of `broadcastMessageDeleted`
+- The current code already does this correctly in the message deletion route
 
-**Primary Issue**: CSRF token requirement is the main blocker for API testing
-**Secondary Issues**: Need to verify token validation and WebSocket broadcasting
-**Resolution**: Frontend must implement proper CSRF token handling
+## Impact Assessment
+
+- **Severity**: High - Message deletion completely fails
+- **Scope**: Affects both individual message deletion and conversation deletion
+- **User Impact**: Users cannot delete messages or conversations
+- **Data Integrity**: No data corruption, but operations fail silently or with errors
+
+## Testing Strategy
+
+1. Test message deletion with valid messageId
+2. Test conversation deletion with valid conversationId  
+3. Verify WebSocket broadcasts work correctly
+4. Test with invalid/unauthorized access attempts
+5. Verify error handling and logging

@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   cortexx:
-    image: heltonfraga/cortexx:v1.5.47
+    image: heltonfraga/cortexx:latest
     
     # Environment variables
     environment:
@@ -11,20 +11,19 @@ services:
       - WUZAPI_BASE_URL=https://wzapi.wasend.com.br
       - WUZAPI_ADMIN_TOKEN=UeH7cZ2c1K3zVUBFi7SginSC
       - SESSION_SECRET=XD6mESFW5itqQRurV81IQMMnr+bQuAlGs8xzPvr68Ts=
-      - CORS_ORIGINS=https://cloudapi.wasend.com.br
-      - WEBHOOK_BASE_URL=https://cloudapi.wasend.com.br
+      - CORS_ORIGINS=https://cortexx.online,https://*.cortexx.online
+      - WEBHOOK_BASE_URL=https://cortexx.online
       - REQUEST_TIMEOUT=10000
       - TZ=America/Sao_Paulo
-      # SQLite Configuration
-      - SQLITE_DB_PATH=/app/data/cortexx.db
-      - SQLITE_WAL_MODE=true
-      - SQLITE_TIMEOUT=10000
-      - SQLITE_CACHE_SIZE=8000
-      - SQLITE_SYNCHRONOUS=NORMAL
-      - SQLITE_JOURNAL_MODE=WAL
+      # Supabase Configuration (Database)
+      - SUPABASE_URL=https://bdhkfyvyvgfdukdodddr.supabase.co
+      - SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJkaGtmeXZ5dmdmZHVrZG9kZGRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU4MTE2NDYsImV4cCI6MjA4MTM4NzY0Nn0.6ekEVkvP-HADksTzvr5YxXxxXpdDPJJKd4vV98VhBmU
+      - SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJkaGtmeXZ5dmdmZHVrZG9kZGRyIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTgxMTY0NiwiZXhwIjoyMDgxMzg3NjQ2fQ.Y9-tRBAqj0XNwM-hqnRhFbmAi2skdCBO-bLjPg-nIWo
       # Node.js Optimizations
       - NODE_OPTIONS=--max-old-space-size=1024
       - UV_THREADPOOL_SIZE=4
+      # Logging
+      - LOG_LEVEL=info
       # S3 Storage Configuration
       - S3_ENABLED=true
       - S3_ENDPOINT=https://s3.wasend.com.br
@@ -39,7 +38,7 @@ services:
     
     # Deployment configuration
     deploy:
-      replicas: 1  # CRITICAL: Only 1 replica for SQLite
+      replicas: 1  # Single instance for session consistency
       placement:
         constraints:
           - node.role == manager  # Run on manager node only
@@ -64,14 +63,22 @@ services:
           memory: 512M
       labels:
         - traefik.enable=true
-        - traefik.http.routers.cortexx.rule=Host(`cloudapi.wasend.com.br`)
+        # Router principal - domínio raiz + wildcard subdomínios (HTTPS)
+        - traefik.http.routers.cortexx.rule=Host(`cortexx.online`) || HostRegexp(`{subdomain:[a-z0-9-]+}.cortexx.online`)
         - traefik.http.routers.cortexx.entrypoints=websecure
+        - traefik.http.routers.cortexx.tls=true
         - traefik.http.routers.cortexx.tls.certresolver=leresolver
-        - traefik.http.routers.cortexx-http.rule=Host(`cloudapi.wasend.com.br`)
+        # Wildcard certificate para subdomínios
+        - traefik.http.routers.cortexx.tls.domains[0].main=cortexx.online
+        - traefik.http.routers.cortexx.tls.domains[0].sans=*.cortexx.online
+        # Router HTTP - redirect para HTTPS
+        - traefik.http.routers.cortexx-http.rule=Host(`cortexx.online`) || HostRegexp(`{subdomain:[a-z0-9-]+}.cortexx.online`)
         - traefik.http.routers.cortexx-http.entrypoints=web
         - traefik.http.routers.cortexx-http.middlewares=redirect-to-https
+        # Middleware de redirect
         - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
         - traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true
+        # Service configuration
         - traefik.http.services.cortexx.loadbalancer.server.port=3001
         - traefik.http.services.cortexx.loadbalancer.healthcheck.path=/health
         - traefik.http.services.cortexx.loadbalancer.healthcheck.interval=30s
@@ -83,14 +90,13 @@ services:
     ports:
       - "3004:3001"
     
-    # Volumes
+    # Volumes - Only logs needed (Supabase handles data)
     volumes:
-      - cortexx-data:/app/data
       - cortexx-logs:/app/logs
     
-    # Health check
+    # Health check - Updated to use HTTP endpoint
     healthcheck:
-      test: ["CMD", "node", "server/healthcheck.js"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -101,14 +107,10 @@ services:
       - network_public
 
 networks:
-
   network_public:
-    external: true
+    driver: overlay
+    attachable: true
 
 volumes:
-  cortexx-data:
-    external: true
-    name: cortexx-data
   cortexx-logs:
-    external: true
-    name: cortexx-logs
+    driver: local

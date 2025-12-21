@@ -145,7 +145,7 @@ router.get('/conversations/:id', verifyUserToken, async (req, res) => {
     }
 
     const chatService = new ChatService()
-    const conversation = await chatService.getConversation(req.userToken, id)
+    const conversation = await chatService.getConversation(req.userToken, id, req.userToken)
 
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversation not found' })
@@ -220,7 +220,7 @@ router.delete('/conversations', verifyUserToken, async (req, res) => {
     }
 
     const chatService = new ChatService()
-    const result = await chatService.deleteAllConversations(req.userToken)
+    const result = await chatService.deleteAllConversations(req.userToken, req.userToken)
 
     res.json({ success: true, message: `${result.deleted} conversas excluídas com sucesso`, deleted: result.deleted })
   } catch (error) {
@@ -243,7 +243,7 @@ router.delete('/conversations/:id', verifyUserToken, async (req, res) => {
     }
 
     const chatService = new ChatService()
-    await chatService.deleteConversation(req.userToken, id)
+    await chatService.deleteConversation(req.userToken, id, req.userToken)
 
     res.json({ success: true, message: 'Conversa excluída com sucesso' })
   } catch (error) {
@@ -263,7 +263,7 @@ router.delete('/conversations', verifyUserToken, async (req, res) => {
     }
 
     const chatService = new ChatService()
-    const result = await chatService.deleteAllConversations(req.userToken)
+    const result = await chatService.deleteAllConversations(req.userToken, req.userToken)
 
     res.json({ 
       success: true, 
@@ -406,7 +406,7 @@ router.post('/conversations/:id/fetch-avatar', verifyUserToken, async (req, res)
     }
 
     const chatService = new ChatService()
-    const conversation = await chatService.getConversation(req.userToken, id)
+    const conversation = await chatService.getConversation(req.userToken, id, req.userToken)
     
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversation not found' })
@@ -519,7 +519,7 @@ router.post('/conversations/:id/refresh-group-name', verifyUserToken, async (req
     }
 
     const chatService = new ChatService()
-    const conversation = await chatService.getConversation(req.userToken, id)
+    const conversation = await chatService.getConversation(req.userToken, id, req.userToken)
     
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversation not found' })
@@ -665,7 +665,7 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
     const chatService = new ChatService()
     
     // Get conversation to get the contact JID
-    const conversation = await chatService.getConversation(req.userToken, id)
+    const conversation = await chatService.getConversation(req.userToken, id, req.userToken)
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversation not found' })
     }
@@ -1629,7 +1629,7 @@ router.delete('/messages/:messageId', verifyUserToken, async (req, res) => {
 
     // Get the conversation to verify user ownership
     const chatService = new ChatService()
-    const conversation = await chatService.getConversation(req.userToken, message.conversation_id)
+    const conversation = await chatService.getConversation(req.userToken, message.conversation_id, req.userToken)
     
     if (!conversation) {
       return res.status(403).json({ success: false, error: 'Acesso negado' })
@@ -2382,7 +2382,7 @@ router.get('/conversations/:id/info', verifyUserToken, async (req, res) => {
     }
 
     const chatService = new ChatService()
-    const conversation = await chatService.getConversation(req.userToken, id)
+    const conversation = await chatService.getConversation(req.userToken, id, req.userToken)
     
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversation not found' })
@@ -2512,7 +2512,7 @@ router.get('/conversations/:id/participants', verifyUserToken, async (req, res) 
     }
 
     const chatService = new ChatService()
-    const conversation = await chatService.getConversation(req.userToken, id)
+    const conversation = await chatService.getConversation(req.userToken, id, req.userToken)
     
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversation not found' })
@@ -2688,7 +2688,7 @@ router.post('/macros/:id/execute', verifyUserToken, async (req, res) => {
             
           case 'send_message':
             // Get conversation to get contact JID
-            const conversation = await chatService.getConversation(req.userToken, conversationId)
+            const conversation = await chatService.getConversation(req.userToken, conversationId, req.userToken)
             if (conversation) {
               const convContactJid = conversation.contactJid || conversation.contact_jid
               const phone = convContactJid ? convContactJid.replace('@s.whatsapp.net', '') : ''

@@ -291,7 +291,7 @@ router.get('/conversations/:id', requireAgentAuth(null), requirePermission('conv
       return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
     }
     
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
@@ -330,7 +330,7 @@ router.patch('/conversations/:id', requireAgentAuth(null), requirePermission('co
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -372,7 +372,7 @@ router.post('/conversations/:id/read', requireAgentAuth(null), requirePermission
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -412,7 +412,7 @@ router.get('/conversations/:id/messages', requireAgentAuth(null), requirePermiss
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -464,7 +464,7 @@ router.post('/conversations/:id/messages', requireAgentAuth(null), requirePermis
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -690,7 +690,7 @@ router.post('/conversations/:id/fetch-avatar', requireAgentAuth(null), requirePe
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -834,7 +834,7 @@ router.post('/conversations/:id/labels', requireAgentAuth(null), requirePermissi
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -871,7 +871,7 @@ router.delete('/conversations/:id/labels/:labelId', requireAgentAuth(null), requ
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -1041,7 +1041,7 @@ router.get('/conversations/:id/info', requireAgentAuth(null), requirePermission(
     }
     
     // Verify access
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -1091,7 +1091,7 @@ router.post('/conversations/:id/pickup', requireAgentAuth(null), requirePermissi
     }
     
     // Verify conversation exists and agent has access
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -1153,7 +1153,7 @@ router.post('/conversations/:id/transfer', requireAgentAuth(null), requirePermis
     }
     
     // Verify conversation exists and agent has access
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -1227,7 +1227,7 @@ router.post('/conversations/:id/release', requireAgentAuth(null), requirePermiss
     }
     
     // Verify conversation exists and agent has access
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -1268,7 +1268,7 @@ router.get('/conversations/:id/transferable-agents', requireAgentAuth(null), req
     }
     
     // Verify conversation exists and agent has access
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -1352,7 +1352,7 @@ router.post('/conversations/:id/assign-bot', requireAgentAuth(null), requirePerm
     }
     
     // Verify conversation exists and agent has access
-    const conversation = await chatService.getConversation(userToken, id);
+    const conversation = await chatService.getConversation(userToken, id, userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }
@@ -1472,7 +1472,7 @@ router.post('/macros/:id/execute', requireAgentAuth(null), requirePermission('co
     }
     
     // Verify conversation access
-    const conversation = await chatService.getConversation(userToken, parseInt(conversationId, 10));
+    const conversation = await chatService.getConversation(userToken, parseInt(conversationId, 10), userToken);
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversa não encontrada' });
     }

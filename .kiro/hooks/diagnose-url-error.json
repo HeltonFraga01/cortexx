@@ -1,5 +1,5 @@
 {
-  "id": "diagnose-url-error",
+  "id": "diagnose-url-arquivo-error",
   "name": "Diagnosticar Erro por URL",
   "description": "Quando uma mensagem contém URL e descrição de erro, usa MCP para reproduzir, diagnosticar, criar diagrama Mermaid e aplicar correções",
   "eventType": "promptSubmit",

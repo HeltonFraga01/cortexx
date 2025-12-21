@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Error Diagnostic Flow",
+  "description": "Diagnostica erros seguindo um processo estruturado de 7 passos: reproduzir erro, analisar logs, investigar código, criar diagrama Mermaid, aplicar correção, simular novamente e documentar",
+  "version": "1",
+  "when": {
+    "type": "promptSubmit"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Diagnostique o erro informado seguindo estes passos:\n1. **Reproduzir o erro**: Use o MCP para fazer uma requisição e capture o erro exato retornado.\n2. **Analisar logs**: Verifique os arquivos em `server/logs/` e `logs/` para identificar stack traces e mensagens de erro relacionadas.\n3. **Investigar código**: Examine os arquivos relevantes:\n   - `server/routes/` ou similar para o endpoint\n   - `server/services/` para a lógica de exclusão\n   - `server/middleware/` para possíveis bloqueios de autenticação/autorização\n4. **Criar diagrama Mermaid**: Gere um diagrama flowchart mostrando:\n   - O fluxo atual da requisição\n   - Onde o erro ocorre\n   - Possíveis causas (auth, permissão, validação, DB)\n   - Soluções propostas para cada causa\n5. **Aplicar correção**: Implemente a correção mais provável baseada no diagnóstico.\n6. **Simular novamente**: Use o MCP para testar a exclusão de mensagem após a correção e confirme que funciona.\n7. **Documentar**: Resuma o problema encontrado, a solução aplicada e o resultado do teste."
+  }
+}
