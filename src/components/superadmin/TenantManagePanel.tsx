@@ -59,7 +59,7 @@ export function TenantManagePanel({ tenant, onClose }: TenantManagePanelProps) {
             <div>
               <CardTitle className="text-xl font-bold text-foreground">{tenant.name}</CardTitle>
               <p className="text-sm text-muted-foreground">
-                {tenant.subdomain}.cortex.online
+                {tenant.subdomain}.cortexx.online
               </p>
             </div>
           </div>

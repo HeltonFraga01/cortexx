@@ -289,7 +289,7 @@ const TenantDetails = () => {
               </div>
               <p className="text-sm text-muted-foreground flex items-center space-x-1">
                 <Globe className="h-4 w-4" />
-                <span>{tenant.subdomain}.cortex.online</span>
+                <span>{tenant.subdomain}.cortexx.online</span>
               </p>
             </div>
           </div>

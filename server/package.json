@@ -1,6 +1,6 @@
 {
   "name": "wuzapi-manager-server",
-  "version": "0.0.1",
+  "version": "0.0.4",
   "description": "Backend para WUZAPI Manager",
   "main": "index.js",
   "scripts": {

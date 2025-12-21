@@ -431,7 +431,7 @@ const SuperadminDashboard = () => {
                         </Badge>
                       </div>
                       <div className="flex items-center space-x-4 text-sm text-muted-foreground">
-                        <span>{tenant.subdomain}.cortex.online</span>
+                        <span>{tenant.subdomain}.cortexx.online</span>
                         <span>•</span>
                         <span>{tenant.accountCount} accounts</span>
                         <span>•</span>

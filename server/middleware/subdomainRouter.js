@@ -8,6 +8,21 @@ const TenantService = require('../services/TenantService');
  */
 
 /**
+ * Check if hostname is an IP address
+ * @param {string} hostname - Hostname to check
+ * @returns {boolean} True if IP address
+ */
+function isIPAddress(hostname) {
+  if (!hostname) return false;
+  const cleanHostname = hostname.split(':')[0];
+  // IPv4 pattern
+  const ipv4Pattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+  // IPv6 pattern (simplified)
+  const ipv6Pattern = /^[\da-fA-F:]+$/;
+  return ipv4Pattern.test(cleanHostname) || ipv6Pattern.test(cleanHostname);
+}
+
+/**
  * Extract subdomain from hostname
  * Supports multiple development and production scenarios:
  * 
@@ -27,6 +42,11 @@ const TenantService = require('../services/TenantService');
  */
 function extractSubdomain(hostname, req = null) {
   if (!hostname) return null;
+
+  // Ignore IP addresses (used by internal health checks like Traefik)
+  if (isIPAddress(hostname)) {
+    return null;
+  }
 
   // Remove port if present
   const cleanHostname = hostname.split(':')[0];
@@ -144,9 +164,10 @@ async function subdomainRouter(req, res, next) {
     
     if (!tenant) {
       logger.warn('Tenant not found for subdomain', { subdomain, hostname });
-      return res.status(404).render('tenant-not-found', {
-        subdomain,
-        message: 'The requested tenant was not found.'
+      return res.status(404).json({
+        error: 'Tenant not found',
+        message: 'The requested tenant was not found.',
+        subdomain
       });
     }
 

@@ -653,7 +653,7 @@ const TenantManagement = () => {
                       }}
                       disabled={createLoading}
                     />
-                    <span className="text-sm text-muted-foreground whitespace-nowrap">.cortex.online</span>
+                    <span className="text-sm text-muted-foreground whitespace-nowrap">.cortexx.online</span>
                   </div>
                   {subdomainValidation.message && (
                     <div className={`flex items-center gap-1 text-sm ${subdomainValidation.isValid ? 'text-green-600' : 'text-red-600'}`}>
@@ -987,7 +987,7 @@ const TenantManagement = () => {
                           <div className="flex items-center space-x-4 text-sm text-muted-foreground">
                             <div className="flex items-center space-x-1">
                               <ExternalLink className="h-3 w-3" />
-                              <span>{tenant.subdomain}.cortex.online</span>
+                              <span>{tenant.subdomain}.cortexx.online</span>
                             </div>
                             <div className="flex items-center space-x-1">
                               <Users className="h-3 w-3" />

@@ -63,21 +63,11 @@ services:
           memory: 512M
       labels:
         - traefik.enable=true
-        # Router principal - domínio raiz + wildcard subdomínios (HTTPS)
-        - traefik.http.routers.cortexx.rule=Host(`cortexx.online`) || HostRegexp(`{subdomain:[a-z0-9-]+}.cortexx.online`)
+        # Router HTTPS - domínio principal + subdomínios
+        - traefik.http.routers.cortexx.rule=Host(`cortexx.online`) || Host(`acmecorp.cortexx.online`) || Host(`cortexx.cortexx.online`) || Host(`superadmin.cortexx.online`)
         - traefik.http.routers.cortexx.entrypoints=websecure
         - traefik.http.routers.cortexx.tls=true
-        - traefik.http.routers.cortexx.tls.certresolver=leresolver
-        # Wildcard certificate para subdomínios
-        - traefik.http.routers.cortexx.tls.domains[0].main=cortexx.online
-        - traefik.http.routers.cortexx.tls.domains[0].sans=*.cortexx.online
-        # Router HTTP - redirect para HTTPS
-        - traefik.http.routers.cortexx-http.rule=Host(`cortexx.online`) || HostRegexp(`{subdomain:[a-z0-9-]+}.cortexx.online`)
-        - traefik.http.routers.cortexx-http.entrypoints=web
-        - traefik.http.routers.cortexx-http.middlewares=redirect-to-https
-        # Middleware de redirect
-        - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
-        - traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true
+        - traefik.http.routers.cortexx.tls.certresolver=letsencryptresolver
         # Service configuration
         - traefik.http.services.cortexx.loadbalancer.server.port=3001
         - traefik.http.services.cortexx.loadbalancer.healthcheck.path=/health
@@ -88,7 +78,7 @@ services:
     
     # Ports (optional - Traefik handles routing)
     ports:
-      - "3004:3001"
+      - "3005:3001"
     
     # Volumes - Only logs needed (Supabase handles data)
     volumes:
@@ -108,8 +98,8 @@ services:
 
 networks:
   network_public:
-    driver: overlay
-    attachable: true
+    external: true
+    name: network_public
 
 volumes:
   cortexx-logs:

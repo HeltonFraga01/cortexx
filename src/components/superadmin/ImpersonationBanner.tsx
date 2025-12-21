@@ -64,7 +64,7 @@ const ImpersonationBanner = ({
           </span>
           <div className="flex items-center space-x-1 text-sm text-orange-600 dark:text-orange-400">
             <ExternalLink className="h-3 w-3" />
-            <span>{tenantSubdomain}.cortex.online</span>
+            <span>{tenantSubdomain}.cortexx.online</span>
           </div>
         </div>
         
