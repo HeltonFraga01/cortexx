@@ -378,7 +378,8 @@ router.get('/credits', authenticate, async (req, res) => {
 
     // Get plan token quotas using QuotaService
     const QuotaService = require('../services/QuotaService');
-    const quotaService = new QuotaService();
+    const db = req.app?.locals?.db;
+    const quotaService = new QuotaService(db);
     
     let planTokens = {
       daily: { used: 0, limit: 0, remaining: 0 },

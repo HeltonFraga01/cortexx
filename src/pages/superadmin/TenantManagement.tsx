@@ -36,19 +36,7 @@ import {
   User
 } from 'lucide-react';
 import { toast } from 'sonner';
-
-// Helper to get CSRF token
-const getCsrfToken = async (): Promise<string | null> => {
-  try {
-    const response = await fetch('/api/auth/csrf-token', {
-      credentials: 'include'
-    });
-    const data = await response.json();
-    return data.csrfToken || null;
-  } catch {
-    return null;
-  }
-};
+import { backendApi } from '@/services/api-client';
 
 interface Tenant {
   id: string;
@@ -132,23 +120,20 @@ const TenantManagement = () => {
   const fetchTenants = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/superadmin/tenants', {
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include'
-      });
+      const response = await backendApi.get<any>('/superadmin/tenants');
 
-      if (!response.ok) {
+      if (!response.success) {
         if (response.status === 401) {
-          toast.error('Session expired. Please login again');
+          toast.error('Sessão expirada. Faça login novamente.');
           navigate('/superadmin/login');
           return;
         }
-        throw new Error(`Failed to load tenants: ${response.status}`);
+        throw new Error(response.error || `Falha ao carregar tenants: ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = response.data;
       
-      if (data.success) {
+      if (data?.success) {
         const mappedTenants = (data.data || []).map((tenant: Record<string, unknown>) => ({
           id: tenant.id,
           name: tenant.name,
@@ -166,7 +151,7 @@ const TenantManagement = () => {
       }
     } catch (error) {
       console.error('Error fetching tenants:', error);
-      toast.error('Failed to load tenants');
+      toast.error('Falha ao carregar tenants');
     } finally {
       setLoading(false);
     }
@@ -174,102 +159,84 @@ const TenantManagement = () => {
 
   const validateSubdomain = async (subdomain: string) => {
     if (!subdomain) {
-      setSubdomainValidation({ isValid: false, message: 'Subdomain is required' });
+      setSubdomainValidation({ isValid: false, message: 'Subdomínio é obrigatório' });
       return;
     }
 
     const subdomainRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
     if (subdomain.length < 3 || subdomain.length > 63) {
-      setSubdomainValidation({ isValid: false, message: 'Subdomain must be 3-63 characters long' });
+      setSubdomainValidation({ isValid: false, message: 'Subdomínio deve ter entre 3-63 caracteres' });
       return;
     }
 
     if (!subdomainRegex.test(subdomain) || subdomain.includes('--')) {
-      setSubdomainValidation({ isValid: false, message: 'Invalid format. Use lowercase letters, numbers, and hyphens only' });
+      setSubdomainValidation({ isValid: false, message: 'Formato inválido. Use apenas letras minúsculas, números e hífens' });
       return;
     }
 
     try {
-      const response = await fetch(`/api/superadmin/tenants/validate-subdomain`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ subdomain })
-      });
-
-      const data = await response.json();
+      const response = await backendApi.post<any>('/superadmin/tenants/validate-subdomain', { subdomain });
       
-      if (data.success && data.data.valid) {
-        setSubdomainValidation({ isValid: true, message: 'Subdomain is available' });
+      if (response.success && response.data?.success && response.data?.data?.valid) {
+        setSubdomainValidation({ isValid: true, message: 'Subdomínio disponível' });
       } else {
-        setSubdomainValidation({ isValid: false, message: data.data.error || 'Subdomain is not available' });
+        setSubdomainValidation({ isValid: false, message: response.data?.data?.error || 'Subdomínio não disponível' });
       }
     } catch {
-      setSubdomainValidation({ isValid: false, message: 'Failed to validate subdomain' });
+      setSubdomainValidation({ isValid: false, message: 'Falha ao validar subdomínio' });
     }
   };
 
   const handleCreateTenant = async () => {
     // Validate all fields
     if (!newTenant.name || !newTenant.subdomain || !subdomainValidation.isValid) {
-      toast.error('Please fill in tenant name and a valid subdomain');
+      toast.error('Preencha o nome do tenant e um subdomínio válido');
       return;
     }
 
     if (!newTenant.ownerEmail || !newTenant.ownerName || !newTenant.ownerPassword) {
-      toast.error('Please fill in all admin account fields');
+      toast.error('Preencha todos os campos da conta admin');
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(newTenant.ownerEmail)) {
-      toast.error('Please enter a valid email address');
+      toast.error('Digite um email válido');
       return;
     }
 
     if (newTenant.ownerPassword.length < 8) {
-      toast.error('Password must be at least 8 characters');
+      toast.error('A senha deve ter pelo menos 8 caracteres');
       return;
     }
 
     if (newTenant.ownerPassword !== newTenant.confirmPassword) {
-      toast.error('Passwords do not match');
+      toast.error('As senhas não coincidem');
       return;
     }
 
     try {
       setCreateLoading(true);
-      const csrfToken = await getCsrfToken();
-      const response = await fetch('/api/superadmin/tenants', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          name: newTenant.name,
-          subdomain: newTenant.subdomain,
-          ownerEmail: newTenant.ownerEmail,
-          ownerName: newTenant.ownerName,
-          ownerPassword: newTenant.ownerPassword
-        })
+      const response = await backendApi.post<any>('/superadmin/tenants', {
+        name: newTenant.name,
+        subdomain: newTenant.subdomain,
+        ownerEmail: newTenant.ownerEmail,
+        ownerName: newTenant.ownerName,
+        ownerPassword: newTenant.ownerPassword
       });
 
-      const data = await response.json();
-      
-      if (data.success) {
-        toast.success('Tenant created successfully! Admin can now login.');
+      if (response.success && response.data?.success) {
+        toast.success('Tenant criado com sucesso! O admin já pode fazer login.');
         setShowCreateForm(false);
         setNewTenant({ name: '', subdomain: '', ownerEmail: '', ownerName: '', ownerPassword: '', confirmPassword: '' });
         setSubdomainValidation({ isValid: true, message: '' });
         fetchTenants();
       } else {
-        throw new Error(data.error || 'Failed to create tenant');
+        throw new Error(response.error || response.data?.error || 'Falha ao criar tenant');
       }
     } catch (error) {
       console.error('Error creating tenant:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to create tenant');
+      toast.error(error instanceof Error ? error.message : 'Falha ao criar tenant');
     } finally {
       setCreateLoading(false);
     }
@@ -291,35 +258,24 @@ const TenantManagement = () => {
 
   const handleSaveEdit = async () => {
     if (!editingTenantId || !editData.name.trim()) {
-      toast.error('Tenant name is required');
+      toast.error('Nome do tenant é obrigatório');
       return;
     }
 
     try {
       setEditLoading(true);
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(`/api/superadmin/tenants/${editingTenantId}`, {
-        method: 'PUT',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include',
-        body: JSON.stringify(editData)
-      });
-
-      const data = await response.json();
+      const response = await backendApi.put<any>(`/superadmin/tenants/${editingTenantId}`, editData);
       
-      if (data.success) {
-        toast.success('Tenant updated successfully');
+      if (response.success && response.data?.success) {
+        toast.success('Tenant atualizado com sucesso');
         setEditingTenantId(null);
         fetchTenants();
       } else {
-        throw new Error(data.error || 'Failed to update tenant');
+        throw new Error(response.error || response.data?.error || 'Falha ao atualizar tenant');
       }
     } catch (error) {
       console.error('Error updating tenant:', error);
-      toast.error('Failed to update tenant');
+      toast.error('Falha ao atualizar tenant');
     } finally {
       setEditLoading(false);
     }
@@ -330,27 +286,21 @@ const TenantManagement = () => {
       setLoadingOwner(true);
       setTenantOwner(null);
       
-      const accountsResponse = await fetch(`/api/superadmin/tenants/${tenantId}/accounts?limit=1`, {
-        credentials: 'include'
-      });
-      const accountsData = await accountsResponse.json();
+      const accountsResponse = await backendApi.get<any>(`/superadmin/tenants/${tenantId}/accounts?limit=1`);
       
-      if (!accountsData.success || !accountsData.data?.length) {
+      if (!accountsResponse.success || !accountsResponse.data?.success || !accountsResponse.data?.data?.length) {
         setTenantOwner(null);
         return;
       }
 
-      const accountId = accountsData.data[0].id;
+      const accountId = accountsResponse.data.data[0].id;
       
-      const ownerResponse = await fetch(`/api/superadmin/tenants/${tenantId}/accounts/${accountId}/owner`, {
-        credentials: 'include'
-      });
-      const ownerData = await ownerResponse.json();
+      const ownerResponse = await backendApi.get<any>(`/superadmin/tenants/${tenantId}/accounts/${accountId}/owner`);
       
-      if (ownerData.success && ownerData.data) {
-        setTenantOwner({ ...ownerData.data, accountId });
+      if (ownerResponse.success && ownerResponse.data?.success && ownerResponse.data?.data) {
+        setTenantOwner({ ...ownerResponse.data.data, accountId });
         setOwnerCredentials({
-          email: ownerData.data.email || '',
+          email: ownerResponse.data.data.email || '',
           password: '',
           confirmPassword: ''
         });
@@ -366,23 +316,22 @@ const TenantManagement = () => {
     if (!editingTenantId || !tenantOwner) return;
 
     if (!ownerCredentials.email && !ownerCredentials.password) {
-      toast.error('Please provide email or password to update');
+      toast.error('Forneça email ou senha para atualizar');
       return;
     }
 
     if (ownerCredentials.password && ownerCredentials.password !== ownerCredentials.confirmPassword) {
-      toast.error('Passwords do not match');
+      toast.error('As senhas não coincidem');
       return;
     }
 
     if (ownerCredentials.password && ownerCredentials.password.length < 8) {
-      toast.error('Password must be at least 8 characters');
+      toast.error('A senha deve ter pelo menos 8 caracteres');
       return;
     }
 
     try {
       setSavingCredentials(true);
-      const csrfToken = await getCsrfToken();
       
       const body: { email?: string; password?: string } = {};
       if (ownerCredentials.email && ownerCredentials.email !== tenantOwner.email) {
@@ -393,42 +342,33 @@ const TenantManagement = () => {
       }
 
       if (Object.keys(body).length === 0) {
-        toast.info('No changes to save');
+        toast.info('Nenhuma alteração para salvar');
         return;
       }
 
       const accountId = tenantOwner.accountId;
       if (!accountId) {
-        toast.error('Account not found');
+        toast.error('Conta não encontrada');
         return;
       }
 
-      const response = await fetch(
-        `/api/superadmin/tenants/${editingTenantId}/accounts/${accountId}/credentials`,
-        {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(csrfToken && { 'CSRF-Token': csrfToken })
-          },
-          credentials: 'include',
-          body: JSON.stringify(body)
-        }
+      const response = await backendApi.put<any>(
+        `/superadmin/tenants/${editingTenantId}/accounts/${accountId}/credentials`,
+        body
       );
 
-      const data = await response.json();
-      if (data.success) {
-        toast.success('Credentials updated successfully');
+      if (response.success && response.data?.success) {
+        toast.success('Credenciais atualizadas com sucesso');
         if (body.email) {
           setTenantOwner(prev => prev ? { ...prev, email: body.email! } : null);
         }
         setOwnerCredentials(prev => ({ ...prev, password: '', confirmPassword: '' }));
         setShowEditPassword(false);
       } else {
-        throw new Error(data.error);
+        throw new Error(response.error || response.data?.error || 'Falha ao atualizar credenciais');
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to update credentials');
+      toast.error(error instanceof Error ? error.message : 'Falha ao atualizar credenciais');
     } finally {
       setSavingCredentials(false);
     }
@@ -439,27 +379,17 @@ const TenantManagement = () => {
     const action = newStatus === 'active' ? 'activate' : 'deactivate';
 
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(`/api/superadmin/tenants/${tenantId}/${action}`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include'
-      });
-
-      const data = await response.json();
+      const response = await backendApi.post<any>(`/superadmin/tenants/${tenantId}/${action}`);
       
-      if (data.success) {
-        toast.success(`Tenant ${action}d successfully`);
+      if (response.success && response.data?.success) {
+        toast.success(`Tenant ${action === 'activate' ? 'ativado' : 'desativado'} com sucesso`);
         fetchTenants();
       } else {
-        throw new Error(data.error || `Failed to ${action} tenant`);
+        throw new Error(response.error || response.data?.error || `Falha ao ${action === 'activate' ? 'ativar' : 'desativar'} tenant`);
       }
     } catch (error) {
       console.error(`Error ${action}ing tenant:`, error);
-      toast.error(`Failed to ${action} tenant`);
+      toast.error(`Falha ao ${action === 'activate' ? 'ativar' : 'desativar'} tenant`);
     }
   };
 
@@ -467,63 +397,42 @@ const TenantManagement = () => {
     if (!deletingTenant) return;
 
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(`/api/superadmin/tenants/${deletingTenant.id}`, {
-        method: 'DELETE',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include',
-        body: JSON.stringify({ confirm: 'DELETE' })
-      });
-
-      const data = await response.json();
+      const response = await backendApi.delete<any>(`/superadmin/tenants/${deletingTenant.id}`);
       
-      if (data.success) {
-        toast.success('Tenant deleted successfully');
+      if (response.success && response.data?.success) {
+        toast.success('Tenant excluído com sucesso');
         setShowDeleteDialog(false);
         setDeletingTenant(null);
         fetchTenants();
       } else {
-        throw new Error(data.error || 'Failed to delete tenant');
+        throw new Error(response.error || response.data?.error || 'Falha ao excluir tenant');
       }
     } catch (error) {
       console.error('Error deleting tenant:', error);
-      toast.error('Failed to delete tenant');
+      toast.error('Falha ao excluir tenant');
     }
   };
 
   const handleImpersonateTenant = async (tenantId: string) => {
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(`/api/superadmin/impersonate/${tenantId}`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include'
-      });
-
-      const data = await response.json();
+      const response = await backendApi.post<any>(`/superadmin/impersonate/${tenantId}`);
       
-      if (data.success) {
-        const tenantName = data.data.tenant?.name || data.data.impersonation?.tenantName;
-        const subdomain = data.data.tenant?.subdomain || data.data.impersonation?.tenantSubdomain;
+      if (response.success && response.data?.success) {
+        const tenantName = response.data.data.tenant?.name || response.data.data.impersonation?.tenantName;
+        const subdomain = response.data.data.tenant?.subdomain || response.data.data.impersonation?.tenantSubdomain;
         
-        toast.success(`Now impersonating ${tenantName}`);
+        toast.success(`Agora impersonando ${tenantName}`);
         if (window.location.hostname === 'localhost') {
-          toast.info(`Impersonation started for ${subdomain}. In production, you would be redirected.`);
+          toast.info(`Impersonação iniciada para ${subdomain}. Em produção, você seria redirecionado.`);
         } else {
           window.location.href = `https://${subdomain}.${window.location.hostname}/admin`;
         }
       } else {
-        throw new Error(data.error || 'Failed to start impersonation');
+        throw new Error(response.error || response.data?.error || 'Falha ao iniciar impersonação');
       }
     } catch (error) {
       console.error('Error starting impersonation:', error);
-      toast.error('Failed to impersonate tenant');
+      toast.error('Falha ao impersonar tenant');
     }
   };
 

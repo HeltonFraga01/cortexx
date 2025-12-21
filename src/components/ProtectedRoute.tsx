@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  requiredRole?: 'admin' | 'user' | 'superadmin';
+  requiredRole?: 'admin' | 'user' | 'superadmin' | 'agent';
 }
 
 const ProtectedRoute = ({
@@ -29,9 +29,10 @@ const ProtectedRoute = ({
 
   if (requiredRole && user.role !== requiredRole) {
     // Redirecionar para o dashboard apropriado baseado no role
-    let redirectPath = '/user';
+    let redirectPath = '/user/dashboard';
     if (user.role === 'admin') redirectPath = '/admin';
     if (user.role === 'superadmin') redirectPath = '/superadmin/dashboard';
+    if (user.role === 'agent') redirectPath = '/agent/dashboard';
     return <Navigate to={redirectPath} replace />;
   }
 

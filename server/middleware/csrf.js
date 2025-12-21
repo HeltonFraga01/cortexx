@@ -6,6 +6,7 @@ const { logger } = require('../utils/logger');
  * 
  * Protege contra ataques Cross-Site Request Forgery (CSRF)
  * usando tokens únicos por sessão.
+ * Supports both JWT (Supabase Auth) and session-based authentication.
  * 
  * Como funciona:
  * 1. Cliente faz GET /api/auth/csrf-token para obter token
@@ -16,6 +17,13 @@ const { logger } = require('../utils/logger');
  * - Usa sessão (não cookies) para armazenar secret
  * - Token deve ser enviado no header 'CSRF-Token' ou body '_csrf'
  */
+
+/**
+ * Helper to get user ID from request (JWT or session)
+ */
+function getUserId(req) {
+  return req.user?.id || req.session?.userId;
+}
 
 /**
  * Middleware de proteção CSRF
@@ -62,7 +70,7 @@ function getCsrfToken(req, res) {
     const token = req.csrfToken();
     
     logger.debug('CSRF token generated', {
-      userId: req.session?.userId,
+      userId: getUserId(req),
       sessionId: req.sessionID
     });
     
@@ -72,7 +80,7 @@ function getCsrfToken(req, res) {
   } catch (error) {
     logger.error('Error generating CSRF token', {
       error: error.message,
-      userId: req.session?.userId
+      userId: getUserId(req)
     });
     
     res.status(500).json({
@@ -104,7 +112,7 @@ function csrfErrorHandler(err, req, res, next) {
       ip: req.ip,
       path: req.path,
       method: req.method,
-      userId: req.session?.userId,
+      userId: getUserId(req),
       hasToken: !!req.headers['csrf-token'] || !!req.body._csrf,
       userAgent: req.get('user-agent')
     });
@@ -139,6 +147,7 @@ function skipCsrf(req, res, next) {
  * Middleware condicional de CSRF
  * 
  * Aplica CSRF apenas se usuário estiver autenticado
+ * Supports both JWT (Supabase Auth) and session-based authentication
  * 
  * Uso:
  * app.use(conditionalCsrf)
@@ -148,7 +157,8 @@ function skipCsrf(req, res, next) {
  * - Protege apenas usuários autenticados
  */
 function conditionalCsrf(req, res, next) {
-  if (req.session?.userId) {
+  const userId = getUserId(req);
+  if (userId) {
     // Usuário autenticado, aplicar CSRF
     return csrfProtection(req, res, next);
   }

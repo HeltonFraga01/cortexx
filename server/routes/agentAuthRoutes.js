@@ -518,5 +518,117 @@ router.put('/password', requireAgentAuth(null), async (req, res) => {
   }
 });
 
+/**
+ * POST /api/agent/request-password-reset
+ * Request password reset for agent
+ * Note: skipCsrf is used because this is a public endpoint
+ */
+router.post('/request-password-reset', skipCsrf, async (req, res) => {
+  try {
+    initServices(req.app.locals.db);
+    
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({
+        error: 'Email é obrigatório',
+        code: 'MISSING_EMAIL'
+      });
+    }
+    
+    // Try to find agent by email
+    const agent = await agentService.getAgentByEmailOnly(email);
+    
+    if (agent && agent.status === 'active') {
+      // Generate reset token
+      const resetToken = await agentService.generatePasswordResetToken(agent.id);
+      
+      // TODO: Send email with reset link
+      // For now, just log the token (in production, send email)
+      logger.info('Agent password reset requested', {
+        agentId: agent.id,
+        email: agent.email,
+        resetToken: resetToken, // Remove this in production!
+        ip: req.ip
+      });
+    } else {
+      // Log attempt but don't reveal if email exists
+      logger.info('Agent password reset requested for unknown email', {
+        email,
+        ip: req.ip
+      });
+    }
+    
+    // Always return success to prevent email enumeration
+    res.json({
+      success: true,
+      message: 'Se o email existir, você receberá instruções para redefinir sua senha.'
+    });
+  } catch (error) {
+    logger.error('Agent password reset request error', {
+      error: error.message,
+      ip: req.ip
+    });
+    // Still return success to prevent information leakage
+    res.json({
+      success: true,
+      message: 'Se o email existir, você receberá instruções para redefinir sua senha.'
+    });
+  }
+});
+
+/**
+ * POST /api/agent/reset-password
+ * Reset agent password using token
+ * Note: skipCsrf is used because this is a public endpoint
+ */
+router.post('/reset-password', skipCsrf, async (req, res) => {
+  try {
+    initServices(req.app.locals.db);
+    
+    const { token, newPassword } = req.body;
+    
+    if (!token || !newPassword) {
+      return res.status(400).json({
+        error: 'Token e nova senha são obrigatórios',
+        code: 'MISSING_FIELDS'
+      });
+    }
+    
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        error: 'A nova senha deve ter pelo menos 8 caracteres',
+        code: 'WEAK_PASSWORD'
+      });
+    }
+    
+    // Validate token and reset password
+    const result = await agentService.resetPasswordWithToken(token, newPassword);
+    
+    if (!result.success) {
+      return res.status(400).json({
+        error: result.error === 'INVALID_TOKEN' ? 'Token inválido ou expirado' : 'Erro ao redefinir senha',
+        code: result.error
+      });
+    }
+    
+    logger.info('Agent password reset completed', {
+      agentId: result.agentId,
+      ip: req.ip
+    });
+    
+    res.json({
+      success: true,
+      message: 'Senha redefinida com sucesso. Você já pode fazer login.'
+    });
+  } catch (error) {
+    logger.error('Agent password reset error', {
+      error: error.message,
+      ip: req.ip
+    });
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
 module.exports = router;
 module.exports.initServices = initServices;

@@ -15,8 +15,10 @@ import { updateAppNameMetaTags, updateDynamicFavicon, updateOgImage } from "./ut
 import ProtectedRoute from "./components/ProtectedRoute";
 import AgentProtectedRoute from "./components/AgentProtectedRoute";
 import PublicHome from "./pages/PublicHome";
-import LoginPage from "./pages/LoginPage";
-import AgentLoginPage from "./pages/AgentLoginPage";
+import UnifiedLoginPage from "./pages/UnifiedLoginPage";
+import RegisterPage from "./pages/RegisterPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
+import ForcePasswordChangePage from "./pages/ForcePasswordChangePage";
 import AdminDashboard from "./pages/AdminDashboard";
 import UserDashboard from "./pages/UserDashboard";
 import AgentDashboard from "./pages/AgentDashboard";
@@ -104,9 +106,14 @@ const App = () => {
                     <PageTitle />
                     <Routes>
                       <Route path="/" element={<PublicHome />} />
-                      <Route path="/login" element={<LoginPage />} />
-                      <Route path="/dashboard" element={<LoginPage />} />
-                      <Route path="/agent/login" element={<AgentLoginPage />} />
+                      <Route path="/login" element={<UnifiedLoginPage />} />
+                      <Route path="/register" element={<RegisterPage />} />
+                      <Route path="/dashboard" element={<UnifiedLoginPage />} />
+                      <Route path="/reset-password" element={<ResetPasswordPage />} />
+                      <Route path="/force-password-change" element={<ForcePasswordChangePage />} />
+                      {/* Legacy routes - redirect to unified login */}
+                      <Route path="/agent/login" element={<UnifiedLoginPage />} />
+                      <Route path="/user-login" element={<UnifiedLoginPage />} />
                       <Route path="/superadmin/login" element={<SuperadminLogin />} />
                       <Route
                         path="/superadmin/*"

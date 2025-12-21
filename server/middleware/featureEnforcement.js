@@ -4,6 +4,7 @@
  * Middleware to check if a feature is enabled for a user.
  * Separates USER_FEATURES (plan-controlled) from ADMIN_FEATURES (admin-only).
  * Returns 403 with feature info when disabled.
+ * Supports both JWT (Supabase Auth) and session-based authentication.
  * 
  * Requirements: 4.2, 4.3
  */
@@ -13,6 +14,20 @@ const FeatureFlagService = require('../services/FeatureFlagService');
 
 // FeatureFlagService instance - initialized lazily from app.locals.db
 let featureService = null;
+
+/**
+ * Helper to get user ID from request (JWT or session)
+ */
+function getUserId(req) {
+  return req.user?.id || req.userId || req.session?.userId;
+}
+
+/**
+ * Helper to get user role from request (JWT or session)
+ */
+function getUserRole(req) {
+  return req.user?.role || req.session?.role;
+}
 
 /**
  * Get or initialize the FeatureFlagService instance
@@ -51,15 +66,17 @@ function requireFeature(featureName) {
         return next();
       }
 
-      // Skip feature check for admin users
-      if (req.session?.role === 'admin') {
+      // Skip feature check for admin users (JWT or session)
+      const userRole = getUserRole(req);
+      if (userRole === 'admin' || userRole === 'superadmin') {
         return next();
       }
       
       // Check if this is an admin-only feature - deny for non-admin users
       if (isAdminFeature(featureName)) {
+        const userId = getUserId(req);
         logger.warn('Admin feature access denied for non-admin user', {
-          userId: req.user?.id || req.userId || req.session?.userId,
+          userId,
           featureName
         });
 
@@ -73,8 +90,8 @@ function requireFeature(featureName) {
         });
       }
       
-      // Get user ID from authenticated request
-      const userId = req.user?.id || req.userId || req.session?.userId;
+      // Get user ID from authenticated request (JWT or session)
+      const userId = getUserId(req);
       
       if (!userId) {
         logger.warn('Feature check skipped - no user ID', { featureName });
@@ -105,7 +122,7 @@ function requireFeature(featureName) {
       logger.error('Feature enforcement error', {
         error: error.message,
         featureName,
-        userId: req.user?.id
+        userId: getUserId(req)
       });
       
       // Don't block on feature check errors, but log them

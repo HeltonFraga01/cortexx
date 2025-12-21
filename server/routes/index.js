@@ -66,6 +66,10 @@ const tenantAccountRoutes = require('./tenantAccountRoutes');
 
 // Auth Routes
 const authRoutes = require('./authRoutes');
+const userAuthRoutes = require('./userAuthRoutes');
+
+// Independent User Management Routes
+const adminUserManagementRoutes = require('./adminUserManagementRoutes');
 
 // Public Routes
 const publicRoutes = require('./publicRoutes');
@@ -83,6 +87,7 @@ function setupRoutes(app) {
   // Public Routes (sem autenticação) - devem vir ANTES das rotas protegidas
   app.use('/api/branding', brandingRoutes);
   app.use('/api/auth', authRoutes);
+  app.use('/api/auth', userAuthRoutes); // Independent user auth routes
   app.use('/api/public', publicRoutes);
   
   // Superadmin Routes (mixed auth - login is public, others require auth)
@@ -119,6 +124,9 @@ function setupRoutes(app) {
   app.use('/api/admin/api-settings', adminApiSettingsRoutes);
   app.use('/api/admin/stripe', adminStripeRoutes);
   app.use('/api/admin/credit-packages', adminCreditPackagesRoutes);
+  
+  // Independent User Management Routes (admin)
+  app.use('/api/admin/independent-users', adminUserManagementRoutes);
   
   // Generic admin routes - MUST come AFTER specific routes
   app.use('/api/admin', adminRoutes);

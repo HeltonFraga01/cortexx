@@ -3,6 +3,7 @@
  * 
  * Provides reusable middleware for validating that resources belong
  * to the requesting admin's tenant before allowing operations.
+ * Supports both JWT (Supabase Auth) and session-based authentication.
  * 
  * CRITICAL: This middleware prevents cross-tenant data access.
  * 
@@ -11,6 +12,13 @@
 
 const { logger } = require('../utils/logger');
 const SupabaseService = require('../services/SupabaseService');
+
+/**
+ * Helper to get user ID from request (JWT or session)
+ */
+function getUserId(req) {
+  return req.user?.id || req.session?.userId;
+}
 
 /**
  * Validate that a user belongs to the specified tenant
@@ -146,7 +154,7 @@ function validateTenantResource(resourceTable, idParam = 'id', options = {}) {
           resourceTenantId,
           resourceId,
           resourceTable,
-          userId: req.session?.userId,
+          userId: getUserId(req),
           endpoint: req.path,
           method: req.method,
           ip: req.ip
@@ -181,7 +189,7 @@ function requireTenantContext(req, res, next) {
     logger.warn('Request without tenant context', {
       endpoint: req.path,
       method: req.method,
-      userId: req.session?.userId,
+      userId: getUserId(req),
       ip: req.ip
     });
     return res.status(403).json({ error: 'Tenant context required' });
@@ -215,7 +223,7 @@ function validateUserIdParam(userIdParam = 'userId') {
           type: 'security_violation',
           tenantId,
           targetUserId: userId,
-          adminId: req.session?.userId,
+          adminId: getUserId(req),
           endpoint: req.path,
           method: req.method,
           ip: req.ip

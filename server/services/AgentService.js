@@ -660,6 +660,86 @@ class AgentService {
     }
   }
 
+  // ==================== PASSWORD RESET ====================
+
+  /**
+   * Generate password reset token for agent
+   * @param {string} agentId - Agent ID (UUID)
+   * @returns {Promise<string>} Reset token
+   */
+  async generatePasswordResetToken(agentId) {
+    try {
+      const token = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
+
+      const { error } = await supabaseService.update('agents', agentId, {
+        password_reset_token: token,
+        password_reset_expires: expiresAt,
+        updated_at: new Date().toISOString()
+      });
+
+      if (error) {
+        logger.warn('Could not store reset token in DB', { error: error.message, agentId });
+      }
+
+      logger.info('Password reset token generated for agent', { agentId });
+
+      return token;
+    } catch (error) {
+      logger.error('Failed to generate reset token', { error: error.message, agentId });
+      throw error;
+    }
+  }
+
+  /**
+   * Reset agent password using token
+   * @param {string} token - Reset token
+   * @param {string} newPassword - New password
+   * @returns {Promise<Object>} Result with success status
+   */
+  async resetPasswordWithToken(token, newPassword) {
+    try {
+      const queryFn = (query) => query
+        .select('*')
+        .eq('password_reset_token', token)
+        .single();
+
+      const { data: agent, error } = await supabaseService.queryAsAdmin('agents', queryFn);
+
+      if (error || !agent) {
+        return { success: false, error: 'INVALID_TOKEN' };
+      }
+
+      if (agent.password_reset_expires && new Date(agent.password_reset_expires) < new Date()) {
+        return { success: false, error: 'TOKEN_EXPIRED' };
+      }
+
+      const passwordHash = await this.hashPassword(newPassword);
+
+      const { error: updateError } = await supabaseService.update('agents', agent.id, {
+        password_hash: passwordHash,
+        password_reset_token: null,
+        password_reset_expires: null,
+        failed_login_attempts: 0,
+        locked_until: null,
+        updated_at: new Date().toISOString()
+      });
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      await this.invalidateAgentSessions(agent.id);
+
+      logger.info('Agent password reset completed', { agentId: agent.id });
+
+      return { success: true, agentId: agent.id };
+    } catch (error) {
+      logger.error('Failed to reset agent password', { error: error.message });
+      throw error;
+    }
+  }
+
   // ==================== LOGIN ATTEMPT TRACKING ====================
 
   /**

@@ -1,105 +1,151 @@
 const { logger } = require('../utils/logger');
 const SuperadminService = require('../services/SuperadminService');
+const { validateSupabaseToken } = require('./supabaseAuth');
 
 /**
  * Superadmin Authentication Middleware
- * Validates superadmin access and permissions
+ * Validates superadmin access and permissions using Supabase Auth
  * Requirements: 1.2
  */
 
 /**
  * Middleware to require superadmin authentication
- * Validates that the user is authenticated as a superadmin
+ * Validates that the user is authenticated as a superadmin via Supabase JWT
+ * 
+ * This middleware:
+ * 1. First validates the Supabase JWT token
+ * 2. Then checks if the user has 'superadmin' role in user_metadata
  */
-function requireSuperadmin(req, res, next) {
+async function requireSuperadmin(req, res, next) {
   try {
-    // Debug logging for session state
+    // First, validate the Supabase JWT token
+    const authHeader = req.headers.authorization;
+    
+    // Debug logging for auth state
     logger.debug('Superadmin auth check', {
       path: req.path,
       method: req.method,
+      hasAuthHeader: !!authHeader,
       hasSession: !!req.session,
-      sessionId: req.sessionID,
-      userId: req.session?.userId,
-      role: req.session?.role,
-      hasSessionToken: !!req.session?.sessionToken,
-      cookies: Object.keys(req.cookies || {}),
+      sessionUserId: req.session?.userId,
+      sessionRole: req.session?.role,
       ip: req.ip
     });
 
-    // Check if user is authenticated
-    if (!req.session || !req.session.userId) {
-      logger.warn('Unauthenticated superadmin access attempt', {
-        path: req.path,
-        method: req.method,
-        ip: req.ip,
-        userAgent: req.get('User-Agent'),
-        sessionId: req.sessionID,
-        hasSession: !!req.session
+    // Check for JWT token in Authorization header
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      // Use Supabase JWT authentication
+      await validateSupabaseToken(req, res, async () => {
+        // After token validation, check superadmin role
+        if (!req.user) {
+          logger.warn('Unauthenticated superadmin access attempt (no user after token validation)', {
+            path: req.path,
+            method: req.method,
+            ip: req.ip,
+            userAgent: req.get('User-Agent')
+          });
+          
+          return res.status(401).json({
+            error: 'Authentication required',
+            message: 'Superadmin authentication is required to access this resource.'
+          });
+        }
+
+        // Check if user has superadmin role from user_metadata
+        if (req.user.role !== 'superadmin') {
+          logger.warn('Non-superadmin access attempt to superadmin resource', {
+            userId: req.user.id,
+            userRole: req.user.role,
+            path: req.path,
+            ip: req.ip,
+            userAgent: req.get('User-Agent')
+          });
+          
+          return res.status(403).json({
+            error: 'Insufficient permissions',
+            message: 'Superadmin privileges are required to access this resource.'
+          });
+        }
+
+        // Override context role for superadmin
+        if (!req.context) {
+          req.context = {};
+        }
+        req.context.role = 'superadmin';
+
+        // Set superadmin context for downstream middleware
+        req.superadmin = {
+          userId: req.user.id,
+          role: 'superadmin',
+          email: req.user.email
+        };
+
+        // Set RLS context for superadmin bypass
+        req.supabaseContext = {
+          'app.user_role': 'superadmin'
+        };
+
+        logger.debug('Superadmin authentication successful (JWT)', {
+          superadminId: req.user.id,
+          email: req.user.email,
+          path: req.path,
+          method: req.method
+        });
+
+        next();
       });
-      
-      return res.status(401).json({
-        error: 'Authentication required',
-        message: 'Superadmin authentication is required to access this resource.'
-      });
+      return; // Important: return after calling validateSupabaseToken
     }
 
-    // Check if user has superadmin role
-    if (req.session.role !== 'superadmin') {
-      logger.warn('Non-superadmin access attempt to superadmin resource', {
+    // Fallback to session-based authentication (legacy support)
+    if (req.session && req.session.userId && req.session.role === 'superadmin') {
+      // Override context role for superadmin session
+      if (!req.context) {
+        req.context = {};
+      }
+      req.context.role = 'superadmin';
+
+      // Set superadmin context for downstream middleware
+      req.superadmin = {
         userId: req.session.userId,
-        userRole: req.session.role,
+        role: 'superadmin',
+        sessionToken: req.session.sessionToken
+      };
+
+      // Set RLS context for superadmin bypass
+      req.supabaseContext = {
+        'app.user_role': 'superadmin'
+      };
+
+      logger.debug('Superadmin authentication successful (session)', {
+        superadminId: req.session.userId,
         path: req.path,
-        ip: req.ip,
-        userAgent: req.get('User-Agent')
+        method: req.method
       });
-      
-      return res.status(403).json({
-        error: 'Insufficient permissions',
-        message: 'Superadmin privileges are required to access this resource.'
-      });
+
+      return next();
     }
 
-    // Override context role for superadmin session
-    // This allows superadmin to work without subdomain (e.g., localhost:8080/superadmin/*)
-    // Requirements: 1.1, 1.4 - Session takes priority over subdomain context
-    const previousContextRole = req.context?.role;
-    if (!req.context) {
-      req.context = {};
-    }
-    req.context.role = 'superadmin';
-
-    if (previousContextRole && previousContextRole !== 'superadmin') {
-      logger.debug('Superadmin context overridden from session', {
-        userId: req.session.userId,
-        previousContextRole,
-        newContextRole: 'superadmin',
-        path: req.path
-      });
-    }
-
-    // Set superadmin context for downstream middleware
-    req.superadmin = {
-      userId: req.session.userId,
-      role: 'superadmin',
-      sessionToken: req.session.sessionToken
-    };
-
-    // Set RLS context for superadmin bypass
-    req.supabaseContext = {
-      'app.user_role': 'superadmin'
-    };
-
-    logger.debug('Superadmin authentication successful', {
-      superadminId: req.session.userId,
+    // No valid authentication found
+    logger.warn('Unauthenticated superadmin access attempt', {
       path: req.path,
-      method: req.method
+      method: req.method,
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      hasAuthHeader: !!authHeader,
+      hasSession: !!req.session
+    });
+    
+    return res.status(401).json({
+      error: 'Authentication required',
+      message: 'Superadmin authentication is required to access this resource.'
     });
 
-    next();
   } catch (error) {
     logger.error('Superadmin authentication error', {
       error: error.message,
-      userId: req.session?.userId,
+      stack: error.stack,
+      userId: req.user?.id || req.session?.userId,
       path: req.path
     });
 

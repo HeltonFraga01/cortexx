@@ -19,19 +19,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { toast } from 'sonner';
-
-// Helper to get CSRF token
-const getCsrfToken = async (): Promise<string | null> => {
-  try {
-    const response = await fetch('/api/auth/csrf-token', {
-      credentials: 'include'
-    });
-    const data = await response.json();
-    return data.csrfToken || null;
-  } catch {
-    return null;
-  }
-};
+import { backendApi } from '@/services/api-client';
 
 interface SuperadminAccount {
   id: string;
@@ -85,19 +73,16 @@ const SuperadminSettings = () => {
   const fetchAccounts = async () => {
     try {
       setAccountsLoading(true);
-      const response = await fetch('/api/superadmin/accounts', {
-        credentials: 'include'
-      });
-      const data = await response.json();
+      const response = await backendApi.get<any>('/superadmin/accounts');
       
-      if (data.success) {
-        setAccounts(data.data || []);
+      if (response.success && response.data?.success) {
+        setAccounts(response.data.data || []);
       } else {
-        throw new Error(data.error || 'Failed to load accounts');
+        throw new Error(response.error || response.data?.error || 'Falha ao carregar contas');
       }
     } catch (error) {
       console.error('Error fetching accounts:', error);
-      toast.error('Failed to load superadmin accounts');
+      toast.error('Falha ao carregar contas de superadmin');
     } finally {
       setAccountsLoading(false);
     }
@@ -109,47 +94,39 @@ const SuperadminSettings = () => {
 
   const handleChangePassword = async () => {
     if (!currentPassword || !newPassword || !confirmPassword) {
-      toast.error('Please fill in all password fields');
+      toast.error('Preencha todos os campos de senha');
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      toast.error('New passwords do not match');
+      toast.error('As senhas não coincidem');
       return;
     }
 
     const allRequirementsMet = passwordRequirements.every(req => req.test(newPassword));
     if (!allRequirementsMet) {
-      toast.error('Password does not meet all requirements');
+      toast.error('A senha não atende todos os requisitos');
       return;
     }
 
     try {
       setPasswordLoading(true);
-      const csrfToken = await getCsrfToken();
-      const response = await fetch('/api/superadmin/change-password', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include',
-        body: JSON.stringify({ currentPassword, newPassword })
+      const response = await backendApi.post<any>('/superadmin/change-password', {
+        currentPassword,
+        newPassword
       });
 
-      const data = await response.json();
-
-      if (data.success) {
-        toast.success('Password changed successfully');
+      if (response.success && response.data?.success) {
+        toast.success('Senha alterada com sucesso');
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
       } else {
-        throw new Error(data.error || 'Failed to change password');
+        throw new Error(response.error || response.data?.error || 'Falha ao alterar senha');
       }
     } catch (error) {
       console.error('Error changing password:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to change password');
+      toast.error(error instanceof Error ? error.message : 'Falha ao alterar senha');
     } finally {
       setPasswordLoading(false);
     }
@@ -157,48 +134,37 @@ const SuperadminSettings = () => {
 
   const handleCreateAccount = async () => {
     if (!newAccount.email || !newAccount.name || !newAccount.password) {
-      toast.error('Please fill in all fields');
+      toast.error('Preencha todos os campos');
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(newAccount.email)) {
-      toast.error('Please enter a valid email address');
+      toast.error('Digite um email válido');
       return;
     }
 
     const allRequirementsMet = passwordRequirements.every(req => req.test(newAccount.password));
     if (!allRequirementsMet) {
-      toast.error('Password does not meet all requirements');
+      toast.error('A senha não atende todos os requisitos');
       return;
     }
 
     try {
       setCreateLoading(true);
-      const csrfToken = await getCsrfToken();
-      const response = await fetch('/api/superadmin/accounts', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include',
-        body: JSON.stringify(newAccount)
-      });
+      const response = await backendApi.post<any>('/superadmin/accounts', newAccount);
 
-      const data = await response.json();
-
-      if (data.success) {
-        toast.success('Superadmin account created successfully');
+      if (response.success && response.data?.success) {
+        toast.success('Conta de superadmin criada com sucesso');
         setShowCreateDialog(false);
         setNewAccount({ email: '', name: '', password: '' });
         fetchAccounts();
       } else {
-        throw new Error(data.error || 'Failed to create account');
+        throw new Error(response.error || response.data?.error || 'Falha ao criar conta');
       }
     } catch (error) {
       console.error('Error creating account:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to create account');
+      toast.error(error instanceof Error ? error.message : 'Falha ao criar conta');
     } finally {
       setCreateLoading(false);
     }
@@ -208,29 +174,19 @@ const SuperadminSettings = () => {
     if (!deletingAccount) return;
 
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(`/api/superadmin/accounts/${deletingAccount.id}`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include'
-      });
+      const response = await backendApi.delete<any>(`/superadmin/accounts/${deletingAccount.id}`);
 
-      const data = await response.json();
-
-      if (data.success) {
-        toast.success('Superadmin account deleted successfully');
+      if (response.success && response.data?.success) {
+        toast.success('Conta de superadmin excluída com sucesso');
         setShowDeleteDialog(false);
         setDeletingAccount(null);
         fetchAccounts();
       } else {
-        throw new Error(data.error || 'Failed to delete account');
+        throw new Error(response.error || response.data?.error || 'Falha ao excluir conta');
       }
     } catch (error) {
       console.error('Error deleting account:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to delete account');
+      toast.error(error instanceof Error ? error.message : 'Falha ao excluir conta');
     }
   };
 

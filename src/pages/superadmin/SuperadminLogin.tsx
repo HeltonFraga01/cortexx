@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import ThemeToggle from '@/components/ui-custom/ThemeToggle';
@@ -11,44 +12,60 @@ import { Loader2, Shield } from 'lucide-react';
 
 /**
  * Superadmin Login Page
+ * Uses Supabase Auth for authentication
  * Requirements: 1.1 - Superadmin authentication
  */
 const SuperadminLogin = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   
-  const { loginSuperadmin, user } = useAuth();
+  const { login, user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
     // Redirect if already logged in as superadmin
-    if (user && user.role === 'superadmin') {
+    if (isAuthenticated && user?.role === 'superadmin') {
       navigate('/superadmin/dashboard', { replace: true });
     }
-  }, [user, navigate]);
+  }, [user, isAuthenticated, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!email.trim() || !password.trim()) {
-      toast.error('Please enter both email and password');
+      setError('Por favor, insira email e senha');
       return;
     }
 
     setIsLoading(true);
+    setError(null);
+    
     try {
-      const success = await loginSuperadmin(email, password);
-      if (success) {
-        toast.success('Login successful!');
-        // Use replace to prevent back button returning to login
-        navigate('/superadmin/dashboard', { replace: true });
+      const result = await login(email, password);
+      
+      if (result.success) {
+        // Check if password change is required
+        if (result.requiresPasswordChange) {
+          navigate('/force-password-change', { replace: true });
+          return;
+        }
+        
+        // Wait for auth state to update and verify role
+        // The useEffect will handle the redirect once user state is updated
+        toast.success('Login realizado com sucesso!');
+        
+        // Small delay to allow auth state to propagate
+        setTimeout(() => {
+          navigate('/superadmin/dashboard', { replace: true });
+        }, 100);
       } else {
-        toast.error('Invalid credentials');
+        setError(result.error || 'Credenciais inválidas');
       }
-    } catch (error) {
-      console.error('Login error:', error);
-      toast.error('Login failed. Please try again.');
+    } catch (err) {
+      console.error('Login error:', err);
+      setError('Falha no login. Tente novamente.');
     } finally {
       setIsLoading(false);
     }
@@ -67,17 +84,17 @@ const SuperadminLogin = () => {
               <Shield className="h-12 w-12 text-primary" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold">Superadmin Portal</h1>
+          <h1 className="text-3xl font-bold">Portal Superadmin</h1>
           <p className="text-muted-foreground">
-            Platform administration and management
+            Administração e gerenciamento da plataforma
           </p>
         </div>
 
         <Card>
           <CardHeader className="space-y-1">
-            <CardTitle className="text-2xl">Superadmin Login</CardTitle>
+            <CardTitle className="text-2xl">Login Superadmin</CardTitle>
             <CardDescription>
-              Enter your credentials to access the platform administration
+              Insira suas credenciais para acessar a administração
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -87,7 +104,6 @@ const SuperadminLogin = () => {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="admin@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={isLoading}
@@ -97,7 +113,7 @@ const SuperadminLogin = () => {
               </div>
               
               <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
+                <Label htmlFor="password">Senha</Label>
                 <Input
                   id="password"
                   type="password"
@@ -108,6 +124,12 @@ const SuperadminLogin = () => {
                   required
                 />
               </div>
+
+              {error && (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
               
               <Button 
                 type="submit"
@@ -115,7 +137,7 @@ const SuperadminLogin = () => {
                 disabled={isLoading}
               >
                 {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Sign In
+                Entrar
               </Button>
             </form>
           </CardContent>
@@ -125,14 +147,14 @@ const SuperadminLogin = () => {
           <CardContent className="pt-6">
             <div className="text-center">
               <p className="text-sm text-muted-foreground mb-2">
-                Not a superadmin?
+                Não é superadmin?
               </p>
               <Button 
                 variant="outline" 
                 className="w-full"
                 onClick={() => navigate('/login')}
               >
-                Go to Regular Login
+                Ir para Login Regular
               </Button>
             </div>
           </CardContent>

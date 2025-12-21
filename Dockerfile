@@ -12,7 +12,6 @@ RUN apk add --no-cache \
     python3 \
     make \
     g++ \
-    
     curl \
     dumb-init \
     && rm -rf /var/cache/apk/*
@@ -80,7 +79,6 @@ FROM node:20-alpine AS production
 # Instalar apenas dependências de runtime essenciais
 # FFmpeg é necessário para conversão de áudio para formato OGG/Opus (WhatsApp)
 RUN apk add --no-cache \
-    
     curl \
     dumb-init \
     tini \
@@ -134,7 +132,7 @@ CMD ["dumb-init", "node", "server/index.js"]
 # Metadata
 # ============================================================================
 LABEL maintainer="WUZAPI Team" \
-      version="0.0.4" \
+      version="0.0.6" \
       description="WUZAPI Manager - Optimized Docker Image with Scheduled Messages" \
       org.opencontainers.image.source="https://github.com/heltonfraga/wuzapi-manager" \
       org.opencontainers.image.documentation="https://github.com/heltonfraga/wuzapi-manager/blob/main/README.md"

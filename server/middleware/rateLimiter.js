@@ -8,7 +8,16 @@ const { logger } = require('../utils/logger');
  * 1. loginLimiter - Mais restritivo para tentativas de login
  * 2. apiLimiter - Moderado para API geral
  * 3. adminLimiter - Restritivo para operações admin
+ * 
+ * Supports both JWT (Supabase Auth) and session-based authentication.
  */
+
+/**
+ * Helper to get user ID from request (JWT or session)
+ */
+function getUserId(req) {
+  return req.user?.id || req.session?.userId;
+}
 
 /**
  * Rate limiter para login (mais restritivo)
@@ -132,7 +141,7 @@ const adminLimiter = rateLimit({
       ip: req.ip,
       path: req.path,
       method: req.method,
-      userId: req.session?.userId,
+      userId: getUserId(req),
       userAgent: req.get('user-agent')
     });
     

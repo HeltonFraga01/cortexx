@@ -17,7 +17,7 @@ class SessionMappingService {
    * Register or update a session mapping
    * @param {string} sessionId - WUZAPI session ID (userID from webhook)
    * @param {string} userToken - User's authentication token
-   * @param {Object} metadata - Additional metadata (instanceName, jid)
+   * @param {Object} metadata - Additional metadata (instanceName, jid, accountId, wuzapiToken)
    */
   async registerMapping(sessionId, userToken, metadata = {}) {
     if (!sessionId || !userToken) {
@@ -25,17 +25,43 @@ class SessionMappingService {
       return;
     }
 
-    const { instanceName, jid } = metadata;
+    const { instanceName, jid, accountId, wuzapiToken } = metadata;
 
     try {
       // Update cache
       this.cache.set(sessionId, { token: userToken, instanceName, jid });
 
+      // Get account_id from token if not provided
+      let resolvedAccountId = accountId;
+      let resolvedWuzapiToken = wuzapiToken || userToken;
+      
+      if (!resolvedAccountId) {
+        // Try to get account from token
+        const { data: account } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+          query.select('id, token').eq('token', userToken).single()
+        );
+        if (account) {
+          resolvedAccountId = account.id;
+          resolvedWuzapiToken = account.token;
+        }
+      }
+
+      // If we still don't have account_id, skip database persistence but keep cache
+      if (!resolvedAccountId) {
+        logger.debug('Session mapping cached only (no account found)', {
+          sessionId: sessionId.substring(0, 10) + '...'
+        });
+        return;
+      }
+
       // Persist to database (upsert) using Supabase
+      // Table requires: wuzapi_token (NOT NULL), account_id (NOT NULL)
       const { error } = await SupabaseService.queryAsAdmin('session_token_mapping', (query) =>
         query.upsert({
           session_id: sessionId,
           user_token: userToken,
+          wuzapi_token: resolvedWuzapiToken,
+          account_id: resolvedAccountId,
           instance_name: instanceName || null,
           jid: jid || null,
           updated_at: new Date().toISOString()

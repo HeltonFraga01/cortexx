@@ -28,7 +28,8 @@ import {
   FileText,
   ClipboardList,
   Bot,
-  Wallet
+  Wallet,
+  UserPlus
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -53,6 +54,7 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
   const navigation = [
     { name: 'Overview', href: '/admin', icon: BarChart3 },
     { name: 'Usuários', href: '/admin/users', icon: Users },
+    { name: 'Usuários Independentes', href: '/admin/independent-users', icon: UserPlus },
     { name: 'Planos', href: '/admin/plans', icon: CreditCard },
     { name: 'Stripe & Pagamentos', href: '/admin/stripe', icon: Wallet },
     { name: 'Cotas de Bot', href: '/admin/bot-quotas', icon: Bot },

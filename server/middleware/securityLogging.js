@@ -1,6 +1,20 @@
 const securityLogger = require('../utils/securityLogger');
 
 /**
+ * Security Logging Middleware
+ * 
+ * Provides logging for security-related events.
+ * Supports both JWT (Supabase Auth) and session-based authentication.
+ */
+
+/**
+ * Helper to get user ID from request (JWT or session)
+ */
+function getUserId(req) {
+  return req.user?.id || req.session?.userId;
+}
+
+/**
  * Middleware para log de requisições admin
  * 
  * Loga todas as requisições para endpoints administrativos
@@ -8,7 +22,7 @@ const securityLogger = require('../utils/securityLogger');
 function logAdminRequests(req, res, next) {
   if (req.path.startsWith('/api/admin')) {
     securityLogger.logAdminAccess({
-      userId: req.session?.userId || 'anonymous',
+      userId: getUserId(req) || 'anonymous',
       ip: req.ip,
       path: req.path,
       method: req.method
@@ -25,7 +39,7 @@ function logAdminRequests(req, res, next) {
 function logUnauthorizedAttempts(err, req, res, next) {
   if (err.status === 401 || err.status === 403) {
     securityLogger.logUnauthorizedAccess({
-      userId: req.session?.userId,
+      userId: getUserId(req),
       ip: req.ip,
       path: req.path,
       reason: err.message
@@ -53,6 +67,7 @@ function logRateLimitExceeded(req, res, next) {
  * Middleware para log de mudanças de sessão
  * 
  * Loga criação e destruição de sessões
+ * Supports both JWT (Supabase Auth) and session-based authentication
  */
 function logSessionChanges(req, res, next) {
   // Hook para log de criação de sessão
@@ -60,11 +75,13 @@ function logSessionChanges(req, res, next) {
     req.session.logged = true;
     
     // Log quando sessão é criada (após login)
-    if (req.session.userId) {
+    const userId = getUserId(req);
+    if (userId) {
       securityLogger.logSessionChange('created', {
-        userId: req.session.userId,
+        userId,
         sessionId: req.sessionID,
-        ip: req.ip
+        ip: req.ip,
+        authMethod: req.user ? 'jwt' : 'session'
       });
     }
   }

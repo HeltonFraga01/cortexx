@@ -63,6 +63,7 @@ const CustomHtmlRenderer = ({ html }: { html: string }) => {
   const startTimeRef = useRef<number>(Date.now());
   const resourcesLoadedRef = useRef<number>(0);
   const resourcesFailedRef = useRef<number>(0);
+  const statusRef = useRef<'loading' | 'ready' | 'error' | 'timeout'>('loading');
   const [showFallback, setShowFallback] = useState(false);
   
   const [renderState, setRenderState] = useState<CustomHtmlRenderState>({
@@ -73,10 +74,16 @@ const CustomHtmlRenderer = ({ html }: { html: string }) => {
     resourcesFailed: 0,
   });
 
+  // Manter ref sincronizada com o estado
+  useEffect(() => {
+    statusRef.current = renderState.status;
+  }, [renderState.status]);
+
   useEffect(() => {
     startTimeRef.current = Date.now();
     resourcesLoadedRef.current = 0;
     resourcesFailedRef.current = 0;
+    statusRef.current = 'loading';
     
     console.log('[CustomHtmlRenderer] Iniciando carregamento de HTML personalizado...');
     console.log('[CustomHtmlRenderer] Tamanho do HTML:', html.length, 'bytes');
@@ -89,11 +96,12 @@ const CustomHtmlRenderer = ({ html }: { html: string }) => {
       resourcesFailed: 0,
     });
 
-    // Configurar timeout de 10 segundos
+    // Configurar timeout de 30 segundos (aumentado para páginas com muitos recursos)
     timeoutRef.current = setTimeout(() => {
-      if (renderState.status === 'loading') {
+      // Usar ref para verificar status atual (evita problema de closure)
+      if (statusRef.current === 'loading') {
         const elapsed = Date.now() - startTimeRef.current;
-        console.error('[CustomHtmlRenderer] Timeout: HTML demorou mais de 10 segundos para carregar');
+        console.error('[CustomHtmlRenderer] Timeout: HTML demorou mais de 30 segundos para carregar');
         console.error('[CustomHtmlRenderer] Tempo decorrido:', elapsed, 'ms');
         console.error('[CustomHtmlRenderer] Recursos carregados:', resourcesLoadedRef.current);
         console.error('[CustomHtmlRenderer] Recursos falhados:', resourcesFailedRef.current);
@@ -106,7 +114,7 @@ const CustomHtmlRenderer = ({ html }: { html: string }) => {
           resourcesFailed: resourcesFailedRef.current,
         });
       }
-    }, 10000);
+    }, 30000);
 
     return () => {
       if (timeoutRef.current) {
@@ -128,6 +136,7 @@ const CustomHtmlRenderer = ({ html }: { html: string }) => {
     console.log(`[CustomHtmlRenderer] ❌ Recursos falhados: ${resourcesFailedRef.current}`);
     console.log(`[CustomHtmlRenderer] 🎉 Todos os recursos foram processados`);
     
+    statusRef.current = 'ready';
     setRenderState({
       status: 'ready',
       error: null,
@@ -149,6 +158,7 @@ const CustomHtmlRenderer = ({ html }: { html: string }) => {
     console.error('[CustomHtmlRenderer] Tempo até erro:', elapsed, 'ms');
     console.error('[CustomHtmlRenderer] Recursos carregados antes do erro:', resourcesLoadedRef.current);
     
+    statusRef.current = 'error';
     setRenderState({
       status: 'error',
       error,
@@ -162,6 +172,7 @@ const CustomHtmlRenderer = ({ html }: { html: string }) => {
   const handleReload = () => {
     console.log('[CustomHtmlRenderer] 🔄 Recarregando HTML personalizado...');
     setShowFallback(false);
+    statusRef.current = 'loading';
     setRenderState({
       status: 'loading',
       error: null,
@@ -307,33 +318,12 @@ const CustomHtmlRenderer = ({ html }: { html: string }) => {
       iframe.removeEventListener('load', handleLoad);
       iframe.removeEventListener('error', handleError);
     };
-  }, []);
+  }, [html]); // Adicionar html como dependência para re-registrar listeners quando o HTML mudar
 
   // Se fallback foi acionado, mostrar LoginPage
   if (showFallback) {
     console.log('[CustomHtmlRenderer] Exibindo fallback: LoginPage');
     return <LoginPage />;
-  }
-
-  // Mostrar indicador de loading
-  if (renderState.status === 'loading') {
-    console.log('[CustomHtmlRenderer] Carregando HTML personalizado...');
-    return (
-      <CustomHtmlLoadingIndicator
-        message="Carregando página personalizada..."
-        timeout={10000}
-        onTimeout={() => {
-          console.error('[CustomHtmlRenderer] Timeout detectado pelo LoadingIndicator');
-          setRenderState({
-            status: 'timeout',
-            error: new Error('Timeout ao carregar HTML personalizado'),
-            loadTime: null,
-            resourcesLoaded: resourcesLoadedRef.current,
-            resourcesFailed: resourcesFailedRef.current,
-          });
-        }}
-      />
-    );
   }
 
   // Mostrar erro se timeout ou erro crítico
@@ -399,8 +389,37 @@ const CustomHtmlRenderer = ({ html }: { html: string }) => {
   }
 
   // Renderizar iframe com ErrorBoundary
+  // IMPORTANTE: O iframe DEVE ser renderizado mesmo durante o loading
+  // para que o evento onload possa disparar e atualizar o estado
   return (
     <CustomHtmlErrorBoundary onError={handleErrorBoundary}>
+      {/* Mostrar loading overlay enquanto carrega */}
+      {renderState.status === 'loading' && (
+        <div 
+          className="fixed inset-0 flex items-center justify-center bg-background z-[1000000]"
+          style={{ pointerEvents: 'none' }}
+        >
+          <CustomHtmlLoadingIndicator
+            message="Carregando página personalizada..."
+            timeout={30000}
+            onTimeout={() => {
+              if (statusRef.current === 'loading') {
+                console.error('[CustomHtmlRenderer] Timeout detectado pelo LoadingIndicator');
+                statusRef.current = 'timeout';
+                setRenderState({
+                  status: 'timeout',
+                  error: new Error('Timeout ao carregar HTML personalizado'),
+                  loadTime: null,
+                  resourcesLoaded: resourcesLoadedRef.current,
+                  resourcesFailed: resourcesFailedRef.current,
+                });
+              }
+            }}
+          />
+        </div>
+      )}
+      
+      {/* O iframe SEMPRE é renderizado para que onload possa disparar */}
       <iframe
         ref={iframeRef}
         srcDoc={html}
@@ -416,7 +435,10 @@ const CustomHtmlRenderer = ({ html }: { html: string }) => {
           margin: 0,
           padding: 0,
           overflow: 'hidden',
-          zIndex: 999999
+          zIndex: 999999,
+          // Esconder iframe enquanto carrega para evitar flash de conteúdo
+          opacity: renderState.status === 'ready' ? 1 : 0,
+          transition: 'opacity 0.3s ease-in-out'
         }}
         title="Custom Home Page"
         aria-label="Página inicial personalizada"

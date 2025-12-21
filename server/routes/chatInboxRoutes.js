@@ -939,17 +939,23 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
           const { data: account, error: accountError } = await supabaseService.getById('accounts', accountId)
           
           if (!accountError && account?.owner_user_id) {
-            const quotaService = new QuotaService(supabaseService.db)
-            
-            // Increment daily and monthly message quotas
-            await quotaService.incrementUsage(account.owner_user_id, 'max_messages_per_day', 1)
-            await quotaService.incrementUsage(account.owner_user_id, 'max_messages_per_month', 1)
-            
-            logger.debug('Message quota incremented', {
-              accountId,
-              ownerId: account.owner_user_id,
-              conversationId: id
-            })
+            // Get db from app.locals for QuotaService
+            const db = req.app?.locals?.db;
+            if (db) {
+              const quotaService = new QuotaService(db)
+              
+              // Increment daily and monthly message quotas
+              await quotaService.incrementUsage(account.owner_user_id, 'max_messages_per_day', 1)
+              await quotaService.incrementUsage(account.owner_user_id, 'max_messages_per_month', 1)
+              
+              logger.debug('Message quota incremented', {
+                accountId,
+                ownerId: account.owner_user_id,
+                conversationId: id
+              })
+            } else {
+              logger.warn('Database not available for quota tracking', { accountId })
+            }
           } else {
             logger.warn('Could not find account owner for quota tracking', { accountId })
           }

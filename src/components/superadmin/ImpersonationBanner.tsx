@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Shield, X, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
+import { backendApi } from '@/services/api-client';
 
 interface ImpersonationBannerProps {
   tenantName: string;
@@ -25,16 +26,10 @@ const ImpersonationBanner = ({
     try {
       setIsEnding(true);
       
-      const response = await fetch('/api/superadmin/end-impersonation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include'
-      });
+      const response = await backendApi.post<any>('/superadmin/end-impersonation');
 
-      const data = await response.json();
-      
-      if (data.success) {
-        toast.success('Impersonation ended successfully');
+      if (response.success && response.data?.success) {
+        toast.success('Impersonação encerrada com sucesso');
         
         // Call the callback if provided
         if (onEndImpersonation) {
@@ -44,11 +39,11 @@ const ImpersonationBanner = ({
           window.location.href = '/superadmin/dashboard';
         }
       } else {
-        throw new Error(data.error || 'Failed to end impersonation');
+        throw new Error(response.error || response.data?.error || 'Falha ao encerrar impersonação');
       }
     } catch (error) {
       console.error('Error ending impersonation:', error);
-      toast.error('Failed to end impersonation');
+      toast.error('Falha ao encerrar impersonação');
     } finally {
       setIsEnding(false);
     }

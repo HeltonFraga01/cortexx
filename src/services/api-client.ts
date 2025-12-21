@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import { API_BASE_URL, IS_DEVELOPMENT } from '@/config/environment';
 import { toast } from 'sonner';
+import { supabase } from '@/lib/supabase';
 
 // Interface para respostas padronizadas da API
 export interface ApiResponse<T = any> {
@@ -82,10 +83,22 @@ export class BackendApiClient {
   }
 
   private setupInterceptors() {
-    // Request interceptor - adicionar logs em desenvolvimento e CSRF token
+    // Request interceptor - adicionar logs em desenvolvimento, CSRF token e Supabase Auth token
     this.client.interceptors.request.use(
       async (config) => {
         const method = config.method?.toUpperCase();
+        
+        // Adicionar token de autenticação do Supabase
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.access_token) {
+            config.headers['Authorization'] = `Bearer ${session.access_token}`;
+          }
+        } catch (error) {
+          if (IS_DEVELOPMENT) {
+            console.warn('Failed to get Supabase session:', error);
+          }
+        }
         
         // Apenas inicializar CSRF token para requisições que modificam dados
         if (method && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
@@ -107,6 +120,7 @@ export class BackendApiClient {
             data: config.data,
             params: config.params,
             hasCsrfToken: !!BackendApiClient.csrfToken,
+            hasAuthToken: !!config.headers['Authorization'],
           });
         }
         return config;

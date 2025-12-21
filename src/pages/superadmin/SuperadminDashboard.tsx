@@ -3,7 +3,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { StatsCard } from '@/components/ui-custom/StatsCard';
-import { LoadingSkeleton } from '@/components/ui-custom/LoadingSkeleton';
 import { 
   Building2, 
   Users, 
@@ -20,6 +19,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
+import { backendApi } from '@/services/api-client';
 
 interface DashboardMetrics {
   totalMRR: number;
@@ -64,23 +64,20 @@ const SuperadminDashboard = () => {
         setLoading(true);
       }
 
-      const response = await fetch('/api/superadmin/dashboard', {
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include'
-      });
+      const response = await backendApi.get<any>('/superadmin/dashboard');
 
-      if (!response.ok) {
+      if (!response.success) {
         if (response.status === 401) {
-          toast.error('Session expired. Please login again');
+          toast.error('Sessão expirada. Faça login novamente.');
           navigate('/superadmin/login');
           return;
         }
-        throw new Error(`Failed to load dashboard data: ${response.status}`);
+        throw new Error(response.error || `Falha ao carregar dados: ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = response.data;
       
-      if (data.success) {
+      if (data?.success) {
         // Map API response to expected metrics format
         const apiData = data.data;
         const mappedMetrics: DashboardMetrics = {
@@ -99,35 +96,29 @@ const SuperadminDashboard = () => {
         
         // Fetch tenants list separately if needed
         try {
-          const tenantsResponse = await fetch('/api/superadmin/tenants', {
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include'
-          });
-          if (tenantsResponse.ok) {
-            const tenantsData = await tenantsResponse.json();
-            if (tenantsData.success && Array.isArray(tenantsData.data)) {
-              setTenants(tenantsData.data.map((t: any) => ({
-                id: t.id,
-                name: t.name,
-                subdomain: t.subdomain,
-                status: t.status,
-                accountCount: 0,
-                mrr: 0,
-                lastActivity: t.updated_at || t.created_at,
-                createdAt: t.created_at
-              })));
-            }
+          const tenantsResponse = await backendApi.get<any>('/superadmin/tenants');
+          if (tenantsResponse.success && tenantsResponse.data?.success && Array.isArray(tenantsResponse.data.data)) {
+            setTenants(tenantsResponse.data.data.map((t: any) => ({
+              id: t.id,
+              name: t.name,
+              subdomain: t.subdomain,
+              status: t.status,
+              accountCount: 0,
+              mrr: 0,
+              lastActivity: t.updated_at || t.created_at,
+              createdAt: t.created_at
+            })));
           }
         } catch (tenantError) {
           console.warn('Failed to fetch tenants list:', tenantError);
         }
       } else {
-        throw new Error(data.error || 'Failed to load dashboard data');
+        throw new Error(data?.error || 'Falha ao carregar dados do dashboard');
       }
       
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
-      toast.error('Failed to load dashboard data');
+      toast.error('Falha ao carregar dados do dashboard');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -138,54 +129,33 @@ const SuperadminDashboard = () => {
     fetchDashboardData(true);
   };
 
-  // Helper to get CSRF token
-  const getCsrfToken = async (): Promise<string | null> => {
-    try {
-      const response = await fetch('/api/auth/csrf-token', {
-        credentials: 'include'
-      });
-      const data = await response.json();
-      return data.csrfToken || null;
-    } catch {
-      return null;
-    }
-  };
-
   const handleImpersonateTenant = async (tenantId: string) => {
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(`/api/superadmin/impersonate/${tenantId}`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include'
-      });
+      const response = await backendApi.post<any>(`/superadmin/impersonate/${tenantId}`);
 
-      if (!response.ok) {
-        throw new Error('Failed to start impersonation');
+      if (!response.success) {
+        throw new Error(response.error || 'Falha ao iniciar impersonação');
       }
 
-      const data = await response.json();
+      const data = response.data;
       
-      if (data.success) {
+      if (data?.success) {
         const tenantName = data.data.tenant?.name || data.data.impersonation?.tenantName;
         const subdomain = data.data.tenant?.subdomain || data.data.impersonation?.tenantSubdomain;
         
-        toast.success(`Now impersonating ${tenantName}`);
+        toast.success(`Agora impersonando ${tenantName}`);
         // In localhost, just show a message since subdomains don't work
         if (window.location.hostname === 'localhost') {
-          toast.info(`Impersonation started for ${subdomain}. In production, you would be redirected to the tenant admin panel.`);
+          toast.info(`Impersonação iniciada para ${subdomain}. Em produção, você seria redirecionado para o painel admin do tenant.`);
         } else {
           window.location.href = `https://${subdomain}.${window.location.hostname}/admin`;
         }
       } else {
-        throw new Error(data.error || 'Failed to start impersonation');
+        throw new Error(data?.error || 'Falha ao iniciar impersonação');
       }
     } catch (error) {
       console.error('Error starting impersonation:', error);
-      toast.error('Failed to impersonate tenant');
+      toast.error('Falha ao impersonar tenant');
     }
   };
 

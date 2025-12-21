@@ -26,8 +26,11 @@ router.get('/dashboard', requireSuperadmin, async (req, res) => {
       period
     });
 
+    // Use req.user.id (JWT) or req.session.userId (legacy) for logging
+    const superadminId = req.user?.id || req.session?.userId;
+
     logger.info('Dashboard metrics retrieved by superadmin', {
-      superadminId: req.session.userId,
+      superadminId,
       period,
       totalMRR: metrics.totalMRR,
       totalTenants: metrics.totalTenants
@@ -38,9 +41,10 @@ router.get('/dashboard', requireSuperadmin, async (req, res) => {
       data: metrics
     });
   } catch (error) {
+    const superadminId = req.user?.id || req.session?.userId;
     logger.error('Failed to get dashboard metrics', {
       error: error.message,
-      superadminId: req.session?.userId
+      superadminId
     });
 
     res.status(500).json({
@@ -72,8 +76,9 @@ router.get('/tenants/:id/metrics', requireSuperadmin, async (req, res) => {
       });
     }
 
+    const superadminId = req.user?.id || req.session?.userId;
     logger.info('Tenant metrics retrieved by superadmin', {
-      superadminId: req.session.userId,
+      superadminId,
       tenantId: id,
       period,
       includeUsage
@@ -84,9 +89,10 @@ router.get('/tenants/:id/metrics', requireSuperadmin, async (req, res) => {
       data: metrics
     });
   } catch (error) {
+    const superadminId = req.user?.id || req.session?.userId;
     logger.error('Failed to get tenant metrics', {
       error: error.message,
-      superadminId: req.session?.userId,
+      superadminId,
       tenantId: req.params?.id
     });
 
@@ -136,8 +142,9 @@ router.get('/export', requireSuperadmin, async (req, res) => {
       includeInactive: includeInactive === 'true'
     });
 
+    const superadminId = req.user?.id || req.session?.userId;
     logger.info('Metrics exported by superadmin', {
-      superadminId: req.session.userId,
+      superadminId,
       type,
       period,
       format,
@@ -167,9 +174,10 @@ router.get('/export', requireSuperadmin, async (req, res) => {
       });
     }
   } catch (error) {
+    const superadminId = req.user?.id || req.session?.userId;
     logger.error('Failed to export metrics', {
       error: error.message,
-      superadminId: req.session?.userId,
+      superadminId,
       exportType: req.query?.type
     });
 
@@ -208,8 +216,9 @@ router.get('/analytics/revenue', requireSuperadmin, async (req, res) => {
       currency
     });
 
+    const superadminId = req.user?.id || req.session?.userId;
     logger.info('Revenue analytics retrieved by superadmin', {
-      superadminId: req.session.userId,
+      superadminId,
       period,
       granularity,
       currency
@@ -220,9 +229,10 @@ router.get('/analytics/revenue', requireSuperadmin, async (req, res) => {
       data: analytics
     });
   } catch (error) {
+    const superadminId = req.user?.id || req.session?.userId;
     logger.error('Failed to get revenue analytics', {
       error: error.message,
-      superadminId: req.session?.userId
+      superadminId
     });
 
     res.status(500).json({
@@ -269,8 +279,9 @@ router.get('/analytics/usage', requireSuperadmin, async (req, res) => {
       groupBy
     });
 
+    const superadminId = req.user?.id || req.session?.userId;
     logger.info('Usage analytics retrieved by superadmin', {
-      superadminId: req.session.userId,
+      superadminId,
       period,
       metric,
       groupBy
@@ -281,9 +292,10 @@ router.get('/analytics/usage', requireSuperadmin, async (req, res) => {
       data: analytics
     });
   } catch (error) {
+    const superadminId = req.user?.id || req.session?.userId;
     logger.error('Failed to get usage analytics', {
       error: error.message,
-      superadminId: req.session?.userId
+      superadminId
     });
 
     res.status(500).json({
@@ -302,8 +314,9 @@ router.get('/health', requireSuperadmin, async (req, res) => {
   try {
     const healthMetrics = await superadminService.getSystemHealth();
 
+    const superadminId = req.user?.id || req.session?.userId;
     logger.debug('System health metrics retrieved by superadmin', {
-      superadminId: req.session.userId,
+      superadminId,
       systemStatus: healthMetrics.status
     });
 
@@ -312,9 +325,10 @@ router.get('/health', requireSuperadmin, async (req, res) => {
       data: healthMetrics
     });
   } catch (error) {
+    const superadminId = req.user?.id || req.session?.userId;
     logger.error('Failed to get system health metrics', {
       error: error.message,
-      superadminId: req.session?.userId
+      superadminId
     });
 
     res.status(500).json({

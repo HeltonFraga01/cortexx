@@ -135,6 +135,9 @@ app.use((req, res, next) => {
   const csrfExemptPaths = [
     '/api/auth/login',
     '/api/auth/admin-login', // Admin login via email/password (creates session)
+    '/api/auth/user-login', // Independent user login via email/password
+    '/api/auth/user/request-password-reset', // User password reset request (public)
+    '/api/auth/user/reset-password', // User password reset (public)
     '/api/auth/status',
     '/api/admin/database-connections', // Rotas de database-connections para integração externa
     '/api/webhook/events', // Webhook endpoint para receber eventos do WUZAPI
@@ -147,6 +150,8 @@ app.use((req, res, next) => {
     '/api/agent/login', // Agent login endpoint (public)
     '/api/agent/register', // Agent registration endpoint (public)
     '/api/agent/invitation', // Agent invitation validation endpoint (public)
+    '/api/agent/request-password-reset', // Agent password reset request (public)
+    '/api/agent/reset-password', // Agent password reset (public)
     '/api/superadmin/login', // Superadmin login endpoint (public)
     '/api/superadmin/tenants/validate-subdomain' // Subdomain validation (read-only)
   ];
