@@ -141,29 +141,183 @@ Tabela: users, user_sessions
 | `requireAgentAuth` | agentAuth.js | Agents de account |
 | `requireUserAuth` | userAuth.js | Usuários independentes |
 | `validateSupabaseToken` | supabaseAuth.js | Validação de JWT Supabase |
+| `setRlsContext` | rlsContext.js | Define contexto RLS para queries |
+| `setSuperadminContext` | rlsContext.js | Define contexto superadmin para RLS |
+| `withRlsContext` | auth.js | Combina auth + RLS context |
+| `withTenantRlsContext` | tenantAuth.js | Combina tenant auth + RLS |
+
+## Supabase Realtime
+
+### Configuração
+
+Tabelas com Realtime habilitado:
+- `conversations` - Atualizações de conversas em tempo real
+- `chat_messages` - Novas mensagens em tempo real
+- `inboxes` - Status de inboxes
+- `agents` - Presença de agentes
+- `bulk_campaigns` - Status de campanhas
+- `webhook_events` - Eventos de webhook
+
+### Subscriptions com RLS
+
+```typescript
+// src/lib/supabase-realtime.ts
+import { subscribeToConversations, subscribeToMessages } from '@/lib/supabase-realtime';
+
+// RLS filtra automaticamente por tenant
+const unsubscribe = subscribeToConversations(accountId, {
+  onInsert: (payload) => console.log('Nova conversa:', payload.new),
+  onUpdate: (payload) => console.log('Conversa atualizada:', payload.new),
+});
+
+// Cleanup
+unsubscribe();
+```
+
+### Broadcast Channels (Isolados por Tenant)
+
+```typescript
+// Notificações em tempo real para todo o tenant
+subscribeToTenantBroadcast(tenantId, (event) => {
+  console.log('Notificação:', event);
+});
+
+// Presença de usuários no tenant
+subscribeToTenantPresence(tenantId, userId, userName, {
+  onSync: (state) => console.log('Usuários online:', state),
+  onJoin: (key, current, newPresences) => console.log('Entrou:', newPresences),
+  onLeave: (key, current, leftPresences) => console.log('Saiu:', leftPresences),
+});
+```
 
 ## Isolamento Multi-Tenant
 
 ### Row Level Security (RLS)
 
-Tabelas com RLS habilitado:
-- `users` - Isolamento por `tenant_id`
-- `user_sessions` - Isolamento por `user_id` → `tenant_id`
-- `user_inboxes` - Isolamento por `user_id` → `tenant_id`
-- `tenant_settings` - Isolamento por `tenant_id`
-- `tenant_plans` - Isolamento por `tenant_id`
+O sistema utiliza Row Level Security (RLS) do PostgreSQL para garantir isolamento de dados entre tenants no nível do banco de dados.
+
+#### Tabelas com RLS Habilitado (73 total)
+
+**Tabelas Core (já tinham RLS):**
 - `accounts` - Isolamento por `tenant_id`
+- `agents` - Isolamento via `account_id` → `tenant_id`
+- `inboxes` - Isolamento via `account_id` → `tenant_id`
+- `conversations` - Isolamento via `account_id` → `tenant_id`
+- `chat_messages` - Isolamento via `conversation_id` → `account_id` → `tenant_id`
+- `bulk_campaigns` - Isolamento via `account_id` → `tenant_id`
+
+**Tabelas Críticas (RLS habilitado na migração):**
+- `superadmins` - Acesso apenas para superadmins
+- `tenants` - Tenant admin vê apenas próprio tenant
+- `superadmin_audit_log` - Acesso apenas para superadmins
+- `tenant_branding` - Isolamento por `tenant_id`
+- `tenant_credit_packages` - Isolamento por `tenant_id`
+- `campaign_audit_logs` - Isolamento por `tenant_id`
+- `webhook_deliveries` - Isolamento por `tenant_id`
+
+**Tabelas com Policies Criadas:**
+- `affiliate_referrals` - Isolamento por `user_id`
+- `credit_transactions` - Isolamento por `user_id`
+- `reseller_pricing` - Isolamento por `tenant_id`
+- `stripe_webhook_events` - Acesso apenas para service_role
+
+### Funções SQL para RLS
+
+```sql
+-- Função para extrair tenant_id do contexto
+CREATE OR REPLACE FUNCTION public.get_tenant_id()
+RETURNS UUID AS $$
+BEGIN
+  -- 1. Tentar extrair do contexto da aplicação
+  BEGIN
+    RETURN current_setting('app.tenant_id', true)::uuid;
+  EXCEPTION WHEN OTHERS THEN
+    NULL;
+  END;
+  
+  -- 2. Fallback: buscar do usuário autenticado
+  IF auth.uid() IS NOT NULL THEN
+    -- Tentar tabela users
+    RETURN (SELECT tenant_id FROM public.users WHERE id = auth.uid() LIMIT 1);
+  END IF;
+  
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
+-- Trigger para auto-inserção de tenant_id
+CREATE OR REPLACE FUNCTION public.set_tenant_id()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.tenant_id IS NULL THEN
+    NEW.tenant_id := public.get_tenant_id();
+  END IF;
+  
+  -- Validar que usuário não pode inserir em tenant diferente
+  IF NEW.tenant_id != public.get_tenant_id() 
+     AND current_setting('role', true) != 'service_role'
+     AND current_setting('app.user_role', true) != 'superadmin' THEN
+    RAISE EXCEPTION 'Cannot insert data for another tenant';
+  END IF;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+```
 
 ### Policies de Isolamento
 
 ```sql
 -- Exemplo: Policy para accounts
 CREATE POLICY "accounts_tenant_isolation" ON accounts
-FOR ALL USING (tenant_id = current_setting('app.tenant_id')::uuid);
+FOR ALL USING (tenant_id = public.get_tenant_id());
 
 -- Service role tem acesso total
 CREATE POLICY "accounts_service_role_access" ON accounts
 FOR ALL TO service_role USING (true);
+
+-- Superadmin bypass
+CREATE POLICY "accounts_superadmin_bypass" ON accounts
+FOR ALL USING (current_setting('app.user_role', true) = 'superadmin');
+```
+
+### Middleware RLS Context
+
+O middleware `rlsContext.js` define variáveis de sessão PostgreSQL para RLS:
+
+```javascript
+// server/middleware/rlsContext.js
+const { setRlsContext, setSuperadminContext, getClientWithRlsContext } = require('./rlsContext');
+
+// Uso em rotas
+router.get('/data', requireAuth, setRlsContext, async (req, res) => {
+  // RLS filtra automaticamente por tenant
+  const { data } = await SupabaseService.queryAsUser(token, 'accounts', q => q.select('*'));
+});
+
+// Ou usando helper combinado
+const { withRlsContext } = require('../middleware/auth');
+router.get('/data', ...withRlsContext('admin'), async (req, res) => {
+  // Auth + RLS context em uma chamada
+});
+```
+
+### Variáveis de Contexto RLS
+
+| Variável | Descrição | Uso |
+|----------|-----------|-----|
+| `app.tenant_id` | ID do tenant atual | Filtro principal de RLS |
+| `app.user_role` | Role do usuário | Bypass para superadmin |
+| `app.user_id` | ID do usuário | Auditoria e logs |
+
+### Índices Otimizados para Multi-Tenant
+
+```sql
+-- Índices compostos para queries eficientes
+CREATE INDEX idx_accounts_tenant_status ON accounts(tenant_id, status);
+CREATE INDEX idx_conversations_account_updated ON conversations(account_id, updated_at DESC);
+CREATE INDEX idx_chat_messages_conversation_created ON chat_messages(conversation_id, created_at DESC);
+CREATE INDEX idx_bulk_campaigns_account_status ON bulk_campaigns(account_id, status);
 ```
 
 ## Identificadores de Usuário

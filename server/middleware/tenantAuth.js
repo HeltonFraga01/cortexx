@@ -1,5 +1,6 @@
 const { logger } = require('../utils/logger');
 const { validateSupabaseToken } = require('./supabaseAuth');
+const { setRlsContext } = require('./rlsContext');
 
 /**
  * Tenant Authentication Middleware
@@ -417,8 +418,26 @@ function requireAccountOwnership(req, res, next) {
   }
 }
 
+/**
+ * Middleware to combine tenant admin auth with RLS context
+ * Use this for routes that need both tenant admin auth and RLS-aware queries
+ */
+function withTenantRlsContext() {
+  return [requireTenantAdmin, setRlsContext];
+}
+
+/**
+ * Middleware to combine tenant user auth with RLS context
+ * Use this for routes that need both tenant user auth and RLS-aware queries
+ */
+function withTenantUserRlsContext() {
+  return [requireTenantUser, setRlsContext];
+}
+
 module.exports = {
   requireTenantAdmin,
   requireTenantUser,
-  requireAccountOwnership
+  requireAccountOwnership,
+  withTenantRlsContext,
+  withTenantUserRlsContext
 };

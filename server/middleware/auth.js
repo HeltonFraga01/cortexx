@@ -3,6 +3,7 @@ const securityLogger = require('../utils/securityLogger');
 const { validateSupabaseToken } = require('./supabaseAuth');
 const { validateSession, destroyCorruptedSession, getSessionDiagnostics } = require('../utils/sessionHelper');
 const { normalizeToUUID } = require('../utils/userIdHelper');
+const { setRlsContext, setSuperadminContext } = require('./rlsContext');
 
 /**
  * Helper to get user ID from request (JWT or session)
@@ -773,6 +774,29 @@ async function requireUser(req, res, next) {
   next();
 }
 
+/**
+ * Middleware that combines authentication with RLS context setting
+ * Use this for routes that need both auth and RLS-aware database queries
+ * 
+ * @param {string} authType - 'admin', 'user', or 'any' (default: 'any')
+ * @returns {Function[]} Array of middleware functions
+ */
+function withRlsContext(authType = 'any') {
+  const authMiddleware = authType === 'admin' ? requireAdmin : 
+                         authType === 'user' ? requireUser : 
+                         requireAuth;
+  
+  return [authMiddleware, setRlsContext];
+}
+
+/**
+ * Middleware for superadmin routes with RLS context
+ * Sets superadmin context for RLS bypass
+ */
+function withSuperadminContext() {
+  return [setSuperadminContext];
+}
+
 module.exports = {
   requireAuth,
   requireAdmin,
@@ -782,5 +806,9 @@ module.exports = {
   getUserId,
   getUserRole,
   getUserToken,
-  getWuzapiTokenFromAccount
+  getWuzapiTokenFromAccount,
+  withRlsContext,
+  withSuperadminContext,
+  setRlsContext,
+  setSuperadminContext
 };
