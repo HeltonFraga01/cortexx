@@ -76,10 +76,16 @@ class AgentService {
    * @returns {Promise<boolean>} True if password matches
    */
   async verifyPassword(password, hash) {
+    // Guard against null/undefined hash (agent without password set)
+    if (!hash) {
+      logger.warn('verifyPassword called with null/undefined hash');
+      return false;
+    }
+    
     return new Promise((resolve, reject) => {
       const [salt, key] = hash.split(':');
       crypto.scrypt(password, salt, 64, (err, derivedKey) => {
-        if (err) reject(err);
+        if (err) return reject(err);
         resolve(key === derivedKey.toString('hex'));
       });
     });
@@ -319,46 +325,58 @@ class AgentService {
   async getAgentByEmailOnly(email, tenantId = null) {
     try {
       const queryFn = (query) => {
-        let q = query
-          .select(`
-            *,
-            accounts!inner(name, status, tenant_id)
-          `)
-          .eq('email', email)
-          .eq('status', 'active')
-          .eq('accounts.status', 'active');
-        
-        // Filter by tenant if provided
-        if (tenantId) {
-          q = q.eq('accounts.tenant_id', tenantId);
-        }
-        
-        return q.limit(1).single();
-      };
+      return query
+        .select(`
+          *,
+          accounts!inner(name, status, tenant_id)
+        `)
+        .eq('email', email)
+        .eq('status', 'active')
+        .eq('accounts.status', 'active')
+        .limit(5); // Fetch candidates to handle potential duplicates
+    };
 
-      const { data: agent, error } = await supabaseService.queryAsAdmin('agents', queryFn);
+    const { data: agents, error } = await supabaseService.queryAsAdmin('agents', queryFn);
 
-      if (error) {
-        if (error.code === 'ROW_NOT_FOUND') {
-          return null;
-        }
-        throw error;
-      }
-
-      return {
-        ...this.formatAgent(agent),
-        passwordHash: agent.password_hash,
-        failedLoginAttempts: agent.failed_login_attempts,
-        lockedUntil: agent.locked_until,
-        accountName: agent.accounts?.name,
-        accountStatus: agent.accounts?.status,
-        tenantId: agent.accounts?.tenant_id
-      };
-    } catch (error) {
-      logger.error('Failed to get agent by email only', { error: error.message, email, tenantId });
+    if (error) {
       throw error;
     }
+
+    if (!agents || agents.length === 0) {
+      return null;
+    }
+
+    // Find the best matching agent:
+    // 1. If tenantId provided: Match specific tenant OR global (null)
+    // 2. If no tenantId: valid match
+    let agent = null;
+    if (tenantId) {
+      agent = agents.find(a => a.accounts.tenant_id === tenantId) || 
+              agents.find(a => a.accounts.tenant_id === null);
+    } else {
+      agent = agents[0];
+    }
+
+    if (!agent) {
+      // Email exists but not for this tenant context
+      return null;
+    }
+
+    return {
+      ...this.formatAgent(agent),
+      passwordHash: agent.password_hash,
+      failedLoginAttempts: agent.failed_login_attempts,
+      lockedUntil: agent.locked_until,
+      accountName: agent.accounts?.name,
+      accountStatus: agent.accounts?.status,
+      tenantId: agent.accounts?.tenant_id
+    };
+  } catch (error) {
+    logger.error('Failed to get agent by email only', { error: error.message, email, tenantId });
+    throw error;
   }
+}
+
 
   /**
    * List agents for an account

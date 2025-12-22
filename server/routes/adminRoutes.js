@@ -4,6 +4,7 @@ const errorHandler = require('../middleware/errorHandler');
 const { logger } = require('../utils/logger');
 const AutomationService = require('../services/AutomationService');
 const AuditLogService = require('../services/AuditLogService');
+const supabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
@@ -291,15 +292,21 @@ router.get('/dashboard-stats',
   async (req, res) => {
     const startTime = Date.now();
     
+    // Modificado para suportar tanto sessão quanto JWT (req.user)
+    // Isso permite que o frontend novo (Supabase) acesse este endpoint
+    const userRole = req.session?.role || req.user?.role;
+    const userId = req.session?.userId || req.user?.id;
+    
     // Verificar se está autenticado como admin
-    if (!req.session?.userId || req.session?.role !== 'admin') {
+    if (!userId || (userRole !== 'admin' && userRole !== 'owner' && userRole !== 'administrator')) {
       logger.error('Dashboard stats access denied - Not authenticated as admin', {
         type: 'dashboard_stats_auth_failure',
         sessionId: req.sessionID,
-        userId: req.session?.userId,
-        role: req.session?.role,
+        userId: userId,
+        role: userRole,
         path: req.path,
-        ip: req.ip
+        ip: req.ip,
+        auth_method: req.user ? 'jwt' : 'session'
       });
       
       return res.status(401).json({
@@ -312,9 +319,9 @@ router.get('/dashboard-stats',
     
     // Para admin logado via agente, usar o token WUZAPI do ambiente
     // O token da sessão (account.wuzapiToken) pode ser inválido
-    const isAgentLogin = !!req.session.agentRole;
+    const isAgentLogin = !!req.session?.agentRole; // Apenas disponível na sessão legacy
     const envAdminToken = process.env.WUZAPI_ADMIN_TOKEN;
-    const sessionToken = req.session.userToken;
+    const sessionToken = req.session?.userToken;
     
     // Prioridade: 1) Token do ambiente, 2) Token da sessão
     const token = envAdminToken || sessionToken;
@@ -323,7 +330,8 @@ router.get('/dashboard-stats',
       isAgentLogin,
       hasEnvToken: !!envAdminToken,
       hasSessionToken: !!sessionToken,
-      usingEnvToken: !!envAdminToken
+      usingEnvToken: !!envAdminToken,
+      authMethod: req.user ? 'jwt' : 'session'
     });
     
     // Formatar uptime em formato legível
@@ -1400,5 +1408,194 @@ router.delete('/users/:userId/full',
     }
   }
 );
+
+
+/**
+ * Rota para listar usuários do Supabase
+ * GET /api/admin/supabase/users
+ */
+router.get('/supabase/users', async (req, res) => {
+  try {
+    const { page = 1, per_page = 50, search = '' } = req.query;
+    
+    // Obter cliente admin do Supabase
+    const supabase = supabaseService.adminClient;
+    
+    // Listar usuários (a API de admin do Supabase não suporta filtro por email diretamente na listagem
+    // mas suporta paginação)
+    const { data: { users }, error } = await supabase.auth.admin.listUsers({
+      page: parseInt(page),
+      perPage: parseInt(per_page)
+    });
+
+    if (error) throw error;
+
+    // Filtrar localmente se houver busca
+    let filteredUsers = users;
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filteredUsers = users.filter(user => 
+        user.email?.toLowerCase().includes(searchLower) || 
+        user.id.includes(searchLower) ||
+        (user.user_metadata?.wuzapi_id === search)
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: filteredUsers,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Erro ao listar usuários do Supabase', { error: error.message });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rota para obter detalhes de um usuário do Supabase
+ * GET /api/admin/supabase/users/:id
+ */
+router.get('/supabase/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const supabase = supabaseService.adminClient;
+
+    const { data: { user }, error } = await supabase.auth.admin.getUserById(id);
+
+    if (error) throw error;
+
+    return res.status(200).json({
+      success: true,
+      data: user,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Erro ao obter usuário do Supabase', { error: error.message, id: req.params.id });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rota para criar usuário no Supabase
+ * POST /api/admin/supabase/users
+ */
+router.post('/supabase/users', async (req, res) => {
+  try {
+    const { email, password, email_confirm = true, phone, phone_confirm = true, user_metadata = {} } = req.body;
+    const supabase = supabaseService.adminClient;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email e senha são obrigatórios'
+      });
+    }
+
+    const { data: { user }, error } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm,
+      phone,
+      phone_confirm,
+      user_metadata
+    });
+
+    if (error) {
+      // Check for common errors
+      if (error.message?.includes('already been registered')) {
+        return res.status(409).json({
+          success: false,
+          error: 'Este email já está registrado.'
+        });
+      }
+      throw error;
+    }
+
+    return res.status(201).json({
+      success: true,
+      data: user,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Erro ao criar usuário no Supabase', { error: error.message });
+    return res.status(error.status || 500).json({
+      success: false,
+      error: error.message || 'Erro interno ao criar usuário'
+    });
+  }
+});
+
+/**
+ * Rota para atualizar usuário no Supabase
+ * PUT /api/admin/supabase/users/:id
+ */
+router.put('/supabase/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email, password, user_metadata, email_confirm, phone, phone_confirm } = req.body;
+    const supabase = supabaseService.adminClient;
+
+    const updates = {};
+    if (email) updates.email = email;
+    if (password) updates.password = password;
+    if (user_metadata) updates.user_metadata = user_metadata;
+    if (email_confirm !== undefined) updates.email_confirm = email_confirm;
+    if (phone) updates.phone = phone;
+    if (phone_confirm !== undefined) updates.phone_confirm = phone_confirm;
+
+    const { data: { user }, error } = await supabase.auth.admin.updateUserById(
+      id,
+      updates
+    );
+
+    if (error) throw error;
+
+    return res.status(200).json({
+      success: true,
+      data: user,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Erro ao atualizar usuário no Supabase', { error: error.message, id: req.params.id });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rota para deletar usuário no Supabase
+ * DELETE /api/admin/supabase/users/:id
+ */
+router.delete('/supabase/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const supabase = supabaseService.adminClient;
+
+    const { error } = await supabase.auth.admin.deleteUser(id);
+
+    if (error) throw error;
+
+    return res.status(200).json({
+      success: true,
+      message: 'Usuário deletado com sucesso',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Erro ao deletar usuário do Supabase', { error: error.message, id: req.params.id });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 module.exports = router;

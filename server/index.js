@@ -1,10 +1,29 @@
 // Carregar variáveis de ambiente do arquivo .env
-require('dotenv').config();
+const path = require('path');
+const dotenv = require('dotenv');
+
+// Tentar carregar do diretório local
+dotenv.config();
+
+// Se SUPABASE_URL ou SESSION_SECRET não estiverem definidas, tentar carregar do diretório pai (raiz do projeto)
+if (!process.env.SUPABASE_URL || !process.env.SESSION_SECRET) {
+  console.log('⚠️ Variáveis de ambiente críticas não encontradas no diretório server, tentando diretório pai...');
+  dotenv.config({ path: path.join(__dirname, '../.env') });
+}
+
+if (!process.env.SUPABASE_URL) {
+  console.error('❌ ERRO CRÍTICO: SUPABASE_URL não encontrada em nenhum .env!');
+}
+
+if (!process.env.SESSION_SECRET) {
+  console.warn('⚠️ SESSION_SECRET não encontrada! Usando fallback inseguro para desenvolvimento (NÃO USE EM PRODUÇÃO).');
+  process.env.SESSION_SECRET = 'dev_fallback_secret_key_12345';
+}
 
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const path = require('path');
+// path already required at top
 const axios = require('axios');
 const session = require('express-session');
 const helmet = require('helmet');
@@ -60,7 +79,7 @@ const userTableAccessRoutes = require('./routes/userTableAccessRoutes');
 const userCustomThemesRoutes = require('./routes/userCustomThemesRoutes');
 const contactImportRoutes = require('./routes/contactImportRoutes');
 const contactListRoutes = require('./routes/contactListRoutes');
-const bulkCampaignRoutes = require('./routes/bulkCampaignRoutes');
+// bulkCampaignRoutes removed (unused)
 const linkPreviewRoutes = require('./routes/linkPreviewRoutes');
 const botProxyRoutes = require('./routes/botProxyRoutes');
 // Account Management Routes (multi-user system)
@@ -80,6 +99,9 @@ const superadminTenantAccountRoutes = require('./routes/superadminTenantAccountR
 const superadminTenantAgentRoutes = require('./routes/superadminTenantAgentRoutes');
 const superadminMetricsRoutes = require('./routes/superadminMetricsRoutes');
 const superadminImpersonationRoutes = require('./routes/superadminImpersonationRoutes');
+
+// Public Routes (no auth required)
+const publicRoutes = require('./routes/publicRoutes');
 
 // Importar sistema de monitoramento
 const { logger, requestLogger } = require('./utils/logger');
@@ -123,6 +145,11 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 // Session middleware (DEVE vir antes do CSRF)
 app.use(session(sessionConfig));
 
+// Inject Session Debug Middleware
+if (sessionConfig.debugMiddleware) {
+  app.use(sessionConfig.debugMiddleware);
+}
+
 // Subdomain router middleware (DEVE vir depois da sessão, antes das rotas)
 // Este middleware extrai o subdomínio e define req.context com tenantId
 app.use(subdomainRouter);
@@ -153,11 +180,23 @@ app.use((req, res, next) => {
     '/api/agent/request-password-reset', // Agent password reset request (public)
     '/api/agent/reset-password', // Agent password reset (public)
     '/api/superadmin/login', // Superadmin login endpoint (public)
-    '/api/superadmin/tenants/validate-subdomain' // Subdomain validation (read-only)
+    '/api/superadmin/tenants/validate-subdomain', // Subdomain validation (read-only)
+    '/api/admin/supabase', // Rotas de gerenciamento de usuários Supabase (conflito com CSRF + JWT)
   ];
 
   // Verificar se a rota atual está na lista de exceções
   const isExempt = csrfExemptPaths.some(path => req.path.startsWith(path));
+
+  // DEBUG: Log path and exemption status for Supabase routes
+  if (req.path.includes('supabase') || req.originalUrl.includes('supabase')) {
+    console.log('CSRF Check:', {
+      path: req.path,
+      originalUrl: req.originalUrl,
+      isExempt,
+      method: req.method,
+      headers: req.headers
+    });
+  }
 
   if (isExempt) {
     return skipCsrf(req, res, next);
@@ -254,7 +293,7 @@ async function initializeDatabase() {
     }
 
     // Testar conexão com Supabase
-    const { data, error } = await SupabaseService.healthCheck();
+    const { error } = await SupabaseService.healthCheck();
     if (error) {
       throw new Error(`Falha na conexão com Supabase: ${error.message}`);
     }
@@ -444,6 +483,9 @@ app.use('/api/branding', brandingRoutes);
 
 // Rota pública de custom links (links de navegação ativos)
 app.use('/api/custom-links', customLinksRoutes);
+
+// Rotas públicas gerais (tenant-info, health, etc.)
+app.use('/api/public', publicRoutes);
 
 // Rota pública para obter versão do sistema
 app.get('/api/version', (req, res) => {
@@ -948,7 +990,7 @@ app.get('/api/admin/dashboard-stats', async (req, res) => {
 
 // GET /api/user/messages - Buscar histórico de mensagens do usuário
 app.get('/api/user/messages', verifyUserToken, async (req, res) => {
-  const userToken = req.userToken;
+  // const userToken = req.userToken;
   const { limit = 10, offset = 0 } = req.query;
 
   try {
@@ -1012,16 +1054,19 @@ app.get('/api/user/messages', verifyUserToken, async (req, res) => {
 
 // GET /api/user/dashboard-stats - Buscar estatísticas do dashboard do usuário
 app.get('/api/user/dashboard-stats', verifyUserToken, async (req, res) => {
-  const userToken = req.userToken;
-
   try {
     // Buscar informações do usuário na API WUZAPI
     const wuzapiBaseUrl = process.env.WUZAPI_BASE_URL || 'https://wzapi.wasend.com.br';
+    const envAdminToken = process.env.WUZAPI_ADMIN_TOKEN;
+    const sessionToken = req.session?.userToken;
+    
+    // Prioridade: 1) Token do ambiente, 2) Token da sessão
+    const token = envAdminToken || sessionToken;
 
     // Buscar status da sessão
     const sessionResponse = await axios.get(`${wuzapiBaseUrl}/session/status`, {
       headers: {
-        'token': userToken,
+        'token': token,
         'Content-Type': 'application/json'
       },
       timeout: 5000

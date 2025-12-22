@@ -96,24 +96,48 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
    * Check authentication status with Supabase
    * Requirement: 7.2
    */
-  const checkAuth = useCallback(async () => {
+    const checkAuth = useCallback(async () => {
     try {
       setIsLoading(true);
       const { data: { session: currentSession }, error } = await supabase.auth.getSession();
-      
-      if (error) {
-        console.error('Auth check failed:', error);
-        setUser(null);
-        setSession(null);
-        return;
-      }
       
       if (currentSession?.user) {
         setSession(currentSession);
         setUser(mapSupabaseUser(currentSession.user, currentSession.access_token));
       } else {
-        setUser(null);
-        setSession(null);
+        // Fallback: Check backend session (cookie-based)
+        try {
+           const response = await fetch('/api/auth/status?t=' + Date.now());
+           const data = await response.json();
+           
+           if (data && data.authenticated && data.user) {
+             // Construct meaningful user object from backend data
+             const backendUser: User = {
+                id: data.user.id,
+                role: data.user.role,
+                name: data.user.name || 'Admin',
+                email: data.user.email || '',
+                token: data.user.token,
+                jid: data.user.jid
+             };
+             setUser(backendUser);
+             // Create a fake session object to satisfy type requirements (optional if we relax check)
+             setSession({
+                access_token: data.user.token,
+                expires_in: 3600,
+                refresh_token: '',
+                token_type: 'bearer',
+                user: { id: data.user.id } as any
+             });
+           } else {
+             setUser(null);
+             setSession(null);
+           }
+        } catch (backendErr) {
+           console.warn('Backend auth check failed', backendErr);
+           setUser(null);
+           setSession(null);
+        }
       }
     } catch (error) {
       console.error('Auth check failed:', error);

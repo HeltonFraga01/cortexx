@@ -146,6 +146,61 @@ export async function signUp(data: SignUpData): Promise<AuthResponse> {
       error: err instanceof Error ? err : new Error('Registration failed') 
     };
   }
+
+}
+
+/**
+ * Login as admin via backend API
+ */
+export async function loginAdmin(email: string, password: string): Promise<AuthResponse> {
+  try {
+    const response = await fetch('/api/auth/admin-login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Falha no login administrativo');
+    }
+
+    // Adapt response to AuthResponse format
+    return {
+      user: {
+        id: data.user.id,
+        email: data.user.email,
+        user_metadata: {
+          role: data.user.role,
+          name: data.user.name,
+          account_id: data.user.accountId
+        },
+        app_metadata: {},
+        aud: 'authenticated',
+        created_at: new Date().toISOString()
+       } as unknown as User,
+      session: {
+        access_token: data.user.token,
+        refresh_token: '',
+        expires_in: 3600,
+        token_type: 'bearer',
+        user: {
+           id: data.user.id,
+           email: data.user.email
+        } as unknown as User
+      } as Session,
+      error: null
+    };
+  } catch (err) {
+    return {
+      user: null,
+      session: null,
+      error: err instanceof Error ? err : new Error('Admin login failed')
+    };
+  }
 }
 
 /**
@@ -254,6 +309,7 @@ export const authService = {
   requiresPasswordChange,
   isEmailConfirmed,
   resendConfirmationEmail,
+  loginAdmin,
 };
 
 export default authService;

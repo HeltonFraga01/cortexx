@@ -2,25 +2,23 @@ import { Routes, Route } from 'react-router-dom';
 import AdminLayout from '@/components/admin/AdminLayout';
 import AdminOverview from '@/components/admin/AdminOverview';
 import AdminUsers from '@/components/admin/AdminUsers';
-import EditUserPage from '@/components/admin/EditUserPage';
 import CreateUserPage from '@/components/admin/CreateUserPage';
-import AdminSettings from '@/components/admin/AdminSettings';
+import EditUserPage from '@/components/admin/EditUserPage';
+import { UserDetailPage } from '@/components/admin/UserDetailPage';
+import PlansManagementPage from '@/pages/admin/PlansManagementPage';
+import { AdminAuditLogList } from '@/components/admin/AdminAuditLogList';
+import { ReportGenerator } from '@/components/admin/ReportGenerator';
 import AdminDatabases from '@/components/admin/AdminDatabases';
 import DatabaseConnectionNew from '@/components/admin/DatabaseConnectionNew';
 import DatabaseConnectionEdit from '@/components/admin/DatabaseConnectionEdit';
-import TablePermissionsManager from '@/components/admin/TablePermissionsManager';
-import AvailableTablesList from '@/components/admin/AvailableTablesList';
 import ThemesListPage from '@/pages/admin/ThemesListPage';
 import PageBuilderPage from '@/pages/admin/PageBuilderPage';
+import TablePermissionsManager from '@/components/admin/TablePermissionsManager';
+import AvailableTablesList from '@/components/admin/AvailableTablesList';
 import MultiUserManagement from '@/pages/admin/MultiUserManagement';
-// Admin User Management - Plan, Subscription, Audit, Reports
-import PlansManagementPage from '@/pages/admin/PlansManagementPage';
 import BotQuotaConfigPage from '@/pages/admin/BotQuotaConfigPage';
-import { UserDetailPage } from '@/components/admin/UserDetailPage';
-import { AdminAuditLogList } from '@/components/admin/AdminAuditLogList';
-import { ReportGenerator } from '@/components/admin/ReportGenerator';
 import StripeAdminPage from '@/pages/admin/StripeAdminPage';
-import IndependentUsersPage from '@/pages/admin/IndependentUsersPage';
+import AdminSettings from '@/components/admin/AdminSettings';
 
 const AdminDashboard = () => {
   return (
@@ -45,7 +43,7 @@ const AdminDashboard = () => {
         <Route path="/multi-user" element={<MultiUserManagement />} />
         <Route path="/bot-quotas" element={<BotQuotaConfigPage />} />
         <Route path="/stripe" element={<StripeAdminPage />} />
-        <Route path="/independent-users" element={<IndependentUsersPage />} />
+        <Route path="/stripe" element={<StripeAdminPage />} />
         <Route path="/settings" element={<AdminSettings />} />
       </Routes>
     </AdminLayout>

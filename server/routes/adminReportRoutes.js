@@ -66,16 +66,28 @@ router.get('/usage', requireAdmin, async (req, res) => {
       });
     }
 
-    // Get usage metrics for tenant users
-    const { data: usageMetrics, error: usageError } = await SupabaseService.adminClient
-      .from('usage_metrics')
-      .select('*')
-      .in('user_id', userIds)
-      .gte('recorded_at', start.toISOString())
-      .lte('recorded_at', end.toISOString())
-      .order('recorded_at', { ascending: false });
+    // Get usage metrics for tenant users from user_quota_usage using Raw SQL
+    const db = req.app.locals.db;
+    if (!db) {
+      throw new Error('Database connection not available');
+    }
 
-    if (usageError) throw usageError;
+    let usageMetrics = [];
+    if (userIds.length > 0) {
+      // Create placeholders for userIds IN clause
+      const placeholders = userIds.map(() => '?').join(',');
+      const query = `
+        SELECT user_id, quota_type, current_usage, period_start 
+        FROM user_quota_usage 
+        WHERE user_id IN (${placeholders}) 
+        AND period_start >= ? 
+        AND period_start <= ?
+        ORDER BY period_start DESC
+      `;
+      
+      const { rows } = await db.query(query, [...userIds, start.toISOString(), end.toISOString()]);
+      usageMetrics = rows;
+    }
 
     // Aggregate metrics
     const totals = {};
@@ -83,32 +95,37 @@ router.get('/usage', requireAdmin, async (req, res) => {
     const byUser = {};
 
     (usageMetrics || []).forEach(metric => {
+      // Map database fields
+      const metricType = metric.quota_type;
+      const amount = metric.current_usage || 0;
+      const recordDate = metric.period_start;
+
       // Totals by metric type
-      if (!totals[metric.metric_type]) {
-        totals[metric.metric_type] = { total: 0, uniqueUsers: new Set() };
+      if (!totals[metricType]) {
+        totals[metricType] = { total: 0, uniqueUsers: new Set() };
       }
-      totals[metric.metric_type].total += metric.amount || 0;
-      totals[metric.metric_type].uniqueUsers.add(metric.user_id);
+      totals[metricType].total += amount;
+      totals[metricType].uniqueUsers.add(metric.user_id);
 
       // By period
-      const periodKey = metric.recorded_at.substring(0, 10); // YYYY-MM-DD
+      const periodKey = recordDate.substring(0, 10); // YYYY-MM-DD
       if (!byPeriod[periodKey]) {
         byPeriod[periodKey] = {};
       }
-      if (!byPeriod[periodKey][metric.metric_type]) {
-        byPeriod[periodKey][metric.metric_type] = { total: 0, uniqueUsers: new Set() };
+      if (!byPeriod[periodKey][metricType]) {
+        byPeriod[periodKey][metricType] = { total: 0, uniqueUsers: new Set() };
       }
-      byPeriod[periodKey][metric.metric_type].total += metric.amount || 0;
-      byPeriod[periodKey][metric.metric_type].uniqueUsers.add(metric.user_id);
+      byPeriod[periodKey][metricType].total += amount;
+      byPeriod[periodKey][metricType].uniqueUsers.add(metric.user_id);
 
       // By user
       if (!byUser[metric.user_id]) {
         byUser[metric.user_id] = {};
       }
-      if (!byUser[metric.user_id][metric.metric_type]) {
-        byUser[metric.user_id][metric.metric_type] = 0;
+      if (!byUser[metric.user_id][metricType]) {
+        byUser[metric.user_id][metricType] = 0;
       }
-      byUser[metric.user_id][metric.metric_type] += metric.amount || 0;
+      byUser[metric.user_id][metricType] += amount;
     });
 
     const report = {
@@ -462,15 +479,22 @@ router.get('/export', requireAdmin, async (req, res) => {
       filename = `usage-report-${start.toISOString().split('T')[0]}-${end.toISOString().split('T')[0]}`;
 
       if (userIds.length > 0) {
-        const { data: metrics } = await SupabaseService.adminClient
-          .from('usage_metrics')
-          .select('user_id, metric_type, amount, recorded_at')
-          .in('user_id', userIds)
-          .gte('recorded_at', start.toISOString())
-          .lte('recorded_at', end.toISOString())
-          .order('recorded_at', { ascending: false });
+        const db = req.app.locals.db;
+        if (!db) throw new Error('Database connection not available');
 
-        data = (metrics || []).map(row => [row.user_id, row.metric_type, row.amount, row.recorded_at]);
+        const placeholders = userIds.map(() => '?').join(',');
+        const query = `
+          SELECT user_id, quota_type, current_usage, period_start 
+          FROM user_quota_usage 
+          WHERE user_id IN (${placeholders}) 
+          AND period_start >= ? 
+          AND period_start <= ?
+          ORDER BY period_start DESC
+        `;
+
+        const { rows: metrics } = await db.query(query, [...userIds, start.toISOString(), end.toISOString()]);
+
+        data = (metrics || []).map(row => [row.user_id, row.quota_type, row.current_usage, row.period_start]);
       }
 
     } else if (type === 'revenue') {

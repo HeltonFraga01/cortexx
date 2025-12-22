@@ -13,6 +13,8 @@ const { logger } = require('../utils/logger');
 const StripeService = require('../services/StripeService');
 const CreditService = require('../services/CreditService');
 const SupabaseService = require('../services/SupabaseService');
+const TenantService = require('../services/TenantService');
+const QuotaService = require('../services/QuotaService');
 const { validateResellerPricing } = require('../validators/stripeValidator');
 
 // ==================== Stripe Connect Endpoints ====================
@@ -403,6 +405,127 @@ router.put('/pricing', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Invalid input', details: error.errors });
     }
     
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== Customer Report Endpoints ====================
+
+/**
+ * GET /api/reseller/customers/usage
+ * Get usage report for all customers in the reseller's tenant
+ */
+router.get('/customers/usage', requireAuth, async (req, res) => {
+  try {
+    const { data: account } = await SupabaseService.adminClient
+      .from('accounts')
+      .select('id')
+      .eq('owner_user_id', req.session.userId)
+      .single();
+
+    if (!account) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    // Find tenant owned by this reseller
+    // Assuming 'tenants' has 'owner_account_id' or 'reseller_account_id'
+    // If exact column is unknown, we check if account itself is linked to tenant as admin
+    // But typically Reseller Account -> owns -> Tenant
+    
+    // Let's try to find tenant where owner_account_id = account.id
+    const { data: tenant, error: tenantError } = await SupabaseService.adminClient
+      .from('tenants')
+      .select('id, name, subdomain')
+      .eq('owner_account_id', account.id)
+      .single();
+      
+    if (tenantError || !tenant) {
+      // Fallback: maybe the account IS in the tenant and is an admin?
+      // But for "Reseller" panel, we usually expect ownership.
+      // If not found, maybe look up accounts where tenant_id is set?
+      // But we need the tenant ID first.
+      
+      // Try finding if this account is a tenant admin user?
+      // For now, return error if not found owner.
+      logger.warn('Reseller tenant not found for account', { accountId: account.id });
+      return res.status(404).json({ error: 'Tenant not found for this reseller account' });
+    }
+
+    // Get all accounts in this tenant
+    const accounts = await TenantService.listAccounts(tenant.id); // This fetches user_subscriptions too
+    
+    // Initialize QuotaService
+    const db = req.app.locals.db;
+    const quotaService = new QuotaService(db);
+    
+    // Enrich with usage data
+    const report = [];
+    
+    for (const customerAccount of accounts) {
+      if (!customerAccount.owner_user_id) continue;
+      
+      try {
+        // Fetch daily and monthly message usage
+        // We use checkQuota to get limits and usage
+        const dailyCheck = await quotaService.checkQuota(
+          customerAccount.owner_user_id, 
+          'max_messages_per_day', 
+          0 // Check 0 amount just to get stats
+        );
+        
+        const monthlyCheck = await quotaService.checkQuota(
+          customerAccount.owner_user_id, 
+          'max_messages_per_month', 
+          0
+        );
+
+        const activePlan = customerAccount.user_subscriptions?.[0]?.tenant_plans?.name || 'N/A';
+        
+        report.push({
+          accountId: customerAccount.id,
+          name: customerAccount.name,
+          email: customerAccount.email, // If available in account or joined user
+          planName: activePlan,
+          usage: {
+            messagesDaily: {
+              used: dailyCheck.usage,
+              limit: dailyCheck.limit,
+              remaining: dailyCheck.remaining
+            },
+            messagesMonthly: {
+              used: monthlyCheck.usage,
+              limit: monthlyCheck.limit,
+              remaining: monthlyCheck.remaining
+            }
+          },
+          status: customerAccount.status
+        });
+      } catch (err) {
+        logger.error('Failed to fetch quota for user', { userId: customerAccount.owner_user_id, error: err.message });
+        // Add basic info even if quota fails
+        report.push({
+          accountId: customerAccount.id,
+          name: customerAccount.name,
+          planName: customerAccount.user_subscriptions?.[0]?.tenant_plans?.name || 'Error',
+          error: 'Failed to fetch usage'
+        });
+      }
+    }
+
+    res.json({ 
+      success: true, 
+      data: {
+        tenant: tenant.name,
+        customers: report
+      } 
+    });
+    
+  } catch (error) {
+    logger.error('Failed to get customer usage report', {
+      error: error.message,
+      userId: req.session?.userId,
+      endpoint: '/api/reseller/customers/usage',
+    });
     res.status(500).json({ error: error.message });
   }
 });

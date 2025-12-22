@@ -14,6 +14,7 @@ import {
 } from "./types";
 import { WuzAPIClient } from './wuzapi-client';
 import { SendTextMessagePayload, SendMediaMessagePayload, WuzAPIMessageResponse, WuzAPIWebhookConfig } from './wuzapi-types';
+import { supabase } from '@/lib/supabase';
 
 // Interfaces para OpenAI
 interface OpenAICredential {
@@ -1824,7 +1825,58 @@ interface ApiClientConfig {
 }
 
 /**
- * Helper to make fetch request with CSRF token and retry on CSRF failure
+ * Helper to get Supabase JWT token for authentication
+ * Uses getSession() first, falls back to localStorage if needed
+ */
+async function getSupabaseToken(): Promise<string | null> {
+  try {
+    // First try to get session from Supabase client
+    const { data: { session }, error } = await supabase.auth.getSession()
+    
+    if (session?.access_token) {
+      if (import.meta.env.DEV) {
+        console.debug('[API] Got JWT token from Supabase session')
+      }
+      return session.access_token
+    }
+    
+    // If no session from client, try to get from localStorage directly
+    // This handles race conditions where the session isn't fully loaded yet
+    const storageKey = 'supabase.auth.token'
+    const storedSession = localStorage.getItem(storageKey)
+    
+    if (storedSession) {
+      try {
+        const parsed = JSON.parse(storedSession)
+        const accessToken = parsed?.access_token || parsed?.currentSession?.access_token
+        if (accessToken) {
+          if (import.meta.env.DEV) {
+            console.debug('[API] Got JWT token from localStorage fallback')
+          }
+          return accessToken
+        }
+      } catch (parseError) {
+        console.warn('[API] Failed to parse stored session:', parseError)
+      }
+    }
+    
+    if (import.meta.env.DEV) {
+      console.warn('[API] No JWT token available', { 
+        hasSession: !!session, 
+        error: error?.message,
+        hasStoredSession: !!storedSession 
+      })
+    }
+    
+    return null
+  } catch (error) {
+    console.warn('[API] Failed to get Supabase session:', error)
+    return null
+  }
+}
+
+/**
+ * Helper to make fetch request with CSRF token, JWT auth, and retry on CSRF failure
  */
 async function fetchWithCsrf<T>(
   url: string,
@@ -1833,15 +1885,35 @@ async function fetchWithCsrf<T>(
   config?: ApiClientConfig,
   retried = false
 ): Promise<ApiClientResponse<T>> {
-  const token = await getCsrfToken(retried) // Force refresh on retry
+  const csrfToken = await getCsrfToken(retried) // Force refresh on retry
+  const jwtToken = await getSupabaseToken() // Get Supabase JWT token
+  
+  if (import.meta.env.DEV) {
+    console.debug('[API] fetchWithCsrf', { 
+      url, 
+      method, 
+      hasJwtToken: !!jwtToken,
+      hasCsrfToken: !!csrfToken,
+      retried 
+    })
+  }
+  
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...config?.headers
+  }
+  
+  if (csrfToken) {
+    headers['CSRF-Token'] = csrfToken
+  }
+  
+  if (jwtToken) {
+    headers['Authorization'] = `Bearer ${jwtToken}`
+  }
   
   const response = await fetch(url, {
     method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token && { 'CSRF-Token': token }),
-      ...config?.headers
-    },
+    headers,
     credentials: 'include',
     body: body ? JSON.stringify(body) : undefined
   })
@@ -1852,6 +1924,11 @@ async function fetchWithCsrf<T>(
   if (response.status === 403 && data?.code === 'CSRF_VALIDATION_FAILED' && !retried) {
     clearCsrfToken() // Clear the invalid token
     return fetchWithCsrf<T>(url, method, body, config, true)
+  }
+  
+  // If 401 and no JWT token, log warning for debugging
+  if (response.status === 401 && !jwtToken) {
+    console.warn('[API] Request failed with 401 - No JWT token available. User may need to re-login.')
   }
   
   return { data, status: response.status }

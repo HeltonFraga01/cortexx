@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { WuzAPIUser, WuzAPIService } from '@/services/wuzapi';
+import { WuzAPIUser, wuzapi } from '@/services/wuzapi';
 import { adminPlansService } from '@/services/admin-plans';
 import { adminSubscriptionsService } from '@/services/admin-subscriptions';
 import type { Plan, UserSubscription } from '@/types/admin-management';
+import { SupabaseUser, CreateSupabaseUserDTO, UpdateSupabaseUserDTO } from '@/services/admin-users';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -33,8 +34,7 @@ import {
   Check,
   RefreshCw,
   ImageIcon,
-  CreditCard,
-  Calendar
+  CreditCard
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -58,6 +58,12 @@ interface UserEditFormProps {
   onGenerateQR?: () => void;
   onDeleteFromDB?: () => void;
   onDeleteFull?: () => void;
+  // Supabase User Props
+  supabaseUser?: SupabaseUser | null;
+  onLinkSupabaseUser?: (email: string) => Promise<void>;
+  onCreateSupabaseUser?: (data: CreateSupabaseUserDTO) => Promise<void>;
+  onUpdateSupabaseUser?: (data: UpdateSupabaseUserDTO) => Promise<void>;
+  onUnlinkSupabaseUser?: () => Promise<void>;
 }
 
 // Lista de eventos disponíveis (baseada no CreateUserForm)
@@ -141,12 +147,96 @@ const UserEditForm = ({
   hasChanges = false,
   onGenerateQR,
   onDeleteFromDB,
-  onDeleteFull
+  onDeleteFull,
+  supabaseUser,
+  onLinkSupabaseUser,
+  onCreateSupabaseUser,
+  onUpdateSupabaseUser,
+  onUnlinkSupabaseUser
 }: UserEditFormProps) => {
   
   // Estado local para controle de validação
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  
+  // Estado para Supabase User Form
+  const [supabaseLoading, setSupabaseLoading] = useState(false);
+  const [showLinkUser, setShowLinkUser] = useState(false);
+  const [showCreateUser, setShowCreateUser] = useState(false);
+  const [showUpdateUser, setShowUpdateUser] = useState(false);
+  
+  // Form states for Supabase actions
+  const [linkEmail, setLinkEmail] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [updateEmail, setUpdateEmail] = useState('');
+  const [updatePassword, setUpdatePassword] = useState('');
+
+  // Inicializar email para novo usuário/vínculo com o email do WuzAPI (se houver, assumindo que nome pode ser email ou user.id)
+  useEffect(() => {
+    // Tentar inferir email se o nome parecer um email
+    if (user.name && user.name.includes('@')) {
+      const email = user.name;
+      setLinkEmail(email);
+      setNewUserEmail(email);
+    }
+  }, [user.name]);
+
+  // Handlers para Supabase Actions
+  const handleLinkSupabaseUser = async () => {
+    if (!linkEmail || !onLinkSupabaseUser) return;
+    try {
+      setSupabaseLoading(true);
+      await onLinkSupabaseUser(linkEmail);
+      setShowLinkUser(false);
+      setLinkEmail('');
+      toast.success('Usuário vinculado com sucesso');
+    } catch {
+      toast.error('Erro ao vincular usuário');
+    } finally {
+      setSupabaseLoading(false);
+    }
+  };
+
+  const handleCreateSupabaseUser = async () => {
+    if (!newUserEmail || !newUserPassword || !onCreateSupabaseUser) return;
+    try {
+      setSupabaseLoading(true);
+      await onCreateSupabaseUser({
+        email: newUserEmail,
+        password: newUserPassword,
+        email_confirm: true,
+        user_metadata: { role: 'user', name: user.name }
+      });
+      setShowCreateUser(false);
+      setNewUserEmail('');
+      setNewUserPassword('');
+      toast.success('Usuário criado e vinculado com sucesso');
+    } catch {
+      toast.error('Erro ao criar usuário');
+    } finally {
+      setSupabaseLoading(false);
+    }
+  };
+
+  const handleUpdateSupabaseUser = async () => {
+    if ((!updateEmail && !updatePassword) || !onUpdateSupabaseUser) return;
+    try {
+      setSupabaseLoading(true);
+      await onUpdateSupabaseUser({
+        email: updateEmail || undefined,
+        password: updatePassword || undefined
+      });
+      setShowUpdateUser(false);
+      setUpdateEmail('');
+      setUpdatePassword('');
+      toast.success('Credenciais atualizadas com sucesso');
+    } catch {
+      toast.error('Erro ao atualizar credenciais');
+    } finally {
+      setSupabaseLoading(false);
+    }
+  };
   
   // Estado para avatar e cópia
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -161,7 +251,7 @@ const UserEditForm = ({
   const [showPlanForm, setShowPlanForm] = useState(false);
   const [assigningPlan, setAssigningPlan] = useState(false);
   
-  const wuzapi = new WuzAPIService();
+
 
   // Buscar avatar do usuário
   const fetchAvatar = useCallback(async () => {
@@ -253,7 +343,7 @@ const UserEditForm = ({
   useEffect(() => {
     fetchAvatar();
     fetchPlanData();
-  }, [fetchAvatar]);
+  }, [fetchAvatar, fetchPlanData]);
 
   // Função para copiar texto
   const handleCopy = async (text: string, field: string) => {
@@ -480,7 +570,9 @@ const UserEditForm = ({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={fetchAvatar}
+                  onClick={() => {
+                    void fetchAvatar();
+                  }}
                   className="text-xs"
                 >
                   <ImageIcon className="h-3 w-3 mr-1" />
@@ -520,7 +612,7 @@ const UserEditForm = ({
                   variant="ghost"
                   size="icon"
                   className="h-6 w-6"
-                  onClick={() => handleCopy(user.id, 'ID')}
+                  onClick={() => { void handleCopy(user.id, 'ID'); }}
                 >
                   {copiedField === 'ID' ? (
                     <Check className="h-3 w-3 text-green-600" />
@@ -540,7 +632,7 @@ const UserEditForm = ({
                     variant="ghost"
                     size="icon"
                     className="h-6 w-6"
-                    onClick={() => handleCopy(user.jid, 'JID')}
+                    onClick={() => { void handleCopy(user.jid, 'JID'); }}
                   >
                     {copiedField === 'JID' ? (
                       <Check className="h-3 w-3 text-green-600" />
@@ -649,7 +741,7 @@ const UserEditForm = ({
                   variant="outline"
                   size="icon"
                   className="h-10 w-10 flex-shrink-0"
-                  onClick={() => handleCopy(user.token, 'Token')}
+                  onClick={() => { void handleCopy(user.token, 'Token'); }}
                 >
                   {copiedField === 'Token' ? (
                     <Check className="h-4 w-4 text-green-600" />
@@ -679,7 +771,7 @@ const UserEditForm = ({
                     variant="outline"
                     size="icon"
                     className="h-10 w-10 flex-shrink-0"
-                    onClick={() => handleCopy(user.jid, 'JID Completo')}
+                    onClick={() => { void handleCopy(user.jid, 'JID Completo'); }}
                   >
                     {copiedField === 'JID Completo' ? (
                       <Check className="h-4 w-4 text-green-600" />
@@ -694,7 +786,224 @@ const UserEditForm = ({
         </CardContent>
       </Card>
 
-      {/* Card de Plano/Assinatura */}
+      {/* Card de Conta Supabase */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center text-foreground">
+              <Globe className="h-5 w-5 mr-2 text-primary" />
+              Conta Supabase (Auth/DB)
+            </CardTitle>
+            {supabaseUser ? (
+              <Badge variant="default" className="bg-green-600">Vinculado</Badge>
+            ) : (
+              <Badge variant="outline" className="text-muted-foreground">Não vinculado</Badge>
+            )}
+          </div>
+          <CardDescription>
+            Gerencie o usuário correspondente no banco de dados e autenticação
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {supabaseUser ? (
+            <div className="space-y-4">
+               {/* Detalhes do Usuário Vinculado */}
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-muted/30 rounded-lg border">
+                <div>
+                  <p className="text-xs text-muted-foreground">ID Supabase</p>
+                  <div className="flex items-center gap-2">
+                    <code className="text-sm font-mono truncate max-w-[200px]">{supabaseUser.id}</code>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => { void handleCopy(supabaseUser.id, 'Supabase ID'); }}
+                    >
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Email</p>
+                  <p className="font-medium text-sm">{supabaseUser.email}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Criado em</p>
+                  <p className="text-sm">{formatDate(supabaseUser.created_at)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Último Login</p>
+                  <p className="text-sm">{supabaseUser.last_sign_in_at ? formatDate(supabaseUser.last_sign_in_at) : 'Nunca'}</p>
+                </div>
+              </div>
+
+              {/* Botões de Ação para Usuário Vinculado */}
+              <div className="flex flex-wrap gap-2">
+                {!showUpdateUser && (
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => { setShowUpdateUser(true); }}
+                  >
+                    <Key className="h-4 w-4 mr-2" />
+                    Alterar Credenciais
+                  </Button>
+                )}
+                {onUnlinkSupabaseUser && (
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    size="sm" 
+                    className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                  onClick={() => {
+                    void onUnlinkSupabaseUser?.();
+                  }}
+                  >
+                    Desvincular
+                  </Button>
+                )}
+              </div>
+
+              {/* Formulário de Atualização */}
+              {showUpdateUser && (
+                <div className="p-4 border rounded-lg bg-background space-y-4 mt-2">
+                  <h4 className="text-sm font-medium">Atualizar Credenciais</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="update-email">Novo Email</Label>
+                      <Input 
+                        id="update-email" 
+                        type="email" 
+                        placeholder="Deixe em branco para manter"
+                        value={updateEmail}
+                        onChange={(e) => setUpdateEmail(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="update-password">Nova Senha</Label>
+                      <Input 
+                        id="update-password" 
+                        type="password" 
+                        placeholder="Deixe em branco para manter"
+                        value={updatePassword}
+                        onChange={(e) => setUpdatePassword(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button 
+                      type="button" 
+                      variant="ghost" 
+                      onClick={() => {
+                        setShowUpdateUser(false);
+                        setUpdateEmail('');
+                        setUpdatePassword('');
+                      }}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button 
+                      type="button" 
+                      onClick={() => { void handleUpdateSupabaseUser(); }}
+                      disabled={supabaseLoading || (!updateEmail && !updatePassword)}
+                    >
+                      {supabaseLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      Salvar Alterações
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-lg text-center space-y-2">
+                <Globe className="h-8 w-8 text-muted-foreground mb-2" />
+                <h3 className="font-medium text-lg">Nenhuma conta vinculada</h3>
+                <p className="text-sm text-muted-foreground max-w-sm">
+                  Vincule este usuário WuzAPI a uma conta Supabase para permitir login na plataforma e gerenciamento de plano.
+                </p>
+                <div className="flex gap-2 mt-4">
+                  <Button type="button" variant="outline" onClick={() => { setShowLinkUser(true); }}>
+                    Vincular Existente
+                  </Button>
+                  <Button type="button" onClick={() => { setShowCreateUser(true); }}>
+                    Criar Nova Conta
+                  </Button>
+                </div>
+              </div>
+
+              {/* Formulário de Vinculação */}
+              {showLinkUser && (
+                 <div className="p-4 border rounded-lg bg-background space-y-4">
+                   <h4 className="text-sm font-medium">Vincular Conta Existente</h4>
+                   <div className="space-y-2">
+                     <Label htmlFor="link-email">Email do Usuário Supabase</Label>
+                     <Input 
+                       id="link-email" 
+                       type="email" 
+                       placeholder="email@exemplo.com"
+                       value={linkEmail}
+                       onChange={(e) => setLinkEmail(e.target.value)}
+                     />
+                     <p className="text-xs text-muted-foreground">O sistema buscará o usuário pelo email.</p>
+                   </div>
+                   <div className="flex justify-end gap-2">
+                     <Button type="button" variant="ghost" onClick={() => setShowLinkUser(false)}>Cancelar</Button>
+                     <Button 
+                       type="button"                        onClick={() => { void handleLinkSupabaseUser(); }}
+                       disabled={supabaseLoading || !linkEmail}
+                     >
+                       {supabaseLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                       Vincular
+                     </Button>
+                   </div>
+                 </div>
+              )}
+
+              {/* Formulário de Criação */}
+              {showCreateUser && (
+                 <div className="p-4 border rounded-lg bg-background space-y-4">
+                   <h4 className="text-sm font-medium">Criar Nova Conta Supabase</h4>
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                     <div className="space-y-2">
+                       <Label htmlFor="new-email">Email</Label>
+                       <Input 
+                         id="new-email" 
+                         type="email" 
+                         value={newUserEmail}
+                         onChange={(e) => setNewUserEmail(e.target.value)}
+                       />
+                     </div>
+                     <div className="space-y-2">
+                       <Label htmlFor="new-password">Senha</Label>
+                       <Input 
+                         id="new-password" 
+                         type="password" 
+                         value={newUserPassword}
+                         onChange={(e) => setNewUserPassword(e.target.value)}
+                       />
+                     </div>
+                   </div>
+                   <div className="flex justify-end gap-2">
+                     <Button type="button" variant="ghost" onClick={() => setShowCreateUser(false)}>Cancelar</Button>
+                     <Button 
+                       type="button"                        onClick={() => { void handleCreateSupabaseUser(); }}
+                       disabled={supabaseLoading || !newUserEmail || !newUserPassword}
+                     >
+                       {supabaseLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                       Criar e Vincular
+                     </Button>
+                   </div>
+                 </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Card de Plano/Assinatura - Mantido */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -787,7 +1096,7 @@ const UserEditForm = ({
                     <Button
                       type="button"
                       size="sm"
-                      onClick={handleAssignPlan}
+                      onClick={() => { void handleAssignPlan(); }}
                       disabled={!selectedPlanId || assigningPlan}
                     >
                       {assigningPlan ? (
@@ -862,7 +1171,7 @@ const UserEditForm = ({
                     <Button
                       type="button"
                       size="sm"
-                      onClick={handleAssignPlan}
+                      onClick={() => { void handleAssignPlan(); }}
                       disabled={!selectedPlanId || assigningPlan}
                     >
                       {assigningPlan ? (

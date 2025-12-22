@@ -21,39 +21,59 @@ const { logger } = require('../utils/logger');
  * 
  * In production, set COOKIE_DOMAIN to your root domain (e.g., .example.com)
  */
-function getCookieDomain() {
-  // If explicitly set, use that
-  if (process.env.COOKIE_DOMAIN) {
-    return process.env.COOKIE_DOMAIN;
-  }
+const getCookieDomain = () => {
+  const domain = process.env.COOKIE_DOMAIN;
   
-  // In development, don't set domain to allow localhost subdomains to work
-  // Note: For localhost, browsers handle this automatically
-  return undefined;
-}
+  // If domain is strictly 'localhost', return undefined to let browser handle it as host-only
+  if (domain === 'localhost') return undefined;
+  
+  // If no domain configured, return undefined (host-only)
+  if (!domain) return undefined;
+  
+  return domain;
+};
 
 const sessionConfig = {
   // Using default MemoryStore - suitable for single-instance architecture
-  // For multi-instance, use connect-pg-simple with Supabase
-  secret: process.env.SESSION_SECRET || 'dev-secret-change-in-production',
-  name: 'wuzapi.sid',
+  secret: process.env.SESSION_SECRET || 'wuzapi-secret-key-change-in-production',
   resave: false,
   saveUninitialized: false,
+  name: 'wuzapi.sid',
   cookie: {
     httpOnly: true,
-    // Secure apenas se HTTPS estiver disponível (não apenas em produção)
-    // Permite testes locais em produção via HTTP
-    secure: process.env.COOKIE_SECURE === 'true' || false,
+    // Secure only if HTTPS is available (or production)
+    // We trust the environment variable, defaulting to false if not set 'true'
+    secure: process.env.COOKIE_SECURE === 'true',
     sameSite: process.env.COOKIE_SAMESITE || 'lax',
-    maxAge: 24 * 60 * 60 * 1000, // 24 horas
+    maxAge: 24 * 60 * 60 * 1000,
     // Domain for multi-tenant subdomain support
     domain: getCookieDomain()
   }
 };
 
+const sessionMiddleware = session(sessionConfig);
+
 // Log session store type
 if (process.env.NODE_ENV !== 'test') {
   logger.info('Session store: MemoryStore (single-instance architecture)');
 }
+
+// Logger to debug cookie issues
+// Logger to debug cookie issues
+const sessionDebugMiddleware = (req, res, next) => {
+  if (req.headers.cookie && req.headers.cookie.includes('wuzapi.sid')) {
+    logger.info('[SessionDebug] Incoming Cookies', { cookie: req.headers.cookie });
+    logger.info('[SessionDebug] Resolved SessionID', { 
+      sessionID: req.sessionID,
+      userId: req.session ? req.session.userId : 'undefined',
+      role: req.session ? req.session.role : 'undefined',
+      keys: req.session ? Object.keys(req.session) : []
+    });
+  }
+  next();
+};
+
+// Export sessionConfig and the debug middleware separately
+sessionConfig.debugMiddleware = sessionDebugMiddleware;
 
 module.exports = sessionConfig;

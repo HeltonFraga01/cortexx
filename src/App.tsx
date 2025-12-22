@@ -1,4 +1,4 @@
-import { Toaster } from "sonner";
+import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
@@ -94,14 +94,7 @@ const App = () => {
             <WuzAPIInstancesProvider>
               <QueryClientProvider client={queryClient}>
                 <TooltipProvider>
-                  <Toaster 
-                    closeButton
-                    richColors
-                    position="top-right"
-                    toastOptions={{
-                      duration: 4000,
-                    }}
-                  />
+                  <Toaster />
                   <BrowserRouter>
                     <PageTitle />
                     <Routes>

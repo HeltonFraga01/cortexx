@@ -9,7 +9,7 @@
 
 import { useState } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Users, UsersRound, Inbox, Shield, FileText } from 'lucide-react'
+import { Users, UsersRound, Inbox, Shield, FileText, Database, UserCog } from 'lucide-react'
 
 import { AgentList } from '@/components/admin/AgentList'
 import { AgentInviteDialog } from '@/components/admin/AgentInviteDialog'
@@ -18,9 +18,11 @@ import { TeamList } from '@/components/admin/TeamList'
 import { InboxList } from '@/components/admin/InboxList'
 import { RoleList } from '@/components/admin/RoleList'
 import { AuditLog } from '@/components/admin/AuditLog'
+import { WuzapiUsersList } from '@/components/admin/WuzapiUsersList'
+import { SupabaseUsersList } from '@/components/admin/SupabaseUsersList'
 
 export default function MultiUserManagement() {
-  const [activeTab, setActiveTab] = useState('agents')
+  const [activeTab, setActiveTab] = useState('supabase')
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
 
@@ -29,12 +31,20 @@ export default function MultiUserManagement() {
       <div>
         <h1 className="text-3xl font-bold">Gestão Multi-Usuário</h1>
         <p className="text-muted-foreground">
-          Gerencie agentes, equipes, caixas de entrada e permissões
+          Gerencie usuários do sistema, login, agentes, equipes e permissões
         </p>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-grid">
+        <TabsList className="grid w-full grid-cols-7 lg:w-auto lg:inline-grid">
+           <TabsTrigger value="supabase" className="flex items-center gap-2">
+            <UserCog className="h-4 w-4" />
+            <span className="hidden sm:inline">Admin/Login</span>
+          </TabsTrigger>
+          <TabsTrigger value="wuzapi" className="flex items-center gap-2">
+            <Database className="h-4 w-4" />
+            <span className="hidden sm:inline">Instâncias</span>
+          </TabsTrigger>
           <TabsTrigger value="agents" className="flex items-center gap-2">
             <Users className="h-4 w-4" />
             <span className="hidden sm:inline">Agentes</span>
@@ -56,6 +66,14 @@ export default function MultiUserManagement() {
             <span className="hidden sm:inline">Auditoria</span>
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="supabase" className="mt-6">
+          <SupabaseUsersList />
+        </TabsContent>
+
+        <TabsContent value="wuzapi" className="mt-6">
+           <WuzapiUsersList />
+        </TabsContent>
 
         <TabsContent value="agents" className="mt-6">
           <AgentList

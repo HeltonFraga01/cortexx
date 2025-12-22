@@ -217,10 +217,7 @@ async function subdomainRouter(req, res, next) {
       path: req.path
     });
 
-    res.status(500).json({
-      error: 'Internal server error',
-      message: 'Failed to process tenant request.'
-    });
+    res.type('text').status(500).send(`SubdomainRouter Error: ${error.message}\nStack: ${error.stack}`);
   }
 }
 

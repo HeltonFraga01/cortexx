@@ -419,3 +419,82 @@ function getUserRole(req) {
 - ✅ Todos os middlewares suportam autenticação JWT (Supabase Auth)
 - ✅ Backward compatibility mantida com autenticação por sessão
 - ✅ Sem erros de sintaxe nos arquivos atualizados
+
+
+---
+
+### Problema 4: Criação de Admin para Tenant Cortexx (21/12/2024)
+
+**Solicitação do Usuário:**
+Login como admin no tenant `cortexx.localhost:8082` com email `Cortexx@Cortexx.com` e senha `Admin@123456`.
+
+**Diagnóstico Completo:**
+
+```mermaid
+flowchart TD
+    A[INSERT auth.users] --> B[Trigger handle_new_user]
+    B --> C{role = superadmin?}
+    C -->|Não| D[INSERT accounts]
+    D --> E[INSERT agents]
+    E --> F[INSERT user_subscriptions]
+    F --> G{Busca plan_id}
+    G --> H[FROM plans WHERE is_default=TRUE]
+    H --> I[❌ FK aponta para tenant_plans]
+    
+    J[Solução 1] --> K[Alterar trigger]
+    K --> L[FROM tenant_plans WHERE tenant_id AND is_default=TRUE]
+    L --> M[✅ FK satisfeita]
+    
+    N[Problema 2] --> O[email_change = NULL]
+    O --> P[❌ Supabase Auth não aceita NULL]
+    
+    Q[Solução 2] --> R[UPDATE email_change = '']
+    R --> S[✅ Login funciona]
+    
+    style I fill:#f66,stroke:#333
+    style P fill:#f66,stroke:#333
+    style M fill:#6f6,stroke:#333
+    style S fill:#6f6,stroke:#333
+```
+
+**Problemas Encontrados:**
+
+1. **FK Constraint Error**: O trigger `handle_new_user()` buscava plano default da tabela `plans`, mas a FK `user_subscriptions.plan_id` aponta para `tenant_plans`.
+
+2. **NULL em email_change**: Ao criar usuário via INSERT direto, campos como `email_change` ficavam NULL, causando erro `sql: Scan error on column index 8, name "email_change": converting NULL to string is unsupported`.
+
+**Soluções Aplicadas:**
+
+1. **Atualização do Trigger** - Alterado para buscar de `tenant_plans`:
+```sql
+-- Antes (errado)
+FROM plans p WHERE p.is_default = TRUE
+
+-- Depois (correto)
+FROM tenant_plans tp WHERE tp.tenant_id = v_tenant_id AND tp.is_default = TRUE
+```
+
+2. **Correção de campos NULL**:
+```sql
+UPDATE auth.users 
+SET email_change = '', email_change_token_new = '', phone_change = '', 
+    phone_change_token = '', reauthentication_token = ''
+WHERE email = 'cortexx@cortexx.com';
+```
+
+**Credenciais do Admin Cortexx:**
+- Email: `cortexx@cortexx.com`
+- Senha: `Admin@123456`
+- User ID: `5c436af5-efd4-4d54-9c11-dc3e176e0c4d`
+- Role: `admin` (em user_metadata)
+- Tenant ID: `47c1b641-8389-4c8a-9eba-e17a113d8e70`
+- Account ID: `a831616e-655a-4e0b-ab89-a35083801658`
+- Plano: `free` (default do tenant)
+
+**Resultado:**
+- ✅ Login funciona em `http://cortexx.localhost:8082/login` (aba Admin)
+- ✅ Redirect para `/admin` após login
+- ✅ Dashboard administrativo carrega corretamente
+- ✅ Account e subscription criadas automaticamente pelo trigger
+- ✅ Agent record criado com role `owner`
+

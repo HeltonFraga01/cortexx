@@ -21,6 +21,7 @@ import type {
   ApiResponse
 } from '@/types/automation';
 import { getCsrfToken } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 
 const API_BASE = '/api/admin/automation';
 
@@ -32,11 +33,30 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return data.data;
 }
 
+// Helper to get auth headers with JWT token
+async function getAuthHeaders(): Promise<HeadersInit> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
+  
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      headers['Authorization'] = `Bearer ${session.access_token}`;
+    }
+  } catch (error) {
+    console.warn('Failed to get Supabase session:', error);
+  }
+  
+  return headers;
+}
+
 // Helper to get headers with CSRF token for mutating requests
 async function getMutatingHeaders(): Promise<HeadersInit> {
   const csrfToken = await getCsrfToken();
+  const authHeaders = await getAuthHeaders();
   return {
-    'Content-Type': 'application/json',
+    ...authHeaders,
     ...(csrfToken && { 'CSRF-Token': csrfToken })
   };
 }
@@ -45,6 +65,7 @@ async function getMutatingHeaders(): Promise<HeadersInit> {
 
 export async function getGlobalSettings(): Promise<GlobalSettings> {
   const response = await fetch(`${API_BASE}/settings`, {
+    headers: await getAuthHeaders(),
     credentials: 'include'
   });
   return handleResponse<GlobalSettings>(response);
@@ -64,6 +85,7 @@ export async function updateGlobalSettings(settings: Partial<GlobalSettings>): P
 
 export async function getBotTemplates(): Promise<BotTemplate[]> {
   const response = await fetch(`${API_BASE}/bot-templates`, {
+    headers: await getAuthHeaders(),
     credentials: 'include'
   });
   return handleResponse<BotTemplate[]>(response);
@@ -129,6 +151,7 @@ export interface ChatwootInbox {
 
 export async function getChatwootUsers(): Promise<ChatwootUser[]> {
   const response = await fetch(`${API_BASE}/chatwoot-users`, {
+    headers: await getAuthHeaders(),
     credentials: 'include'
   });
   return handleResponse<ChatwootUser[]>(response);
@@ -136,6 +159,7 @@ export async function getChatwootUsers(): Promise<ChatwootUser[]> {
 
 export async function getChatwootInboxes(): Promise<ChatwootInbox[]> {
   const response = await fetch(`${API_BASE}/chatwoot-inboxes`, {
+    headers: await getAuthHeaders(),
     credentials: 'include'
   });
   return handleResponse<ChatwootInbox[]>(response);
@@ -145,6 +169,7 @@ export async function getChatwootInboxes(): Promise<ChatwootInbox[]> {
 
 export async function getDefaultLabels(): Promise<DefaultLabel[]> {
   const response = await fetch(`${API_BASE}/default-labels`, {
+    headers: await getAuthHeaders(),
     credentials: 'include'
   });
   return handleResponse<DefaultLabel[]>(response);
@@ -186,6 +211,7 @@ export async function deleteDefaultLabel(id: number): Promise<void> {
 
 export async function getDefaultCannedResponses(): Promise<DefaultCannedResponse[]> {
   const response = await fetch(`${API_BASE}/default-canned-responses`, {
+    headers: await getAuthHeaders(),
     credentials: 'include'
   });
   return handleResponse<DefaultCannedResponse[]>(response);
@@ -240,6 +266,7 @@ export async function getAuditLog(
   if (pagination.offset) params.append('offset', String(pagination.offset));
 
   const response = await fetch(`${API_BASE}/audit-log?${params}`, {
+    headers: await getAuthHeaders(),
     credentials: 'include'
   });
   return handleResponse<PaginatedAuditLog>(response);
@@ -251,6 +278,7 @@ export async function getStatistics(dateRange?: { startDate?: string; endDate?: 
   if (dateRange?.endDate) params.append('endDate', dateRange.endDate);
 
   const response = await fetch(`${API_BASE}/statistics?${params}`, {
+    headers: await getAuthHeaders(),
     credentials: 'include'
   });
   return handleResponse<AutomationStatistics>(response);
@@ -272,6 +300,7 @@ export async function bulkApply(data: BulkApplyInput): Promise<BulkResult> {
 
 export async function exportConfiguration(): Promise<ConfigurationExport> {
   const response = await fetch(`${API_BASE}/export`, {
+    headers: await getAuthHeaders(),
     credentials: 'include'
   });
   

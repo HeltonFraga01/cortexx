@@ -33,6 +33,16 @@ function extractSubdomain(hostname) {
   const cleanHostname = hostname.split(':')[0];
   const parts = cleanHostname.split('.');
   
+  // Special case for localhost: subdomain.localhost
+  if (parts.length === 2 && parts[1] === 'localhost') {
+    const subdomain = parts[0].toLowerCase();
+    // Don't treat 'localhost' itself as a subdomain
+    if (subdomain !== 'localhost' && !['www', 'api', 'superadmin', 'admin'].includes(subdomain)) {
+      return subdomain;
+    }
+    return null;
+  }
+  
   if (parts.length < 3) return null;
   
   const subdomain = parts[0];

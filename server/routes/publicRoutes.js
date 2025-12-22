@@ -8,10 +8,7 @@
 
 const router = require('express').Router();
 const { logger } = require('../utils/logger');
-const TenantService = require('../services/TenantService');
-
-// Initialize service
-const tenantService = new TenantService();
+const tenantService = require('../services/TenantService');
 
 /**
  * GET /api/public/branding
@@ -231,6 +228,16 @@ function extractSubdomain(hostname) {
   
   // Split by dots
   const parts = cleanHostname.split('.');
+  
+  // Special case for localhost: subdomain.localhost
+  if (parts.length === 2 && parts[1] === 'localhost') {
+    const subdomain = parts[0].toLowerCase();
+    // Don't treat 'localhost' itself as a subdomain
+    if (subdomain !== 'localhost') {
+      return subdomain;
+    }
+    return null;
+  }
   
   // If less than 3 parts, no subdomain (e.g., localhost, example.com)
   if (parts.length < 3) return null;

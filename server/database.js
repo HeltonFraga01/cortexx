@@ -305,10 +305,49 @@ class Database {
     return { changes: 1 };
   }
 
-  async getUserConnections(userToken) {
-    // This needs to be implemented based on your user-connection relationship
-    const { data, error } = await SupabaseService.getMany('database_connections', {});
-    return data || [];
+  async getUserConnections(userId) {
+    try {
+      // Fetch all connections first (for now, to ensure we catch all matches)
+      // In production with many connections, we should filter in the query
+      // query.contains('assigned_users', [userId])
+      const { data, error } = await SupabaseService.getMany('database_connections', {});
+      
+      if (error) {
+        logger.error('Error fetching database connections:', error.message);
+        return [];
+      }
+
+      if (!data) return [];
+
+      // Filter connections where userId is in assigned_users array
+      // assigned_users should be a JSON array of user IDs
+      return data.filter(conn => {
+        // If it's a global connection (no specific assignment), maybe include it?
+        // For now, adhere to strict assignment
+        if (!conn.assigned_users) return false;
+        
+        // Check if assigned_users is an array
+        if (Array.isArray(conn.assigned_users)) {
+          return conn.assigned_users.includes(userId);
+        }
+        
+        // Handle case where it might be a JSON string (unlikely if Supabase handles JSON types correctly)
+        if (typeof conn.assigned_users === 'string') {
+          try {
+            const users = JSON.parse(conn.assigned_users);
+            return Array.isArray(users) && users.includes(userId);
+          } catch (e) {
+            return false;
+          }
+        }
+
+        return false;
+      });
+    } catch (error) {
+      logger.error('Error in getUserConnections:', error.message);
+      // Return empty array instead of throwing to prevent 500 error on frontend
+      return [];
+    }
   }
 
   async validateUserAndGetId(userToken) {

@@ -5,6 +5,7 @@ const securityLogger = require('../utils/securityLogger');
 const wuzapiClient = require('../utils/wuzapiClient');
 const AgentService = require('../services/AgentService');
 const AccountService = require('../services/AccountService');
+const { regenerateSession } = require('../utils/sessionHelper');
 
 // Lazy initialization of services
 let agentService = null;
@@ -22,6 +23,8 @@ function initServices(db) {
  * 
  * Login de administrador via email/senha (Agent com role owner/administrator)
  * Cria sessão HTTP-only para acesso às rotas /admin
+ * 
+ * FIXED: Now uses regenerateSession() helper for proper session persistence.
  */
 router.post('/admin-login', async (req, res) => {
   const { email, password } = req.body;
@@ -105,8 +108,7 @@ router.post('/admin-login', async (req, res) => {
       });
     }
     
-    // Create session for admin access
-    // Destroy existing session first
+    // Log existing session if any
     if (req.session?.userId) {
       logger.info('Destroying existing session before admin login', {
         oldUserId: req.session.userId,
@@ -115,34 +117,17 @@ router.post('/admin-login', async (req, res) => {
       });
     }
     
-    // Regenerate session
-    await new Promise((resolve, reject) => {
-      req.session.regenerate((err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
-    
-    // Set session data for admin access
-    // Use account's wuzapi_token as the userToken for API calls
-    req.session.userId = agent.id;
-    req.session.userToken = account.wuzapiToken; // WUZAPI token from account
-    req.session.userName = agent.name;
-    req.session.userEmail = agent.email;
-    req.session.role = 'admin';
-    req.session.agentRole = agent.role; // Store original agent role
-    req.session.accountId = account.id;
-    req.session.accountName = account.name;
-    req.session.tenantId = account.tenantId;
-    req.session.createdAt = new Date().toISOString();
-    req.session.lastActivity = new Date().toISOString();
-    
-    // Save session
-    await new Promise((resolve, reject) => {
-      req.session.save((err) => {
-        if (err) reject(err);
-        else resolve();
-      });
+    // Use regenerateSession helper for proper session persistence
+    await regenerateSession(req, {
+      userId: agent.id,
+      role: 'admin',
+      userToken: account.wuzapiToken || '', // WUZAPI token from account
+      userName: agent.name,
+      userEmail: agent.email,
+      agentRole: agent.role, // Store original agent role
+      accountId: account.id,
+      accountName: account.name,
+      tenantId: account.tenantId
     });
     
     securityLogger.logLoginAttempt(true, {
@@ -156,6 +141,7 @@ router.post('/admin-login', async (req, res) => {
       agentId: agent.id,
       accountId: account.id,
       role: agent.role,
+      sessionId: req.sessionID,
       ip: req.ip
     });
     
@@ -194,6 +180,9 @@ router.post('/admin-login', async (req, res) => {
  * Body:
  * - token: Token de acesso (admin ou user)
  * - role: 'admin' ou 'user'
+ * 
+ * FIXED: Now uses regenerateSession() helper for proper session persistence.
+ * This fixes the bug where session data (userId, role) was not being persisted.
  */
 router.post('/login', async (req, res) => {
   const { token, role } = req.body;
@@ -275,9 +264,7 @@ router.post('/login', async (req, res) => {
       }
     }
     
-    // CRITICAL: Destroy any existing session before creating a new one
-    // This prevents stale session data from causing authentication loops
-    // when users log out and log in with different credentials
+    // Log existing session if any
     const oldSessionId = req.sessionID;
     const hadExistingSession = !!req.session?.userId;
     
@@ -313,11 +300,8 @@ router.post('/login', async (req, res) => {
       }
       
       // Validar que o token funciona com WuzAPI usando endpoint admin correto
-      // Endpoint: GET /admin/users com header Authorization (não token)
       const response = await wuzapiClient.getAdmin('/admin/users', adminToken);
       
-      // CRÍTICO: Verificar se a resposta foi bem-sucedida
-      // wuzapiClient.getAdmin() retorna { success: false } em caso de erro, não lança exceção
       if (!response.success) {
         logger.error('Failed to validate admin token with WuzAPI', {
           error: response.error || 'WuzAPI validation failed',
@@ -338,7 +322,6 @@ router.post('/login', async (req, res) => {
       }
       
       // Generate a consistent UUID for admin using hash of admin token
-      // This ensures the admin always gets the same userId across sessions
       const { hashToken } = require('../utils/userIdResolver');
       const adminUserId = hashToken(adminToken);
       
@@ -352,8 +335,6 @@ router.post('/login', async (req, res) => {
         headers: { token }
       });
       
-      // CRÍTICO: Verificar se a resposta foi bem-sucedida
-      // wuzapiClient.get() retorna { success: false } em caso de erro, não lança exceção
       if (!response.success) {
         logger.error('Failed to validate user token with WuzAPI', {
           error: response.error || 'Token validation failed',
@@ -383,7 +364,6 @@ router.post('/login', async (req, res) => {
         const usersResponse = await wuzapiClient.getAdmin('/admin/users', adminToken);
         
         if (usersResponse.success && usersResponse.data && usersResponse.data.data) {
-          // Procurar o usuário pelo token
           const user = usersResponse.data.data.find(u => u.token === token);
           if (user) {
             if (user.name) {
@@ -396,8 +376,7 @@ router.post('/login', async (req, res) => {
         }
       }
       
-      // IMPORTANT: Use hashed token as userId for consistency with quota/subscription system
-      // The hash ensures consistent user identification across all services
+      // Use hashed token as userId for consistency with quota/subscription system
       const { hashToken } = require('../utils/userIdResolver');
       const userId = hashToken(token);
       
@@ -409,100 +388,16 @@ router.post('/login', async (req, res) => {
       };
     }
     
-    // CRITICAL: Destroy existing session completely and create fresh one
-    // This is more aggressive than regenerate() to ensure no stale data persists
-    const destroyAndCreateSession = () => {
-      return new Promise((resolve, reject) => {
-        // First, completely destroy the old session
-        const oldData = {
-          userId: req.session?.userId,
-          role: req.session?.role,
-          userToken: req.session?.userToken
-        };
-        
-        // Log if there's a mismatch (user trying to login as different role)
-        if (oldData.userId && oldData.role !== role) {
-          logger.warn('Role change detected during login', {
-            oldUserId: oldData.userId,
-            oldRole: oldData.role,
-            newRole: role,
-            newUserId: userData.id,
-            ip: req.ip
-          });
-        }
-        
-        // Destroy the session first
-        req.session.destroy((destroyErr) => {
-          if (destroyErr) {
-            logger.warn('Session destroy before login failed', {
-              error: destroyErr.message,
-              ip: req.ip
-            });
-          }
-          
-          // Now regenerate to get a completely fresh session
-          // Note: After destroy, req.session is null, so we need to use regenerate
-          // which will create a new session
-          req.session = null; // Ensure it's cleared
-          
-          // Use the session middleware to create a new session
-          // by calling regenerate on the request
-          req.sessionStore.generate(req);
-          
-          // Set new session data
-          req.session.userId = userData.id;
-          req.session.userToken = token;
-          req.session.userName = userData.name || userData.id;
-          req.session.userJid = userData.jid || null;
-          req.session.role = role;
-          req.session.createdAt = new Date().toISOString();
-          req.session.lastActivity = new Date().toISOString();
-          
-          // Multi-tenant: Set tenant context in session
-          // Requirements: 8.2 - Validate credentials within tenant only
-          if (tenantContext) {
-            req.session.tenantId = tenantContext.tenantId;
-            req.session.tenantSubdomain = tenantContext.subdomain;
-            req.session.tenantName = tenantContext.name;
-            
-            logger.info('Tenant context added to session', {
-              userId: userData.id,
-              tenantId: tenantContext.tenantId,
-              subdomain: tenantContext.subdomain
-            });
-          }
-          
-          // Log the new session state
-          logger.info('New session created after destroy', {
-            newSessionId: req.sessionID,
-            userId: userData.id,
-            role: role,
-            ip: req.ip
-          });
-          
-          // Save session explicitly to ensure it's persisted
-          req.session.save((saveErr) => {
-            if (saveErr) {
-              logger.error('Session save failed after destroy', {
-                error: saveErr.message,
-                userId: userData.id,
-                ip: req.ip
-              });
-              reject(saveErr);
-            } else {
-              logger.info('Session saved successfully', {
-                sessionId: req.sessionID,
-                userId: userData.id,
-                role: role
-              });
-              resolve();
-            }
-          });
-        });
-      });
-    };
-    
-    await destroyAndCreateSession();
+    // Use regenerateSession helper for proper session persistence
+    // This is the FIX for the session persistence bug
+    await regenerateSession(req, {
+      userId: userData.id,
+      role: role,
+      userToken: token,
+      userName: userData.name || userData.id,
+      userJid: userData.jid || null,
+      tenantContext: tenantContext
+    });
     
     // Log sucesso
     securityLogger.logLoginAttempt(true, {
@@ -540,6 +435,7 @@ router.post('/login', async (req, res) => {
   } catch (error) {
     logger.error('Login error', {
       error: error.message,
+      stack: error.stack,
       ip: req.ip
     });
     
@@ -547,6 +443,15 @@ router.post('/login', async (req, res) => {
       ip: req.ip,
       reason: error.message
     });
+    
+    // Check if it's a session error
+    if (error.message.includes('Session')) {
+      return res.status(500).json({ 
+        error: 'Falha ao criar sessão',
+        code: 'SESSION_ERROR',
+        timestamp: new Date().toISOString()
+      });
+    }
     
     res.status(500).json({ 
       error: 'Falha na autenticação',

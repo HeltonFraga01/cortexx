@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useBrandingConfig } from '@/hooks/useBranding';
 import { navigationPaths } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,8 +15,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { SupabaseUsersList } from './SupabaseUsersList';
 
 import { 
   Table, 
@@ -68,11 +65,11 @@ interface UserWithAvatar extends WuzAPIUser {
   planName?: string;
 }
 
-const AdminUsers = () => {
+export function WuzapiUsersList() {
   const navigate = useNavigate();
-  const brandingConfig = useBrandingConfig();
+  // Removed unused brandingConfig
   const [users, setUsers] = useState<UserWithAvatar[]>([]);
-  const [plans, setPlans] = useState<Plan[]>([]);
+  // Removed unused plans state
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
@@ -97,7 +94,7 @@ const AdminUsers = () => {
       suspended: { variant: 'destructive', label: 'Suspenso' },
     };
     
-    const config = statusConfig[status] || { variant: 'outline' as const, label: status };
+    const config = statusConfig[status] ?? { variant: 'outline' as const, label: status };
     return <Badge variant={config.variant} className="text-xs">{config.label}</Badge>;
   };
 
@@ -140,7 +137,7 @@ const AdminUsers = () => {
       } else if (result.successCount > 0) {
         toast.warning(`Aplicado a ${result.successCount} usuário(s), ${result.failureCount} falha(s)`);
       } else {
-        toast.error(`Falha ao aplicar automação: ${result.failures[0]?.error || 'Erro desconhecido'}`);
+        toast.error(`Falha ao aplicar automação: ${result.failures[0]?.error ?? 'Erro desconhecido'}`);
       }
 
       setSelectedUsers(new Set());
@@ -153,10 +150,6 @@ const AdminUsers = () => {
 
   // Buscar avatar de um usuário
   const fetchUserAvatar = useCallback(async (user: UserWithAvatar) => {
-    // wuzapi is an instance created inside the component, so it might be stable, 
-    // but ideally should be memoized or ref derived. 
-    // Since it's created with new WuzAPIService(), it changes on every render!
-    // This is a performance issue too. 
     if (!user.jid || !user.loggedIn || user.avatarUrl) return;
     
     try {
@@ -188,8 +181,6 @@ const AdminUsers = () => {
         wuzapi.getUsers(),
         adminPlansService.listPlans().catch(() => [] as Plan[])
       ]);
-      
-      setPlans(plansData);
       
       // Create a map of plan IDs to names
       const planMap = new Map(plansData.map(p => [p.id, p.name]));
@@ -295,26 +286,16 @@ const AdminUsers = () => {
   };
 
   return (
-    <div className="space-y-6 w-full max-w-none mx-auto">
+    <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">Gerenciar Usuários</h1>
-          <p className="text-muted-foreground text-sm sm:text-base">
-            Gerencie os usuários do sistema {brandingConfig.appName}
+          <h2 className="text-xl font-semibold">Usuários do Sistema</h2>
+          <p className="text-muted-foreground text-sm">
+            Gerencie as instâncias WuzAPI conectadas
           </p>
         </div>
-      </div>
-
-      <Tabs defaultValue="wuzapi" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="wuzapi">Usuários do Sistema</TabsTrigger>
-          <TabsTrigger value="supabase">Usuários Supabase</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="wuzapi" className="space-y-6">
-          <div className="flex justify-end">
-            <div className="flex items-center gap-2">
-          {/* Bulk Actions Dropdown - Requirements 8.1, 8.2 */}
+        <div className="flex items-center gap-2">
+          {/* Bulk Actions Dropdown */}
           {selectedUsers.size > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -351,8 +332,8 @@ const AdminUsers = () => {
             <Plus className="h-4 w-4 mr-2" />
             <span className="sm:inline">Novo Usuário</span>
           </Button>
-            </div>
-          </div>
+        </div>
+      </div>
 
       {/* Search */}
       <Card className="w-full">
@@ -381,7 +362,7 @@ const AdminUsers = () => {
         <CardContent className="p-0">
           {loading ? (
             <div className="p-6">
-              <LoadingSkeleton variant="list" count={5} />
+              <LoadingSkeleton variant="listItem" count={5} />
             </div>
           ) : filteredUsers.length === 0 ? (
             <div className="p-6">
@@ -488,8 +469,8 @@ const AdminUsers = () => {
                       </TableCell>
                       <TableCell className="px-2 sm:px-4">
                         <div className="flex items-center gap-1">
-                          <code className="text-xs bg-muted px-1.5 py-1 rounded font-mono truncate max-w-[80px]" title={user.id || ''}>
-                            {user.id?.substring(0, 8) || '-'}...
+                          <code className="text-xs bg-muted px-1.5 py-1 rounded font-mono truncate max-w-[80px]" title={user.id ?? ''}>
+                            {user.id?.substring(0, 8) ?? '-'}...
                           </code>
                           <Button
                             variant="ghost"
@@ -509,7 +490,7 @@ const AdminUsers = () => {
                       <TableCell className="px-2 sm:px-4">
                         <div className="flex items-center gap-1">
                           <code className="text-xs bg-muted px-1.5 py-1 rounded font-mono">
-                            {user.token?.substring(0, 6) || '-'}...
+                            {user.token?.substring(0, 6) ?? '-'}...
                           </code>
                           <Button
                             variant="ghost"
@@ -652,15 +633,6 @@ const AdminUsers = () => {
           </div>
         )}
       </Card>
-
-      </TabsContent>
-
-      <TabsContent value="supabase">
-        <SupabaseUsersList />
-      </TabsContent>
-      </Tabs>
     </div>
   );
-};
-
-export default AdminUsers;
+}

@@ -82,10 +82,11 @@ class CorsHandler {
           return callback(null, true);
         }
         
-        // Allow localhost variations
+        // Allow localhost variations including subdomains (e.g., cortexx.localhost:8080)
         const localhostPatterns = [
           /^http:\/\/localhost:\d+$/,
-          /^http:\/\/127\.0\.0\.1:\d+$/
+          /^http:\/\/127\.0\.0\.1:\d+$/,
+          /^http:\/\/[a-z0-9-]+\.localhost:\d+$/  // Subdomains of localhost
         ];
         
         // Allow development domain subdomains (e.g., *.cortexx.local)

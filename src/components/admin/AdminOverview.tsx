@@ -8,6 +8,8 @@ import { LoadingSkeleton } from '@/components/ui-custom/LoadingSkeleton';
 import AutomationStatisticsCards from '@/components/admin/AutomationStatisticsCards';
 import { AdminDashboardStats } from '@/components/admin/AdminDashboardStats';
 import { AdminDashboardAlerts } from '@/components/admin/AdminDashboardAlerts';
+import { api } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 
 import { HealthStatus, WuzAPIUser } from '@/services/wuzapi';
 import { 
@@ -81,7 +83,56 @@ const AdminOverview = () => {
   const [users, setUsers] = useState<WuzAPIUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
   const brandingConfig = useBrandingConfig();
+
+  // Wait for Supabase session to be ready before making API calls
+  useEffect(() => {
+    let mounted = true;
+    
+    const checkSession = async () => {
+      try {
+        // First check if session exists
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session?.access_token && mounted) {
+          console.debug('[AdminOverview] Session ready, access_token available');
+          setSessionReady(true);
+          return;
+        }
+        
+        // If no session yet, wait for auth state change
+        console.debug('[AdminOverview] No session yet, waiting for auth state change...');
+      } catch (error) {
+        console.error('[AdminOverview] Error checking session:', error);
+      }
+    };
+    
+    // Check immediately
+    checkSession();
+    
+    // Also listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.debug('[AdminOverview] Auth state changed:', event, !!session?.access_token);
+      if (session?.access_token && mounted) {
+        setSessionReady(true);
+      }
+    });
+    
+    // Timeout fallback - if session doesn't appear in 3 seconds, try anyway
+    const timeout = setTimeout(() => {
+      if (mounted && !sessionReady) {
+        console.warn('[AdminOverview] Session timeout, proceeding anyway');
+        setSessionReady(true);
+      }
+    }, 3000);
+    
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+      clearTimeout(timeout);
+    };
+  }, []);
 
   const fetchData = async (isRefresh = false) => {
     try {
@@ -91,31 +142,26 @@ const AdminOverview = () => {
         setLoading(true);
       }
       
-      // Fetch dashboard stats and system health in parallel
-      const [dashboardResponse, healthResponse] = await Promise.all([
-        fetch('/api/admin/dashboard-stats', {
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include'
-        }),
+      // Fetch dashboard stats and system health in parallel using api client (includes JWT automatically)
+      const [dashboardResult, healthResponse] = await Promise.all([
+        api.get<{ success: boolean; data: any }>('/api/admin/dashboard-stats'),
         fetch('/health', {
           headers: { 'Content-Type': 'application/json' }
         })
       ]);
 
-      if (!dashboardResponse.ok) {
-        if (dashboardResponse.status === 401) {
-          toast.error('Sessão expirada. Faça login novamente');
-          // Redirecionar imediatamente para evitar múltiplas requisições falhando
-          window.location.href = '/login';
-          return;
-        }
-        throw new Error(`Erro ao carregar dados: ${dashboardResponse.status}`);
+      if (dashboardResult.status === 401) {
+        toast.error('Sessão expirada. Faça login novamente');
+        window.location.href = '/login';
+        return;
       }
 
-      const [dashboardData, healthData] = await Promise.all([
-        dashboardResponse.json(),
-        healthResponse.ok ? healthResponse.json() : null
-      ]);
+      if (dashboardResult.status !== 200) {
+        throw new Error(`Erro ao carregar dados: ${dashboardResult.status}`);
+      }
+
+      const dashboardData = dashboardResult.data;
+      const healthData = healthResponse.ok ? await healthResponse.json() : null;
       
       if (dashboardData.success && dashboardData.data) {
         const statsData = dashboardData.data;
@@ -154,10 +200,15 @@ const AdminOverview = () => {
   };
 
   useEffect(() => {
+    // Only fetch data when session is ready
+    if (!sessionReady) {
+      return;
+    }
+    
     fetchData();
     const interval = setInterval(() => fetchData(true), 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [sessionReady]);
 
   if (loading) {
     return (

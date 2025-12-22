@@ -346,9 +346,9 @@ router.get('/avatar/:phone', verifyUserToken, async (req, res) => {
         
         // Update conversation avatar if we have one
         // Using SupabaseService directly
-        if (db) {
+        if (req.app?.locals?.db) {
           const contactJid = `${cleanPhone}@s.whatsapp.net`
-          await db.query(
+          await req.app.locals.db.query(
             'UPDATE conversations SET contact_avatar_url = ? WHERE user_id = ? AND contact_jid = ?',
             [avatarUrl, req.userToken, contactJid]
           )
@@ -461,10 +461,12 @@ router.post('/conversations/:id/fetch-avatar', verifyUserToken, async (req, res)
       
       if (avatarUrl) {
         // Update conversation avatar
-        await db.query(
-          'UPDATE conversations SET contact_avatar_url = ? WHERE id = ?',
-          [avatarUrl, id]
-        )
+        if (req.app?.locals?.db) {
+          await req.app.locals.db.query(
+            'UPDATE conversations SET contact_avatar_url = ? WHERE id = ?',
+            [avatarUrl, id]
+          )
+        }
         
         logger.info('Avatar fetched and saved', { conversationId: id, phone, hasUrl: true })
         
@@ -558,10 +560,12 @@ router.post('/conversations/:id/refresh-group-name', verifyUserToken, async (req
       
       if (groupName) {
         // Update conversation name
-        await db.query(
-          'UPDATE conversations SET contact_name = ? WHERE id = ?',
-          [groupName, id]
-        )
+        if (req.app?.locals?.db) {
+          await req.app.locals.db.query(
+            'UPDATE conversations SET contact_name = ? WHERE id = ?',
+            [groupName, id]
+          )
+        }
         
         logger.info('Group name fetched and saved', { 
           conversationId: id, 
@@ -669,6 +673,70 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversation not found' })
     }
+
+    // =================================================================================
+    // CRITICAL: Quota Enforcement Check
+    // Before sending, verify if the account owner has sufficient quota
+    // =================================================================================
+    try {
+      // 1. Get Account ID from Token
+      const accountId = await chatService.getAccountIdFromToken(req.userToken)
+      
+      if (accountId) {
+        // 2. Get Account Owner
+        // We need the owner_user_id because quotas are assigned to the owner (subscription holder)
+        const { data: account, error: accountError } = await supabaseService.queryAsAdmin('accounts', (query) => 
+          query.select('owner_user_id').eq('id', accountId).single()
+        )
+        
+        if (!accountError && account?.owner_user_id) {
+          const ownerId = account.owner_user_id
+          const db = req.app?.locals?.db
+          
+          if (db) {
+            const quotaService = new QuotaService(db)
+            
+            // 3. Check Daily Quota
+            const dailyCheck = await quotaService.checkQuota(ownerId, 'max_messages_per_day', 1)
+            if (!dailyCheck.allowed) {
+              logger.warn('Daily message quota exceeded', { ownerId, accountId, usage: dailyCheck.usage, limit: dailyCheck.limit })
+              return res.status(429).json({ 
+                success: false, 
+                error: 'Daily message limit reached',
+                message: 'Você atingiu seu limite diário de mensagens. Faça um upgrade no seu plano ou aguarde até amanhã.',
+                limit: dailyCheck.limit,
+                usage: dailyCheck.usage
+              })
+            }
+            
+            // 4. Check Monthly Quota
+            const monthlyCheck = await quotaService.checkQuota(ownerId, 'max_messages_per_month', 1)
+            if (!monthlyCheck.allowed) {
+              logger.warn('Monthly message quota exceeded', { ownerId, accountId, usage: monthlyCheck.usage, limit: monthlyCheck.limit })
+              return res.status(429).json({ 
+                success: false, 
+                error: 'Monthly message limit reached',
+                message: 'Você atingiu seu limite mensal de mensagens. Faça um upgrade no seu plano.',
+                limit: monthlyCheck.limit,
+                usage: monthlyCheck.usage
+              })
+            }
+            
+            logger.debug('Quota check passed for message send', { ownerId })
+          } else {
+            logger.warn('Database connection unavailable for quota check', { accountId })
+            // Fail safe: If we can't check usage, we probably shouldn't block, 
+            // OR we should block to prevent abuse. 
+            // Better to block if system is unstable, but here we proceed with warning.
+          }
+        }
+      }
+    } catch (quotaError) {
+      logger.error('Error checking message quota', { error: quotaError.message, conversationId: id })
+      // Proceed with caution or return error? 
+      // Safe failure: Allow message if check fails due to system error, but log it.
+    }
+    // =================================================================================
 
     // Get contactJid (check both camelCase and snake_case)
     const contactJid = conversation.contactJid || conversation.contact_jid
@@ -1728,7 +1796,11 @@ router.get('/messages/:messageId/media', verifyUserToken, async (req, res) => {
     }
 
     // Get message with media metadata
-    const { rows } = await db.query(`
+    // Use req.app.locals.db
+    if (!req.app?.locals?.db) {
+       return res.status(500).json({ success: false, error: 'Database connection not available' })
+    }
+    const { rows } = await req.app.locals.db.query(`
       SELECT m.*, c.user_id, c.contact_jid
       FROM chat_messages m
       JOIN conversations c ON m.conversation_id = c.id
@@ -2066,7 +2138,11 @@ router.get('/contacts/:jid/attributes', verifyUserToken, async (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid user token' })
     }
 
-    const result = await db.query(
+    if (!req.app?.locals?.db) {
+       return res.status(500).json({ success: false, error: 'Database connection not available' })
+    }
+
+    const result = await req.app.locals.db.query(
       'SELECT id, name, value, created_at, updated_at FROM contact_attributes WHERE user_id = ? AND contact_jid = ? ORDER BY name ASC',
       [userId, decodeURIComponent(jid)]
     )
@@ -2115,7 +2191,11 @@ router.post('/contacts/:jid/attributes', verifyUserToken, async (req, res) => {
     const decodedJid = decodeURIComponent(jid)
     
     // Check if attribute already exists
-    const existing = await db.query(
+    if (!req.app?.locals?.db) {
+       return res.status(500).json({ success: false, error: 'Database connection not available' })
+    }
+
+    const existing = await req.app.locals.db.query(
       'SELECT id FROM contact_attributes WHERE user_id = ? AND contact_jid = ? AND name = ?',
       [userId, decodedJid, name.trim()]
     )
@@ -2124,7 +2204,7 @@ router.post('/contacts/:jid/attributes', verifyUserToken, async (req, res) => {
       return res.status(409).json({ success: false, error: 'Attribute with this name already exists' })
     }
 
-    const result = await db.query(
+    const result = await req.app.locals.db.query(
       'INSERT INTO contact_attributes (user_id, contact_jid, name, value) VALUES (?, ?, ?, ?)',
       [userId, decodedJid, name.trim(), value.trim()]
     )
@@ -2176,7 +2256,11 @@ router.put('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res) =>
     const decodedJid = decodeURIComponent(jid)
     
     // Verify attribute belongs to user
-    const existing = await db.query(
+    if (!req.app?.locals?.db) {
+       return res.status(500).json({ success: false, error: 'Database connection not available' })
+    }
+
+    const existing = await req.app.locals.db.query(
       'SELECT id, name FROM contact_attributes WHERE id = ? AND user_id = ? AND contact_jid = ?',
       [id, userId, decodedJid]
     )
@@ -2185,7 +2269,7 @@ router.put('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res) =>
       return res.status(404).json({ success: false, error: 'Attribute not found' })
     }
 
-    await db.query(
+    await req.app.locals.db.query(
       'UPDATE contact_attributes SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
       [value.trim(), id]
     )
@@ -2228,7 +2312,11 @@ router.delete('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res)
     const decodedJid = decodeURIComponent(jid)
     
     // Verify attribute belongs to user
-    const existing = await db.query(
+    if (!req.app?.locals?.db) {
+       return res.status(500).json({ success: false, error: 'Database connection not available' })
+    }
+
+    const existing = await req.app.locals.db.query(
       'SELECT id FROM contact_attributes WHERE id = ? AND user_id = ? AND contact_jid = ?',
       [id, userId, decodedJid]
     )
@@ -2269,7 +2357,11 @@ router.get('/contacts/:jid/notes', verifyUserToken, async (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid user token' })
     }
 
-    const result = await db.query(
+    if (!req.app?.locals?.db) {
+       return res.status(500).json({ success: false, error: 'Database connection not available' })
+    }
+
+    const result = await req.app.locals.db.query(
       'SELECT id, content, created_at FROM contact_notes WHERE user_id = ? AND contact_jid = ? ORDER BY created_at DESC',
       [userId, decodeURIComponent(jid)]
     )
@@ -2311,7 +2403,11 @@ router.post('/contacts/:jid/notes', verifyUserToken, async (req, res) => {
 
     const decodedJid = decodeURIComponent(jid)
 
-    const result = await db.query(
+    if (!req.app?.locals?.db) {
+       return res.status(500).json({ success: false, error: 'Database connection not available' })
+    }
+
+    const result = await req.app.locals.db.query(
       'INSERT INTO contact_notes (user_id, contact_jid, content) VALUES (?, ?, ?)',
       [userId, decodedJid, content.trim()]
     )
@@ -2353,7 +2449,11 @@ router.delete('/contacts/:jid/notes/:id', verifyUserToken, async (req, res) => {
     const decodedJid = decodeURIComponent(jid)
     
     // Verify note belongs to user
-    const existing = await db.query(
+    if (!req.app?.locals?.db) {
+       return res.status(500).json({ success: false, error: 'Database connection not available' })
+    }
+
+    const existing = await req.app.locals.db.query(
       'SELECT id FROM contact_notes WHERE id = ? AND user_id = ? AND contact_jid = ?',
       [id, userId, decodedJid]
     )
@@ -2395,14 +2495,18 @@ router.get('/conversations/:id/info', verifyUserToken, async (req, res) => {
     }
 
     // Get message count
-    const messageCountResult = await db.query(
+    if (!req.app?.locals?.db) {
+       return res.status(500).json({ success: false, error: 'Database connection not available' })
+    }
+
+    const messageCountResult = await req.app.locals.db.query(
       'SELECT COUNT(*) as count FROM chat_messages WHERE conversation_id = ?',
       [id]
     )
     const messageCount = messageCountResult.rows?.[0]?.count || 0
 
     // Get first and last message timestamps
-    const timestampsResult = await db.query(
+    const timestampsResult = await req.app.locals.db.query(
       'SELECT MIN(timestamp) as first_message, MAX(timestamp) as last_message FROM chat_messages WHERE conversation_id = ?',
       [id]
     )
@@ -2417,7 +2521,7 @@ router.get('/conversations/:id/info', verifyUserToken, async (req, res) => {
     }
 
     // Get label assignments with timestamps
-    const labelsResult = await db.query(
+    const labelsResult = await req.app.locals.db.query(
       `SELECT l.id as label_id, l.name as label_name, cl.created_at as assigned_at
        FROM conversation_labels cl
        JOIN labels l ON cl.label_id = l.id
@@ -2653,7 +2757,10 @@ router.post('/macros/:id/execute', verifyUserToken, async (req, res) => {
     }
 
     // Get macro
-    const macroResult = await db.query(
+    if (!req.app?.locals?.db) {
+       return res.status(500).json({ success: false, error: 'Database connection not available' })
+    }
+    const macroResult = await req.app.locals.db.query(
       'SELECT id, name FROM macros WHERE id = ? AND user_id = ?',
       [id, userId]
     )
@@ -2663,7 +2770,7 @@ router.post('/macros/:id/execute', verifyUserToken, async (req, res) => {
     }
 
     // Get macro actions
-    const actionsResult = await db.query(
+    const actionsResult = await req.app.locals.db.query(
       'SELECT action_type, params FROM macro_actions WHERE macro_id = ? ORDER BY action_order ASC',
       [id]
     )

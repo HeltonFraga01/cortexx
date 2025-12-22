@@ -28,6 +28,7 @@ import {
   Circle, Square, Triangle, Hexagon, Diamond
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { supabase } from '@/lib/supabase';
 
 interface CustomLink {
   id: number;
@@ -377,7 +378,13 @@ export default function CustomLinksManager() {
   const fetchLinks = async () => {
     try {
       setLoading(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
       const response = await fetch('/api/admin/custom-links/all', {
+        headers: {
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
         credentials: 'include',
       });
       
@@ -396,7 +403,7 @@ export default function CustomLinksManager() {
   };
 
   useEffect(() => {
-    fetchLinks();
+    void fetchLinks();
   }, []);
 
   const handleStartEdit = (link: CustomLink) => {
@@ -445,10 +452,14 @@ export default function CustomLinksManager() {
       
       const method = editingId ? 'PUT' : 'POST';
       
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      
       const response = await fetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         },
         credentials: 'include',
         body: JSON.stringify({
@@ -476,8 +487,14 @@ export default function CustomLinksManager() {
     }
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
       const response = await fetch(`/api/custom-links/${id}`, {
         method: 'DELETE',
+        headers: {
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
         credentials: 'include',
       });
 
@@ -576,7 +593,7 @@ export default function CustomLinksManager() {
                       <X className="h-4 w-4 mr-2" />
                       Cancelar
                     </Button>
-                    <Button onClick={handleSave}>
+                    <Button onClick={() => void handleSave()}>
                       <Check className="h-4 w-4 mr-2" />
                       Salvar
                     </Button>
@@ -646,7 +663,7 @@ export default function CustomLinksManager() {
                               <X className="h-4 w-4 mr-2" />
                               Cancelar
                             </Button>
-                            <Button onClick={handleSave}>
+                            <Button onClick={() => void handleSave()}>
                               <Check className="h-4 w-4 mr-2" />
                               Salvar
                             </Button>
@@ -683,7 +700,7 @@ export default function CustomLinksManager() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => handleDelete(link.id)}
+                              onClick={() => void handleDelete(link.id)}
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>

@@ -4,6 +4,8 @@
  */
 
 const { logger } = require('../utils/logger');
+const { validateSupabaseToken } = require('../middleware/supabaseAuth');
+const { requireAdmin } = require('../middleware/auth');
 const sessionRoutes = require('./sessionRoutes');
 const adminRoutes = require('./adminRoutes');
 const brandingRoutes = require('./brandingRoutes');
@@ -166,55 +168,34 @@ function setupRoutes(app) {
   // Monitoring Routes (root level)
   app.use('/', monitoringRoutes);
   
-  // Admin dashboard stats route (usando sessão)
-  app.get('/api/admin/dashboard-stats', (req, res, next) => {
-    // Log detalhado do estado da sessão
-    const sessionState = {
-      sessionId: req.sessionID,
-      hasSession: !!req.session,
-      userId: req.session?.userId || null,
-      role: req.session?.role || null,
-      agentRole: req.session?.agentRole || null,
-      hasToken: !!req.session?.userToken,
-      path: req.path,
-      method: req.method,
-      ip: req.ip
-    };
-    
-    // Verificar se está autenticado como admin
-    if (!req.session?.userId || req.session?.role !== 'admin') {
-      logger.error('Dashboard stats access denied - Not authenticated as admin', {
-        type: 'dashboard_stats_auth_failure',
-        session: sessionState,
-        userAgent: req.get('User-Agent')
-      });
-      
-      return res.status(401).json({
-        success: false,
-        error: 'Não autenticado como administrador',
-        code: 401,
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    next();
-  }, async (req, res) => {
+  // Helper functions for JWT + Session auth
+  function getUserId(req) {
+    return req.user?.id || req.session?.userId;
+  }
+  
+  function getUserRole(req) {
+    return req.user?.role || req.session?.role;
+  }
+  
+  // Admin dashboard stats route (usa middleware requireAdmin que suporta JWT e sessão)
+  app.get('/api/admin/dashboard-stats', requireAdmin, async (req, res) => {
     // Priorizar token do ambiente sobre token da sessão
     const envAdminToken = process.env.WUZAPI_ADMIN_TOKEN;
-    const sessionToken = req.session.userToken;
+    const sessionToken = req.session?.userToken;
     const adminToken = envAdminToken || sessionToken;
-    const isAgentLogin = !!req.session.agentRole;
+    const isAgentLogin = !!req.session?.agentRole;
+    const userId = getUserId(req);
     
     // Log de extração de token
     logger.debug('Dashboard stats request', {
       type: 'dashboard_stats',
       sessionId: req.sessionID,
-      userId: req.session.userId,
+      userId: userId,
       hasEnvToken: !!envAdminToken,
       hasSessionToken: !!sessionToken,
       usingEnvToken: !!envAdminToken,
       isAgentLogin,
-      agentRole: req.session.agentRole,
+      agentRole: req.session?.agentRole,
       path: req.path
     });
     
@@ -236,9 +217,9 @@ function setupRoutes(app) {
       // Se não tem nenhum token WUZAPI disponível, retornar dados básicos
       if (!adminToken) {
         logger.info('Admin dashboard stats - no WUZAPI token available', {
-          userId: req.session.userId,
-          agentRole: req.session.agentRole,
-          accountId: req.session.accountId
+          userId: userId,
+          agentRole: req.session?.agentRole,
+          accountId: req.session?.accountId || req.user?.accountId
         });
         
         // Retornar estatísticas básicas do sistema sem dados de usuários WUZAPI

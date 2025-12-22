@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link, useLocation } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,6 +12,7 @@ import ThemeToggle from '@/components/ui-custom/ThemeToggle';
 import { Loader2, Mail, Lock, ArrowLeft, KeyRound, Users, User, Shield } from 'lucide-react';
 import { tenantService, type TenantInfo } from '@/services/tenant-service';
 import { authService } from '@/services/auth-service';
+import { useAuth } from '@/contexts/AuthContext';
 
 /**
  * Unified Login Page with Tabs for Agent, User, and Admin
@@ -86,7 +87,9 @@ function getUserRole(user: { user_metadata?: { role?: string } }): string {
 const UnifiedLoginPage = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const brandingConfig = useBrandingConfig();
+  const { checkAuth, isAuthenticated, user, isLoading: authLoading } = useAuth();
   
   // Get default tab from URL query parameter - Requirement 1.2
   // Also handle legacy route redirects
@@ -138,6 +141,13 @@ const UnifiedLoginPage = () => {
     };
     fetchTenant();
   }, []);
+
+  // Sync checkingSession with authLoading
+  useEffect(() => {
+    if (!authLoading) {
+      setCheckingSession(false);
+    }
+  }, [authLoading]);
   
   // Handle legacy route redirects with query parameter preservation - Requirement 1.2
   useEffect(() => {
@@ -153,23 +163,15 @@ const UnifiedLoginPage = () => {
     }
   }, [navigate, searchParams]);
 
-  // Check for existing session on mount - Requirement 7.2
+  // Check for existing session from global context - Requirement 7.2
   useEffect(() => {
-    const checkSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          const role = getUserRole(session.user);
-          navigate(getRedirectPath(role));
-        }
-      } catch (err) {
-        console.error('Error checking session:', err);
-      } finally {
-        setCheckingSession(false);
-      }
-    };
-    checkSession();
-  }, [navigate]);
+    if (!authLoading && isAuthenticated && user) {
+       // Use role directly from user object (handles both Supabase and Backend users)
+       const role = user.role;
+       const from = (location.state as any)?.from?.pathname;
+       navigate(from || getRedirectPath(role), { replace: true });
+    }
+  }, [authLoading, isAuthenticated, user, navigate, location]);
 
   // Listen for auth state changes - Requirement 7.5
   useEffect(() => {
@@ -196,10 +198,25 @@ const UnifiedLoginPage = () => {
     setError(null);
 
     try {
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password: password.trim(),
-      });
+      let data, signInError;
+
+      if (activeTab === 'admin') {
+         const result = await authService.loginAdmin(email.trim(), password.trim());
+         data = { user: result.user, session: result.session };
+         signInError = result.error;
+         
+         if (!signInError) {
+             // Refresh global auth state from backend session
+             await checkAuth();
+         }
+      } else {
+         const result = await supabase.auth.signInWithPassword({
+            email: email.trim(),
+            password: password.trim(),
+         });
+         data = result.data;
+         signInError = result.error;
+      }
 
       if (signInError) {
         throw signInError;
@@ -230,7 +247,8 @@ const UnifiedLoginPage = () => {
 
       // Get user role and redirect - Requirements: 8.1, 8.2, 8.3, 8.4, 8.5
       const userRole = getUserRole(data.user);
-      navigate(getRedirectPath(userRole));
+      const from = (location.state as any)?.from?.pathname;
+      navigate(from || getRedirectPath(userRole), { replace: true });
 
     } catch (err) {
       // Generic error messages to prevent email enumeration - Requirements: 2.3, 3.3, 4.4

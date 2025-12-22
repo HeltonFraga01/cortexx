@@ -79,174 +79,85 @@ export interface WebhookConfig {
   subscribe: string[];
 }
 
+import { backendApi } from './api-client';
+
 export class WuzAPIService {
   private baseUrl: string;
-  private csrfToken: string | null = null;
 
   constructor() {
-    // Sempre usar URL relativa - o backend cuida do proxy
-    this.baseUrl = '/api';
-    // Note: Admin token is deprecated - all operations use HTTP-only session cookies
-    // VITE_ADMIN_TOKEN is no longer required
-  }
-
-  /**
-   * Obtém o token CSRF do servidor
-   */
-  private async getCsrfToken(): Promise<string> {
-    if (this.csrfToken) {
-      return this.csrfToken;
-    }
-
-    try {
-      const response = await fetch('/api/auth/csrf-token', {
-        credentials: 'include'
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        this.csrfToken = data.csrfToken;
-        return this.csrfToken;
-      }
-    } catch (error) {
-      console.error('Failed to get CSRF token:', error);
-    }
-
-    return '';
-  }
-
-  /**
-   * Cria headers com CSRF token para requisições que modificam dados
-   */
-  private async getHeaders(method: string = 'GET'): Promise<HeadersInit> {
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json'
-    };
-
-    // Adicionar CSRF token para métodos que modificam dados
-    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method.toUpperCase())) {
-      const token = await this.getCsrfToken();
-      if (token) {
-        headers['CSRF-Token'] = token;
-      }
-    }
-
-    return headers;
+    // Sempre usar URL relativa - o backend cuida do proxy e do prefixo /api
+    this.baseUrl = '';
   }
 
   // Métodos de Admin
   async getHealth(): Promise<HealthStatus> {
-    // Para health check, usar a API local diretamente (não a WuzAPI externa)
-    const response = await fetch('/health');
-    if (!response.ok) {
-      throw new Error('Failed to fetch health status');
+    // Para health check, usar a API local diretamente
+    const response = await backendApi.get<HealthStatus>('/health');
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Failed to fetch health status');
     }
-    return response.json();
+    return response.data;
   }
 
   async getUsers(): Promise<WuzAPIUser[]> {
-    const response = await fetch(`${this.baseUrl}/admin/users`, {
-      credentials: 'include', // Usa sessão HTTP-only
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache'
-      },
-      cache: 'no-store'
-    });
+    const response = await backendApi.get<any>(`${this.baseUrl}/admin/users`);
     
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || 'Failed to fetch users');
+    if (!response.success) {
+      throw new Error(response.error || 'Failed to fetch users');
     }
     
-    const data = await response.json();
     // A resposta pode ter 'data' ou 'filtered_data'
-    return data.data || data.filtered_data || [];
+    return response.data?.data || response.data?.filtered_data || [];
   }
 
   async getUser(id: string): Promise<WuzAPIUser> {
-    const response = await fetch(`${this.baseUrl}/admin/users/${id}`, {
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
+    const response = await backendApi.get<any>(`${this.baseUrl}/admin/users/${id}`);
     
-    if (!response.ok) {
-      throw new Error('Failed to fetch user');
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Failed to fetch user');
     }
     
-    const data = await response.json();
-    return data.data;
+    return response.data.data;
   }
 
   async createUser(userData: CreateUserRequest): Promise<WuzAPIUser> {
-    const headers = await this.getHeaders('POST');
+    const response = await backendApi.post<any>(`${this.baseUrl}/admin/users`, userData);
     
-    const response = await fetch(`${this.baseUrl}/admin/users`, {
-      method: 'POST',
-      credentials: 'include',
-      headers,
-      body: JSON.stringify(userData)
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || 'Failed to create user');
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Failed to create user');
     }
     
-    const data = await response.json();
-    return data.data;
+    return response.data.data;
   }
 
   async deleteUser(id: string): Promise<void> {
-    const headers = await this.getHeaders('DELETE');
+    const response = await backendApi.delete<void>(`${this.baseUrl}/admin/users/${id}`);
     
-    const response = await fetch(`${this.baseUrl}/admin/users/${id}`, {
-      method: 'DELETE',
-      credentials: 'include',
-      headers
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || 'Failed to delete user');
+    if (!response.success) {
+      throw new Error(response.error || 'Failed to delete user');
     }
   }
 
   async deleteUserFull(id: string): Promise<void> {
-    const headers = await this.getHeaders('DELETE');
+    const response = await backendApi.delete<void>(`${this.baseUrl}/admin/users/${id}/full`);
     
-    const response = await fetch(`${this.baseUrl}/admin/users/${id}/full`, {
-      method: 'DELETE',
-      credentials: 'include',
-      headers
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || 'Failed to delete user completely');
+    if (!response.success) {
+      throw new Error(response.error || 'Failed to delete user completely');
     }
   }
 
-
-
   // Métodos de Usuário
   async getSessionStatus(userToken: string): Promise<SessionStatus> {
-    const response = await fetch(`${this.baseUrl}/session/status`, {
-      headers: {
-        'token': userToken,
-        'Content-Type': 'application/json'
-      }
+    // Configurar header temporário
+    const response = await backendApi.get<any>(`${this.baseUrl}/session/status`, {
+      headers: { 'token': userToken }
     });
     
-    if (!response.ok) {
-      throw new Error('Failed to fetch session status');
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Failed to fetch session status');
     }
     
-    const data = await response.json();
-    const apiData = data.data;
+    const apiData = response.data.data;
     
     // Converter de maiúsculas para minúsculas para manter consistência
     return {
@@ -256,240 +167,120 @@ export class WuzAPIService {
   }
 
   async connectSession(userToken: string, options?: { Subscribe?: string[]; Immediate?: boolean }): Promise<any> {
-    const headers = await this.getHeaders('POST');
-    
-    const response = await fetch(`${this.baseUrl}/session/connect`, {
-      method: 'POST',
-      headers: {
-        ...headers,
-        'token': userToken
-      },
-      body: JSON.stringify(options || {})
+    const response = await backendApi.post<any>(`${this.baseUrl}/session/connect`, options || {}, {
+      headers: { 'token': userToken }
     });
     
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || 'Failed to connect session');
+    if (!response.success) {
+      throw new Error(response.error || 'Failed to connect session');
     }
     
-    return response.json();
+    return response.data;
   }
 
   async disconnectSession(userToken: string): Promise<any> {
-    const headers = await this.getHeaders('POST');
-    
-    const response = await fetch(`${this.baseUrl}/session/disconnect`, {
-      method: 'POST',
-      headers: {
-        ...headers,
-        'token': userToken
-      }
+    const response = await backendApi.post<any>(`${this.baseUrl}/session/disconnect`, {}, {
+      headers: { 'token': userToken }
     });
     
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || 'Failed to disconnect session');
+    if (!response.success) {
+      throw new Error(response.error || 'Failed to disconnect session');
     }
     
-    return response.json();
+    return response.data;
   }
 
   async logoutSession(userToken: string): Promise<any> {
-    const headers = await this.getHeaders('POST');
-    
-    const response = await fetch(`${this.baseUrl}/session/logout`, {
-      method: 'POST',
-      headers: {
-        ...headers,
-        'token': userToken
-      }
+    const response = await backendApi.post<any>(`${this.baseUrl}/session/logout`, {}, {
+      headers: { 'token': userToken }
     });
     
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || 'Failed to logout session');
+    if (!response.success) {
+      throw new Error(response.error || 'Failed to logout session');
     }
     
-    return response.json();
+    return response.data;
   }
 
   async getQRCode(userToken: string): Promise<{ QRCode: string }> {
-    const response = await fetch(`${this.baseUrl}/session/qr`, {
-      headers: {
-        'token': userToken,
-        'Content-Type': 'application/json'
-      }
+    const response = await backendApi.get<any>(`${this.baseUrl}/session/qr`, {
+      headers: { 'token': userToken }
     });
     
-    if (!response.ok) {
-      throw new Error('Failed to fetch QR code');
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Failed to fetch QR code');
     }
     
-    const data = await response.json();
-    return data.data;
+    return response.data.data;
   }
 
   async getWebhook(userToken: string): Promise<WebhookConfig> {
-    const response = await fetch(`${this.baseUrl}/webhook`, {
-      headers: {
-        'token': userToken,
-        'Content-Type': 'application/json'
-      }
+    const response = await backendApi.get<any>(`${this.baseUrl}/webhook`, {
+      headers: { 'token': userToken }
     });
     
-    if (!response.ok) {
-      throw new Error('Failed to fetch webhook');
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Failed to fetch webhook');
     }
     
-    const data = await response.json();
-    return data.data;
+    return response.data.data;
   }
 
   async setWebhook(userToken: string, webhook: string, events: string[]): Promise<any> {
-    const headers = await this.getHeaders('POST');
+    const response = await backendApi.post<any>(`${this.baseUrl}/webhook`, 
+      { webhook, events, subscribe: events, active: true },
+      { headers: { 'token': userToken } }
+    );
     
-    const response = await fetch(`${this.baseUrl}/webhook`, {
-      method: 'POST',
-      headers: {
-        ...headers,
-        'token': userToken
-      },
-      body: JSON.stringify({ webhook, events, subscribe: events, active: true })
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || 'Failed to set webhook');
+    if (!response.success) {
+      throw new Error(response.error || 'Failed to set webhook');
     }
     
-    return response.json();
+    return response.data;
   }
 
   async updateWebhook(userToken: string, webhookData: { webhook: string; events: string[]; Active: boolean }): Promise<any> {
-    try {
-      const headers = await this.getHeaders('POST');
-      
-      const response = await fetch(`${this.baseUrl}/webhook`, {
-        method: 'POST',
-        headers: {
-          ...headers,
-          'token': userToken
-        },
-        body: JSON.stringify(webhookData),
-      });
-
-      if (!response.ok) {
-        let errorMessage = `HTTP ${response.status}`;
-        
-        try {
-          const errorData = await response.text();
-          
-          // Tentar parsear como JSON para obter mensagem mais específica
-          try {
-            const errorJson = JSON.parse(errorData);
-            if (errorJson.message) {
-              errorMessage = errorJson.message;
-            } else if (errorJson.error) {
-              errorMessage = errorJson.error;
-            } else {
-              errorMessage = errorData;
-            }
-          } catch {
-            // Se não for JSON, usar o texto diretamente
-            errorMessage = errorData || errorMessage;
-          }
-          
-          // Personalizar mensagens baseadas no status HTTP
-          switch (response.status) {
-            case 400:
-              throw new Error(`Dados inválidos: ${errorMessage}`);
-            case 401:
-              throw new Error(`Token inválido ou expirado: ${errorMessage}`);
-            case 403:
-              throw new Error(`Acesso negado: ${errorMessage}`);
-            case 404:
-              throw new Error(`Usuário não encontrado: ${errorMessage}`);
-            case 422:
-              throw new Error(`Dados não processáveis: ${errorMessage}`);
-            case 500:
-              throw new Error(`Erro interno do servidor: ${errorMessage}`);
-            case 502:
-              throw new Error(`Servidor indisponível: ${errorMessage}`);
-            case 503:
-              throw new Error(`Serviço temporariamente indisponível: ${errorMessage}`);
-            default:
-              throw new Error(`Erro HTTP ${response.status}: ${errorMessage}`);
-          }
-        } catch (parseError) {
-          // Se houver erro ao ler a resposta, usar mensagem genérica
-          throw new Error(`Erro HTTP ${response.status}: Falha na comunicação com o servidor`);
-        }
-      }
-
-      const result = await response.json();
-      
-      // Verificar se a resposta indica sucesso
-      if (result.success === false) {
-        throw new Error(result.message || 'Operação falhou no servidor');
-      }
-      
-      return result;
-      
-    } catch (error) {
-      // Se for um erro de rede ou fetch
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        throw new Error('Erro de conexão: Não foi possível conectar ao servidor');
-      }
-      
-      // Re-lançar outros erros
-      throw error;
+    const response = await backendApi.post<any>(`${this.baseUrl}/webhook`, 
+      webhookData,
+      { headers: { 'token': userToken } }
+    );
+    
+    if (!response.success) {
+      throw new Error(response.error || 'Failed to update webhook');
     }
+    
+    return response.data;
   }
 
   async sendTextMessage(userToken: string, phone: string, body: string, options?: any): Promise<any> {
-    const headers = await this.getHeaders('POST');
-    
-    const response = await fetch(`${this.baseUrl}/chat/send/text`, {
-      method: 'POST',
-      headers: {
-        ...headers,
-        'token': userToken
-      },
-      body: JSON.stringify({
+    const response = await backendApi.post<any>(`${this.baseUrl}/chat/send/text`, 
+      {
         Phone: phone,
         Body: body,
         ...options
-      })
-    });
+      },
+      { headers: { 'token': userToken } }
+    );
     
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || 'Failed to send message');
+    if (!response.success) {
+      throw new Error(response.error || 'Failed to send message');
     }
     
-    return response.json();
+    return response.data;
   }
 
   async getAvatar(userToken: string, phone: string, preview: boolean = true): Promise<{ URL: string; ID: string; Type: string; DirectPath?: string }> {
     // Usar rota do backend que faz proxy para WUZAPI
-    const headers = await this.getHeaders('POST');
+    const response = await backendApi.post<any>(`${this.baseUrl}/user/avatar`, 
+      { Phone: phone, Preview: preview },
+      { headers: { 'token': userToken } }
+    );
     
-    const response = await fetch(`${this.baseUrl}/user/avatar`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        ...headers,
-        'token': userToken
-      },
-      body: JSON.stringify({ Phone: phone, Preview: preview })
-    });
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch avatar');
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Failed to fetch avatar');
     }
     
-    const data = await response.json();
-    const avatarData = data.data || data;
+    const avatarData = response.data.data || response.data;
     
     // Normalizar campos - API pode retornar em minúsculas ou maiúsculas
     return {
@@ -500,3 +291,5 @@ export class WuzAPIService {
     };
   }
 }
+
+export const wuzapi = new WuzAPIService();
