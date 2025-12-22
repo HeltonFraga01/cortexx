@@ -95,9 +95,9 @@ export class WuzAPIClient {
       if (!this.config.userToken && !userPhone) {
         throw new Error('Token de usuário ou telefone é necessário para esta operação');
       }
-      headers['token'] = this.config.userToken || userPhone || '';
+      headers.token = this.config.userToken || userPhone || '';
     } else {
-      headers['Authorization'] = this.config.adminToken;
+      headers.Authorization = this.config.adminToken;
     }
 
     try {

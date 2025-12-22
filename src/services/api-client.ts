@@ -92,7 +92,7 @@ export class BackendApiClient {
         try {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.access_token) {
-            config.headers['Authorization'] = `Bearer ${session.access_token}`;
+            config.headers.Authorization = `Bearer ${session.access_token}`;
           }
         } catch (error) {
           if (IS_DEVELOPMENT) {
@@ -120,7 +120,7 @@ export class BackendApiClient {
             data: config.data,
             params: config.params,
             hasCsrfToken: !!BackendApiClient.csrfToken,
-            hasAuthToken: !!config.headers['Authorization'],
+            hasAuthToken: !!config.headers.Authorization,
           });
         }
         return config;
@@ -369,7 +369,7 @@ export class BackendApiClient {
   // Método para configurar header de autenticação temporário
   // Usado para requisições específicas que precisam de token no header
   setAuthHeader(token: string) {
-    this.client.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    this.client.defaults.headers.common.Authorization = `Bearer ${token}`;
     if (IS_DEVELOPMENT) {
       console.log('🔑 Auth header set', { tokenPreview: token.substring(0, 8) + '...' });
     }
@@ -377,7 +377,7 @@ export class BackendApiClient {
 
   // Método para remover headers de autenticação
   removeAuthHeader() {
-    delete this.client.defaults.headers.common['Authorization'];
+    delete this.client.defaults.headers.common.Authorization;
     if (IS_DEVELOPMENT) {
       console.log('🔓 Auth header removed');
     }

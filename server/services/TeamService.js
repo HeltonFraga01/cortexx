@@ -41,20 +41,17 @@ class TeamService {
       const id = this.generateId();
       const now = new Date().toISOString();
 
-      const sql = `
-        INSERT INTO teams (id, account_id, name, description, allow_auto_assign, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `;
-
-      await SupabaseService.executeSql(sql, [
+      const { error } = await SupabaseService.insert('teams', {
         id,
-        accountId,
-        data.name,
-        data.description || null,
-        data.allowAutoAssign !== false ? 1 : 0,
-        now,
-        now
-      ]);
+        account_id: accountId,
+        name: data.name,
+        description: data.description || null,
+        allow_auto_assign: data.allowAutoAssign !== false,
+        created_at: now,
+        updated_at: now
+      });
+
+      if (error) throw error;
 
       logger.info('Team created', { teamId: id, accountId, name: data.name });
 
@@ -82,14 +79,13 @@ class TeamService {
    */
   async getTeamById(teamId) {
     try {
-      const sql = 'SELECT * FROM teams WHERE id = ?';
-      const result = await SupabaseService.executeSql(sql, [teamId]);
+      const { data, error } = await SupabaseService.getById('teams', teamId);
 
-      if (result.rows.length === 0) {
+      if (error || !data) {
         return null;
       }
 
-      return this.formatTeam(result.rows[0]);
+      return this.formatTeam(data);
     } catch (error) {
       logger.error('Failed to get team', { error: error.message, teamId });
       throw error;
@@ -103,9 +99,13 @@ class TeamService {
    */
   async listTeams(accountId) {
     try {
-      const sql = 'SELECT * FROM teams WHERE account_id = ? ORDER BY name';
-      const result = await SupabaseService.executeSql(sql, [accountId]);
-      return result.rows.map(row => this.formatTeam(row));
+      const { data, error } = await SupabaseService.getMany('teams', { account_id: accountId }, {
+        orderBy: 'name',
+        ascending: true
+      });
+
+      if (error) throw error;
+      return (data || []).map(row => this.formatTeam(row));
     } catch (error) {
       logger.error('Failed to list teams', { error: error.message, accountId });
       throw error;
@@ -119,19 +119,25 @@ class TeamService {
    */
   async listTeamsWithStats(accountId) {
     try {
-      const sql = `
-        SELECT t.*, COUNT(tm.agent_id) as member_count
-        FROM teams t
-        LEFT JOIN team_members tm ON t.id = tm.team_id
-        WHERE t.account_id = ?
-        GROUP BY t.id
-        ORDER BY t.name
-      `;
-      const result = await SupabaseService.executeSql(sql, [accountId]);
-      return result.rows.map(row => ({
-        ...this.formatTeam(row),
-        memberCount: row.member_count || 0
+      // Get teams first
+      const { data: teams, error: teamsError } = await SupabaseService.getMany('teams', { account_id: accountId }, {
+        orderBy: 'name',
+        ascending: true
+      });
+
+      if (teamsError) throw teamsError;
+      if (!teams || teams.length === 0) return [];
+
+      // Get member counts for each team
+      const teamsWithStats = await Promise.all(teams.map(async (team) => {
+        const { count } = await SupabaseService.count('team_members', { team_id: team.id });
+        return {
+          ...this.formatTeam(team),
+          memberCount: count || 0
+        };
       }));
+
+      return teamsWithStats;
     } catch (error) {
       logger.error('Failed to list teams with stats', { error: error.message, accountId });
       throw error;
@@ -146,34 +152,27 @@ class TeamService {
    */
   async updateTeam(teamId, data) {
     try {
-      const updates = [];
-      const params = [];
+      const updateData = { updated_at: new Date().toISOString() };
 
       if (data.name !== undefined) {
-        updates.push('name = ?');
-        params.push(data.name);
+        updateData.name = data.name;
       }
 
       if (data.description !== undefined) {
-        updates.push('description = ?');
-        params.push(data.description);
+        updateData.description = data.description;
       }
 
       if (data.allowAutoAssign !== undefined) {
-        updates.push('allow_auto_assign = ?');
-        params.push(data.allowAutoAssign ? 1 : 0);
+        updateData.allow_auto_assign = data.allowAutoAssign;
       }
 
-      if (updates.length === 0) {
+      if (Object.keys(updateData).length === 1) {
+        // Only updated_at, no real changes
         return this.getTeamById(teamId);
       }
 
-      updates.push('updated_at = ?');
-      params.push(new Date().toISOString());
-      params.push(teamId);
-
-      const sql = `UPDATE teams SET ${updates.join(', ')} WHERE id = ?`;
-      await SupabaseService.executeSql(sql, params);
+      const { error } = await SupabaseService.update('teams', teamId, updateData);
+      if (error) throw error;
 
       logger.info('Team updated', { teamId });
 
@@ -193,7 +192,9 @@ class TeamService {
     try {
       const team = await this.getTeamById(teamId);
       // Members will be deleted via CASCADE
-      await SupabaseService.executeSql('DELETE FROM teams WHERE id = ?', [teamId]);
+      const { error } = await SupabaseService.delete('teams', teamId);
+      if (error) throw error;
+      
       logger.info('Team deleted', { teamId });
 
       // Audit log
@@ -226,12 +227,20 @@ class TeamService {
       const id = this.generateId();
       const now = new Date().toISOString();
 
-      const sql = `
-        INSERT INTO team_members (id, team_id, agent_id, created_at)
-        VALUES (?, ?, ?, ?)
-      `;
+      const { error } = await SupabaseService.insert('team_members', {
+        id,
+        team_id: teamId,
+        agent_id: agentId,
+        created_at: now
+      });
 
-      await SupabaseService.executeSql(sql, [id, teamId, agentId, now]);
+      if (error) {
+        // Handle duplicate membership
+        if (error.code === 'DUPLICATE_KEY' || error.message?.includes('duplicate')) {
+          throw new Error('AGENT_ALREADY_IN_TEAM');
+        }
+        throw error;
+      }
 
       logger.info('Team member added', { teamId, agentId });
 
@@ -250,8 +259,8 @@ class TeamService {
       return { id, teamId, agentId, createdAt: now };
     } catch (error) {
       // Handle duplicate membership
-      if (error.message.includes('UNIQUE constraint')) {
-        throw new Error('AGENT_ALREADY_IN_TEAM');
+      if (error.message === 'AGENT_ALREADY_IN_TEAM') {
+        throw error;
       }
       logger.error('Failed to add team member', { error: error.message, teamId, agentId });
       throw error;
@@ -267,8 +276,12 @@ class TeamService {
   async removeMember(teamId, agentId) {
     try {
       const team = await this.getTeamById(teamId);
-      const sql = 'DELETE FROM team_members WHERE team_id = ? AND agent_id = ?';
-      await SupabaseService.executeSql(sql, [teamId, agentId]);
+      
+      const { error } = await SupabaseService.queryAsAdmin('team_members', (query) =>
+        query.delete().eq('team_id', teamId).eq('agent_id', agentId)
+      );
+      
+      if (error) throw error;
       logger.info('Team member removed', { teamId, agentId });
 
       // Audit log
@@ -294,23 +307,34 @@ class TeamService {
    */
   async getTeamMembers(teamId) {
     try {
-      const sql = `
-        SELECT a.id, a.email, a.name, a.avatar_url, a.role, a.availability, a.status, tm.created_at as joined_at
-        FROM team_members tm
-        JOIN agents a ON tm.agent_id = a.id
-        WHERE tm.team_id = ?
-        ORDER BY a.name
-      `;
-      const result = await SupabaseService.executeSql(sql, [teamId]);
-      return result.rows.map(row => ({
-        id: row.id,
-        email: row.email,
-        name: row.name,
-        avatarUrl: row.avatar_url,
-        role: row.role,
-        availability: row.availability,
-        status: row.status,
-        joinedAt: row.joined_at
+      // Get team members first
+      const { data: members, error: membersError } = await SupabaseService.getMany('team_members', { team_id: teamId });
+      
+      if (membersError) throw membersError;
+      if (!members || members.length === 0) return [];
+
+      // Get agent details for each member
+      const agentIds = members.map(m => m.agent_id);
+      const { data: agents, error: agentsError } = await SupabaseService.queryAsAdmin('agents', (query) =>
+        query.select('id, email, name, avatar_url, role, availability, status')
+          .in('id', agentIds)
+          .order('name', { ascending: true })
+      );
+
+      if (agentsError) throw agentsError;
+
+      // Create a map of agent_id to joined_at
+      const memberMap = new Map(members.map(m => [m.agent_id, m.created_at]));
+
+      return (agents || []).map(agent => ({
+        id: agent.id,
+        email: agent.email,
+        name: agent.name,
+        avatarUrl: agent.avatar_url,
+        role: agent.role,
+        availability: agent.availability,
+        status: agent.status,
+        joinedAt: memberMap.get(agent.id)
       }));
     } catch (error) {
       logger.error('Failed to get team members', { error: error.message, teamId });
@@ -326,9 +350,13 @@ class TeamService {
    */
   async isMember(teamId, agentId) {
     try {
-      const sql = 'SELECT 1 FROM team_members WHERE team_id = ? AND agent_id = ?';
-      const result = await SupabaseService.executeSql(sql, [teamId, agentId]);
-      return result.rows.length > 0;
+      const { data, error } = await SupabaseService.getMany('team_members', { 
+        team_id: teamId, 
+        agent_id: agentId 
+      }, { limit: 1 });
+      
+      if (error) throw error;
+      return data && data.length > 0;
     } catch (error) {
       logger.error('Failed to check team membership', { error: error.message, teamId, agentId });
       throw error;
@@ -342,15 +370,20 @@ class TeamService {
    */
   async getAgentTeams(agentId) {
     try {
-      const sql = `
-        SELECT t.*
-        FROM teams t
-        JOIN team_members tm ON t.id = tm.team_id
-        WHERE tm.agent_id = ?
-        ORDER BY t.name
-      `;
-      const result = await SupabaseService.executeSql(sql, [agentId]);
-      return result.rows.map(row => this.formatTeam(row));
+      // Get team memberships for this agent
+      const { data: memberships, error: memberError } = await SupabaseService.getMany('team_members', { agent_id: agentId });
+      
+      if (memberError) throw memberError;
+      if (!memberships || memberships.length === 0) return [];
+
+      // Get team details
+      const teamIds = memberships.map(m => m.team_id);
+      const { data: teams, error: teamsError } = await SupabaseService.queryAsAdmin('teams', (query) =>
+        query.select('*').in('id', teamIds).order('name', { ascending: true })
+      );
+
+      if (teamsError) throw teamsError;
+      return (teams || []).map(row => this.formatTeam(row));
     } catch (error) {
       logger.error('Failed to get agent teams', { error: error.message, agentId });
       throw error;
@@ -366,21 +399,26 @@ class TeamService {
    */
   async getTeamStats(teamId) {
     try {
-      const memberResult = await SupabaseService.executeSql(
-        'SELECT COUNT(*) as count FROM team_members WHERE team_id = ?',
-        [teamId]
-      );
+      // Count total members
+      const { count: totalMembers } = await SupabaseService.count('team_members', { team_id: teamId });
 
-      const onlineResult = await SupabaseService.executeSql(`
-        SELECT COUNT(*) as count 
-        FROM team_members tm
-        JOIN agents a ON tm.agent_id = a.id
-        WHERE tm.team_id = ? AND a.availability = 'online'
-      `, [teamId]);
+      // Get members and count online ones
+      const { data: members } = await SupabaseService.getMany('team_members', { team_id: teamId });
+      
+      let onlineMembers = 0;
+      if (members && members.length > 0) {
+        const agentIds = members.map(m => m.agent_id);
+        const { count } = await SupabaseService.queryAsAdmin('agents', (query) =>
+          query.select('*', { count: 'exact', head: true })
+            .in('id', agentIds)
+            .eq('availability', 'online')
+        );
+        onlineMembers = count || 0;
+      }
 
       return {
-        totalMembers: memberResult.rows[0]?.count || 0,
-        onlineMembers: onlineResult.rows[0]?.count || 0
+        totalMembers: totalMembers || 0,
+        onlineMembers
       };
     } catch (error) {
       logger.error('Failed to get team stats', { error: error.message, teamId });
@@ -401,7 +439,7 @@ class TeamService {
       accountId: row.account_id,
       name: row.name,
       description: row.description,
-      allowAutoAssign: row.allow_auto_assign === 1,
+      allowAutoAssign: row.allow_auto_assign === true || row.allow_auto_assign === 1,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -416,11 +454,9 @@ class TeamService {
    */
   async countTeams(accountId) {
     try {
-      const result = await SupabaseService.executeSql(
-        'SELECT COUNT(*) as count FROM teams WHERE account_id = ?',
-        [accountId]
-      );
-      return result.rows[0]?.count || 0;
+      const { count, error } = await SupabaseService.count('teams', { account_id: accountId });
+      if (error) throw error;
+      return count || 0;
     } catch (error) {
       logger.error('Failed to count teams', { error: error.message, accountId });
       return 0;

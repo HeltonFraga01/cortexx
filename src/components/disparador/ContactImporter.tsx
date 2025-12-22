@@ -239,7 +239,7 @@ export function ContactImporter({ instance, userToken, onContactsImported }: Con
 
     // Filtro de nome
     if (hasNameFilter !== null) {
-      const hasName = Boolean(contact.name && contact.name.trim());
+      const hasName = Boolean(contact.name?.trim());
       if (hasNameFilter && !hasName) return false;
       if (!hasNameFilter && hasName) return false;
     }

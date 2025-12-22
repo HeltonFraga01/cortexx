@@ -59,7 +59,7 @@ export function hexToHSL(hex: string): string {
  */
 export function calculateForeground(hsl: string): string {
   // Extract luminosity from HSL string
-  const match = hsl.match(/(\d+)\s+(\d+)%\s+(\d+)%/);
+  const match = /(\d+)\s+(\d+)%\s+(\d+)%/.exec(hsl);
 
   if (!match) {
     throw new Error(`Invalid HSL format: ${hsl}`);

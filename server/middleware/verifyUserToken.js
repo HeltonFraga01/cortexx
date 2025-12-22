@@ -4,6 +4,30 @@ const { hashToken, ensureSessionUserId } = require('../utils/userIdResolver');
 const { validateSupabaseToken } = require('./supabaseAuth');
 const { getWuzapiTokenFromAccount } = require('./auth');
 
+/**
+ * @deprecated Este middleware está DEPRECATED e será removido em versões futuras.
+ * 
+ * Use os seguintes middlewares em vez deste:
+ * - `requireAuth` - Para autenticação básica (JWT ou sessão)
+ * - `requireUser` - Para endpoints de usuário (valida sessão e token)
+ * - `requireAdmin` - Para endpoints de admin (valida role de admin)
+ * 
+ * Exemplo de migração:
+ * ```javascript
+ * // Antes (deprecated):
+ * const verifyUserToken = require('../middleware/verifyUserToken');
+ * router.get('/endpoint', verifyUserToken, handler);
+ * 
+ * // Depois (recomendado):
+ * const { requireAuth, requireUser } = require('../middleware/auth');
+ * router.get('/endpoint', requireAuth, handler);
+ * // ou para endpoints que precisam de token WUZAPI:
+ * router.get('/endpoint', requireUser, handler);
+ * ```
+ * 
+ * @see server/middleware/auth.js para os novos middlewares
+ */
+
 // Cache para mapear token -> userId (evita chamadas repetidas ao admin endpoint)
 const userIdCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutos

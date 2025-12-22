@@ -33,7 +33,7 @@ export function SaveButtonBlockComponent({
       <Button 
         onClick={isPreview ? undefined : onSave}
         disabled={saving || !hasChanges || isPreview}
-        variant={variant as any}
+        variant={variant}
         className={fullWidth ? 'w-full' : ''}
       >
         {saving ? (

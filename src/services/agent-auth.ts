@@ -336,13 +336,13 @@ export interface AgentDatabaseConnectionDetails {
   status: string
   baseUrl?: string
   tableId?: string
-  fieldMappings: Array<{
+  fieldMappings: {
     columnName: string
     label: string
     visible: boolean
     editable: boolean
     showInCard?: boolean
-  }>
+  }[]
   viewConfiguration?: {
     calendar?: { enabled: boolean; dateField?: string }
     kanban?: { enabled: boolean; statusField?: string }

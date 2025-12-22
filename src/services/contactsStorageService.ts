@@ -362,7 +362,7 @@ class ContactsStorageService {
   /**
    * Limpa dados antigos (mais de X dias)
    */
-  cleanOldData(daysOld: number = 7): void {
+  cleanOldData(daysOld = 7): void {
     try {
       const now = new Date();
       const cutoffDate = new Date(now.getTime() - daysOld * 24 * 60 * 60 * 1000);
@@ -649,7 +649,7 @@ class ContactsStorageService {
    * 
    * @returns Array com informações de cada instância
    */
-  listInstances(): Array<{ instance: string; contactCount: number; timestamp: string }> {
+  listInstances(): { instance: string; contactCount: number; timestamp: string }[] {
     try {
       const allData = this.loadAllInstancesData();
 

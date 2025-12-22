@@ -42,7 +42,7 @@ export async function getApiSettings(): Promise<ApiSettings> {
     throw new Error(response.error || 'Falha ao carregar configurações');
   }
 
-  return response.data?.data as ApiSettings;
+  return response.data?.data!;
 }
 
 /**
@@ -55,7 +55,7 @@ export async function updateApiSettings(settings: ApiSettingsUpdate): Promise<Ap
     throw new Error(response.error || 'Falha ao salvar configurações');
   }
 
-  return response.data?.data as ApiSettings;
+  return response.data?.data!;
 }
 
 /**
@@ -68,7 +68,7 @@ export async function testApiConnection(): Promise<ConnectionTestResult> {
     throw new Error(response.error || 'Falha ao testar conexão');
   }
 
-  return response.data?.data as ConnectionTestResult;
+  return response.data?.data!;
 }
 
 /**
@@ -81,5 +81,5 @@ export async function deleteApiSetting(key: 'baseUrl' | 'adminToken' | 'timeout'
     throw new Error(response.error || 'Falha ao remover configuração');
   }
 
-  return response.data?.data as ApiSettings;
+  return response.data?.data!;
 }

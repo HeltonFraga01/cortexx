@@ -50,8 +50,8 @@ export const templateService = {
    * @param userToken - User authentication token
    */
   async list(
-    page: number = 1,
-    limit: number = 10,
+    page = 1,
+    limit = 10,
     userToken?: string
   ): Promise<PaginatedResult<CampaignTemplate>> {
     try {

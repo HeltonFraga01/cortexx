@@ -50,15 +50,15 @@ interface BlockStats {
 interface VariationStats {
   campaignId: string;
   totalMessages: number;
-  blocks: Array<{
+  blocks: {
     blockIndex: number;
     total: number;
-    variations: Array<{
+    variations: {
       text: string;
       count: number;
       percentage: string;
-    }>;
-  }>;
+    }[];
+  }[];
   deliveryStats?: {
     sent: number;
     delivered: number;

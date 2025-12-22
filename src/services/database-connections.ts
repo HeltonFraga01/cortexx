@@ -385,7 +385,7 @@ export class DatabaseConnectionsService {
   /**
    * Buscar workspaces do NocoDB
    */
-  async getNocoDBWorkspaces(baseURL: string, token: string): Promise<Array<{ id: string, title: string }>> {
+  async getNocoDBWorkspaces(baseURL: string, token: string): Promise<{ id: string, title: string }[]> {
     try {
       const api = axios.create({
         baseURL,
@@ -406,7 +406,7 @@ export class DatabaseConnectionsService {
   /**
    * Buscar projetos/bases de um workspace
    */
-  async getNocoDBProjects(baseURL: string, token: string, workspaceId?: string): Promise<Array<{ id: string, title: string }>> {
+  async getNocoDBProjects(baseURL: string, token: string, workspaceId?: string): Promise<{ id: string, title: string }[]> {
     try {
       const api = axios.create({
         baseURL,
@@ -432,7 +432,7 @@ export class DatabaseConnectionsService {
   /**
    * Buscar tabelas de um projeto
    */
-  async getNocoDBTables(baseURL: string, token: string, projectId: string): Promise<Array<{ id: string, title: string, table_name: string }>> {
+  async getNocoDBTables(baseURL: string, token: string, projectId: string): Promise<{ id: string, title: string, table_name: string }[]> {
     try {
       const api = axios.create({
         baseURL,

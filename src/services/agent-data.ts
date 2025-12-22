@@ -39,7 +39,7 @@ async function getRequestOptionsWithCsrf(): Promise<RequestInit> {
   const csrf = await getCsrfToken()
   
   const headers: Record<string, string> = {}
-  if (authToken) headers['Authorization'] = `Bearer ${authToken}`
+  if (authToken) headers.Authorization = `Bearer ${authToken}`
   if (csrf) headers['CSRF-Token'] = csrf
   
   return {

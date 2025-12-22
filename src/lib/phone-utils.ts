@@ -261,7 +261,7 @@ export interface PhoneValidationResult {
 export const validatePhoneNumber = async (
   phone: string,
   instance: string,
-  checkWhatsApp: boolean = true
+  checkWhatsApp = true
 ): Promise<PhoneValidationResult> => {
   // Primeiro valida o formato
   const formatValidation = validatePhoneFormat(phone);

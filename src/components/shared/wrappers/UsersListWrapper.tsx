@@ -56,7 +56,7 @@ const UsersListWrapper = () => {
     <UsersList 
       users={filteredUsers()} 
       isLoading={isLoading} 
-      error={error as Error | null} 
+      error={error} 
       refetch={refetch}
     />
   );

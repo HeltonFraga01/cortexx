@@ -1,4 +1,5 @@
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class AnalyticsService {
     constructor(db) {
@@ -10,28 +11,29 @@ class AnalyticsService {
      */
     async getOverviewMetrics(userToken) {
         try {
-            const sql = `
-        SELECT 
-          COUNT(*) as total_campaigns,
-          SUM(total_contacts) as total_messages,
-          SUM(sent_count) as total_sent,
-          SUM(failed_count) as total_failed,
-          SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as active_campaigns
-        FROM campaigns
-        WHERE user_token = ?
-      `;
+            // Query bulk_campaigns using Supabase
+            const { data: campaigns, error } = await SupabaseService.adminClient
+                .from('bulk_campaigns')
+                .select('total_contacts, sent_count, failed_count, status')
+                .eq('user_token', userToken);
 
-            const { rows } = await this.db.query(sql, [userToken]);
-            const data = rows[0];
+            if (error) throw error;
+
+            // Calculate metrics from results
+            const totalCampaigns = campaigns?.length || 0;
+            const totalMessages = campaigns?.reduce((sum, c) => sum + (c.total_contacts || 0), 0) || 0;
+            const totalSent = campaigns?.reduce((sum, c) => sum + (c.sent_count || 0), 0) || 0;
+            const totalFailed = campaigns?.reduce((sum, c) => sum + (c.failed_count || 0), 0) || 0;
+            const activeCampaigns = campaigns?.filter(c => c.status === 'running').length || 0;
 
             return {
-                totalCampaigns: data.total_campaigns || 0,
-                totalMessages: data.total_messages || 0,
-                totalSent: data.total_sent || 0,
-                totalFailed: data.total_failed || 0,
-                activeCampaigns: data.active_campaigns || 0,
-                successRate: data.total_messages > 0
-                    ? ((data.total_sent / data.total_messages) * 100).toFixed(1)
+                totalCampaigns,
+                totalMessages,
+                totalSent,
+                totalFailed,
+                activeCampaigns,
+                successRate: totalMessages > 0
+                    ? ((totalSent / totalMessages) * 100).toFixed(1)
                     : 0
             };
         } catch (error) {
@@ -45,33 +47,47 @@ class AnalyticsService {
      */
     async getHourlyDeliveryStats(userToken) {
         try {
-            // Agrupar envios por hora do dia (0-23)
-            // PostgreSQL: EXTRACT(HOUR FROM sent_at)
-            const sql = `
-        SELECT 
-          strftime('%H', sent_at) as hour,
-          COUNT(*) as count
-        FROM campaign_contacts cc
-        JOIN campaigns c ON cc.campaign_id = c.id
-        WHERE c.user_token = ? 
-        AND cc.status IN ('sent', 'delivered', 'read')
-        AND cc.sent_at IS NOT NULL
-        GROUP BY hour
-        ORDER BY hour
-      `;
+            // First get campaign IDs for this user
+            const { data: campaigns, error: campaignError } = await SupabaseService.adminClient
+                .from('bulk_campaigns')
+                .select('id')
+                .eq('user_token', userToken);
 
-            const { rows } = await this.db.query(sql, [userToken]);
+            if (campaignError) throw campaignError;
 
-            // Preencher horas vazias
+            const campaignIds = campaigns?.map(c => c.id) || [];
+
+            if (campaignIds.length === 0) {
+                // Return empty hourly data
+                return Array(24).fill(0).map((_, i) => ({
+                    hour: i.toString().padStart(2, '0') + ':00',
+                    count: 0
+                }));
+            }
+
+            // Get contacts with sent_at for these campaigns
+            const { data: contacts, error: contactError } = await SupabaseService.adminClient
+                .from('campaign_contacts')
+                .select('sent_at')
+                .in('campaign_id', campaignIds)
+                .in('status', ['sent', 'delivered', 'read'])
+                .not('sent_at', 'is', null);
+
+            if (contactError) throw contactError;
+
+            // Initialize hourly data
             const hourlyData = Array(24).fill(0).map((_, i) => ({
                 hour: i.toString().padStart(2, '0') + ':00',
                 count: 0
             }));
 
-            rows.forEach(row => {
-                const hourIndex = parseInt(row.hour);
-                if (!isNaN(hourIndex) && hourIndex >= 0 && hourIndex < 24) {
-                    hourlyData[hourIndex].count = row.count;
+            // Count by hour
+            (contacts || []).forEach(contact => {
+                if (contact.sent_at) {
+                    const hour = new Date(contact.sent_at).getHours();
+                    if (hour >= 0 && hour < 24) {
+                        hourlyData[hour].count++;
+                    }
                 }
             });
 
@@ -87,31 +103,47 @@ class AnalyticsService {
      */
     async getConversionFunnel(userToken) {
         try {
-            // Usar as novas colunas delivered_at e read_at se disponíveis
-            // Fallback para status se as colunas forem nulas mas o status indicar sucesso
-            const sql = `
-        SELECT 
-          COUNT(*) as total,
-          SUM(CASE WHEN cc.status IN ('sent', 'delivered', 'read') THEN 1 ELSE 0 END) as sent,
-          SUM(CASE WHEN cc.delivered_at IS NOT NULL OR cc.status IN ('delivered', 'read') THEN 1 ELSE 0 END) as delivered,
-          SUM(CASE WHEN cc.read_at IS NOT NULL OR cc.status = 'read' THEN 1 ELSE 0 END) as read,
-          SUM(CASE WHEN cc.status = 'failed' THEN 1 ELSE 0 END) as failed
-        FROM campaign_contacts cc
-        JOIN campaigns c ON cc.campaign_id = c.id
-        WHERE c.user_token = ?
-      `;
+            // First get campaign IDs for this user
+            const { data: campaigns, error: campaignError } = await SupabaseService.adminClient
+                .from('bulk_campaigns')
+                .select('id')
+                .eq('user_token', userToken);
 
-            const { rows } = await this.db.query(sql, [userToken]);
-            const data = rows[0] || { total: 0, sent: 0, delivered: 0, read: 0, failed: 0 };
+            if (campaignError) throw campaignError;
 
-            // Se não houver dados de entrega/leitura (feature nova), usar estimativas ou zeros
-            // Mas vamos retornar o que temos
+            const campaignIds = campaigns?.map(c => c.id) || [];
+
+            if (campaignIds.length === 0) {
+                return [
+                    { stage: 'Total', value: 0, fill: '#8884d8' },
+                    { stage: 'Enviados', value: 0, fill: '#82ca9d' },
+                    { stage: 'Entregues', value: 0, fill: '#00C49F' },
+                    { stage: 'Lidos', value: 0, fill: '#FFBB28' },
+                    { stage: 'Falhas', value: 0, fill: '#ff8042' }
+                ];
+            }
+
+            // Get all contacts for these campaigns
+            const { data: contacts, error: contactError } = await SupabaseService.adminClient
+                .from('campaign_contacts')
+                .select('status, delivered_at, read_at')
+                .in('campaign_id', campaignIds);
+
+            if (contactError) throw contactError;
+
+            // Calculate funnel metrics
+            const total = contacts?.length || 0;
+            const sent = contacts?.filter(c => ['sent', 'delivered', 'read'].includes(c.status)).length || 0;
+            const delivered = contacts?.filter(c => c.delivered_at || ['delivered', 'read'].includes(c.status)).length || 0;
+            const read = contacts?.filter(c => c.read_at || c.status === 'read').length || 0;
+            const failed = contacts?.filter(c => c.status === 'failed').length || 0;
+
             return [
-                { stage: 'Total', value: data.total, fill: '#8884d8' },
-                { stage: 'Enviados', value: data.sent, fill: '#82ca9d' },
-                { stage: 'Entregues', value: data.delivered, fill: '#00C49F' },
-                { stage: 'Lidos', value: data.read, fill: '#FFBB28' },
-                { stage: 'Falhas', value: data.failed, fill: '#ff8042' }
+                { stage: 'Total', value: total, fill: '#8884d8' },
+                { stage: 'Enviados', value: sent, fill: '#82ca9d' },
+                { stage: 'Entregues', value: delivered, fill: '#00C49F' },
+                { stage: 'Lidos', value: read, fill: '#FFBB28' },
+                { stage: 'Falhas', value: failed, fill: '#ff8042' }
             ];
         } catch (error) {
             logger.error('Erro ao obter funil:', error);

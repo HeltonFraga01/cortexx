@@ -217,7 +217,7 @@ class TenantService {
         og_image_url
       } = data;
 
-      // Upsert branding data
+      // Upsert branding data - specify onConflict column
       const { data: branding, error } = await this.supabase.adminClient
         .from('tenant_branding')
         .upsert({
@@ -232,7 +232,7 @@ class TenantService {
           ...(support_phone !== undefined && { support_phone }),
           ...(og_image_url !== undefined && { og_image_url }),
           updated_at: new Date().toISOString()
-        })
+        }, { onConflict: 'tenant_id' })
         .select()
         .single();
 

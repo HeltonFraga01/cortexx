@@ -1328,8 +1328,8 @@ interface InteractiveContentProps {
   interactiveData?: {
     type: string
     text?: string
-    buttons?: Array<{ id: string; text: string }>
-    sections?: Array<{ title: string; rows: Array<{ id: string; title: string }> }>
+    buttons?: { id: string; text: string }[]
+    sections?: { title: string; rows: { id: string; title: string }[] }[]
     selectedId?: string
     selectedTitle?: string
   } | null

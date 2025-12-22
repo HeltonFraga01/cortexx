@@ -605,7 +605,7 @@ class QueueManager {
       logger.error('Erro ao enviar mensagem via WUZAPI', {
         campaignId: this.campaignId,
         phone,
-        endpoint,
+        endpoint: endpoint || 'unknown',
         error: error.message,
         status: error.response?.status,
         statusText: error.response?.statusText,
@@ -1007,28 +1007,35 @@ class QueueManager {
 
   /**
    * Persiste erro no banco de dados campaign_error_logs
+   * Note: campaign_error_logs table may not exist in Supabase - this is a no-op if table doesn't exist
    * @param {Object} error - Informações do erro
    */
   async persistError(error) {
     try {
       const id = uuidv4();
-      const sql = `
-        INSERT INTO campaign_error_logs (
-          id, campaign_id, contact_id, contact_phone, error_type, 
-          error_message, error_code, retry_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `;
+      const SupabaseService = require('./SupabaseService');
 
-      await this.db.query(sql, [
-        id,
-        this.campaignId,
-        error.contactId || null,
-        error.phone || null,
-        error.errorType || 'UNKNOWN',
-        error.message || null,
-        error.code || null,
-        error.retryCount || 0
-      ]);
+      const { error: dbError } = await SupabaseService.adminClient
+        .from('campaign_error_logs')
+        .insert({
+          id,
+          campaign_id: this.campaignId,
+          contact_id: error.contactId || null,
+          contact_phone: error.phone || null,
+          error_type: error.errorType || 'UNKNOWN',
+          error_message: error.message || null,
+          error_code: error.code || null,
+          retry_count: error.retryCount || 0
+        });
+
+      if (dbError) {
+        // Table doesn't exist - log and skip
+        if (dbError.code === '42P01' || dbError.message?.includes('does not exist')) {
+          logger.debug('campaign_error_logs table does not exist, skipping error persistence');
+          return;
+        }
+        throw dbError;
+      }
 
       logger.debug('Error persisted to database', {
         campaignId: this.campaignId,
@@ -1059,22 +1066,25 @@ class QueueManager {
    */
   async loadContacts(filterPending = false) {
     try {
-      let sql = `
-        SELECT * FROM campaign_contacts 
-        WHERE campaign_id = ?
-      `;
+      const SupabaseService = require('./SupabaseService');
+      
+      let query = SupabaseService.adminClient
+        .from('campaign_contacts')
+        .select('*')
+        .eq('campaign_id', this.campaignId)
+        .order('processing_order', { ascending: true });
 
       if (filterPending) {
-        sql += ` AND status = 'pending'`;
+        query = query.eq('status', 'pending');
       }
 
-      sql += ` ORDER BY processing_order`;
+      const { data: rows, error } = await query;
 
-      const { rows } = await this.db.query(sql, [this.campaignId]);
+      if (error) throw error;
 
-      this.contacts = rows.map(row => {
+      this.contacts = (rows || []).map(row => {
         // Parse variáveis existentes
-        let variables = row.variables ? JSON.parse(row.variables) : {};
+        let variables = row.variables ? (typeof row.variables === 'string' ? JSON.parse(row.variables) : row.variables) : {};
         
         // Adicionar nome às variáveis automaticamente se não existir
         if (row.name && !variables.nome) {
@@ -1123,23 +1133,30 @@ class QueueManager {
    */
   async updateCampaignStatus(status, additionalFields = {}) {
     try {
+      const SupabaseService = require('./SupabaseService');
+      
       const fields = {
         status,
         sent_count: this.sentCount,
         failed_count: this.failedCount,
         current_index: this.currentIndex,
-        updated_at: new Date(),
+        updated_at: new Date().toISOString(),
         ...additionalFields
       };
 
-      const setClause = Object.keys(fields)
-        .map(key => `${key} = ?`)
-        .join(', ');
+      // Convert Date objects to ISO strings for Supabase
+      Object.keys(fields).forEach(key => {
+        if (fields[key] instanceof Date) {
+          fields[key] = fields[key].toISOString();
+        }
+      });
 
-      const values = [...Object.values(fields), this.campaignId];
+      const { error } = await SupabaseService.adminClient
+        .from('bulk_campaigns')
+        .update(fields)
+        .eq('id', this.campaignId);
 
-      const sql = `UPDATE campaigns SET ${setClause} WHERE id = ?`;
-      await this.db.query(sql, values);
+      if (error) throw error;
 
     } catch (error) {
       logger.error('Erro ao atualizar status da campanha:', error.message);
@@ -1158,13 +1175,19 @@ class QueueManager {
    */
   async updateContactStatus(contactId, status, errorType, errorMessage, sentAt) {
     try {
-      const sql = `
-        UPDATE campaign_contacts 
-        SET status = ?, error_type = ?, error_message = ?, sent_at = ?
-        WHERE id = ?
-      `;
+      const SupabaseService = require('./SupabaseService');
+      
+      const { error } = await SupabaseService.adminClient
+        .from('campaign_contacts')
+        .update({
+          status,
+          error_type: errorType,
+          error_message: errorMessage,
+          sent_at: sentAt ? sentAt.toISOString() : null
+        })
+        .eq('id', contactId);
 
-      await this.db.query(sql, [status, errorType, errorMessage, sentAt, contactId]);
+      if (error) throw error;
 
     } catch (error) {
       logger.error('Erro ao atualizar status do contato:', error.message);
@@ -1176,13 +1199,16 @@ class QueueManager {
    */
   async updateContactsProcessingOrder() {
     try {
+      const SupabaseService = require('./SupabaseService');
+      
+      // Update each contact's processing_order
       for (let i = 0; i < this.contacts.length; i++) {
-        const sql = `
-          UPDATE campaign_contacts 
-          SET processing_order = ? 
-          WHERE id = ?
-        `;
-        await this.db.query(sql, [i, this.contacts[i].id]);
+        const { error } = await SupabaseService.adminClient
+          .from('campaign_contacts')
+          .update({ processing_order: i })
+          .eq('id', this.contacts[i].id);
+
+        if (error) throw error;
       }
     } catch (error) {
       logger.error('Erro ao atualizar processing_order:', error.message);

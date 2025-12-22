@@ -148,11 +148,11 @@ const AgentDatabasePage = () => {
         if (filterField === 'all') {
           return visibleFields.some(field => {
             const value = record[field.columnName];
-            return value && value.toString().toLowerCase().includes(searchTerm.toLowerCase());
+            return value?.toString().toLowerCase().includes(searchTerm.toLowerCase());
           });
         } else {
           const value = record[filterField];
-          return value && value.toString().toLowerCase().includes(searchTerm.toLowerCase());
+          return value?.toString().toLowerCase().includes(searchTerm.toLowerCase());
         }
       });
     }

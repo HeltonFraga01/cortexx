@@ -12,10 +12,11 @@ const { logger } = require('../utils/logger');
 const { v4: uuidv4 } = require('uuid');
 const QueueManager = require('./QueueManager');
 const { wuzapiValidator } = require('../utils/wuzapiValidator');
+const SupabaseService = require('./SupabaseService');
 
 class CampaignScheduler {
   /**
-   * @param {Object} db - Instância do banco de dados
+   * @param {Object} db - Instância do banco de dados (legacy, não usado)
    */
   constructor(db) {
     this.db = db;
@@ -50,18 +51,40 @@ class CampaignScheduler {
 
     try {
       const lockId = `${this.instanceId}-${Date.now()}`;
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
       
-      // Tentar adquirir lock no banco de dados (para segurança distribuída)
-      const sql = `
-        UPDATE campaigns 
-        SET processing_lock = ?, lock_acquired_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND (processing_lock IS NULL OR lock_acquired_at < datetime('now', '-5 minutes'))
-      `;
-      
-      const result = await this.db.query(sql, [lockId, campaignId]);
-      
-      if (result.changes === 0) {
-        // Lock não foi adquirido (outra instância já tem o lock)
+      // Check if campaign exists and lock is available
+      const { data: campaign, error: fetchError } = await SupabaseService.queryAsAdmin('bulk_campaigns', (query) =>
+        query.select('id, processing_lock, lock_acquired_at')
+          .eq('id', campaignId)
+          .single()
+      );
+
+      if (fetchError || !campaign) {
+        logger.debug('Campanha não encontrada', { campaignId });
+        return false;
+      }
+
+      // Check if lock is available (no lock or expired lock)
+      const lockAvailable = !campaign.processing_lock || 
+        (campaign.lock_acquired_at && new Date(campaign.lock_acquired_at) < new Date(fiveMinutesAgo));
+
+      if (!lockAvailable) {
+        logger.debug('Lock não disponível', { campaignId, existingLock: campaign.processing_lock });
+        return false;
+      }
+
+      // Try to acquire lock
+      const { data: updated, error: updateError } = await SupabaseService.queryAsAdmin('bulk_campaigns', (query) =>
+        query.update({ 
+          processing_lock: lockId, 
+          lock_acquired_at: new Date().toISOString() 
+        })
+        .eq('id', campaignId)
+        .select()
+      );
+
+      if (updateError || !updated || updated.length === 0) {
         logger.debug('Não foi possível adquirir lock no banco', { campaignId });
         return false;
       }
@@ -89,14 +112,16 @@ class CampaignScheduler {
       const lockId = this.processingLocks.get(campaignId);
       this.processingLocks.delete(campaignId);
 
-      // Remover lock no banco de dados
-      const sql = `
-        UPDATE campaigns 
-        SET processing_lock = NULL, lock_acquired_at = NULL
-        WHERE id = ? AND processing_lock = ?
-      `;
-      
-      await this.db.query(sql, [campaignId, lockId]);
+      // Remover lock no banco de dados usando Supabase
+      const { error } = await SupabaseService.queryAsAdmin('bulk_campaigns', (query) =>
+        query.update({ processing_lock: null, lock_acquired_at: null })
+          .eq('id', campaignId)
+          .eq('processing_lock', lockId)
+      );
+
+      if (error) {
+        logger.warn('Erro ao liberar lock no banco', { campaignId, error: error.message });
+      }
       
       logger.info('Lock liberado', { campaignId, lockId });
 
@@ -182,19 +207,22 @@ class CampaignScheduler {
     try {
       logger.debug('Verificando campanhas agendadas');
 
-      // Buscar campanhas agendadas para agora ou antes (incluindo não agendadas)
-      // Converter para ISO UTC para comparação correta no PostgreSQL
+      // Buscar campanhas agendadas para agora ou antes usando Supabase
       const now = new Date().toISOString();
-      const sql = `
-        SELECT * FROM campaigns 
-        WHERE status = 'scheduled' 
-        AND datetime(scheduled_at) <= datetime(?)
-        ORDER BY scheduled_at ASC
-      `;
+      
+      const { data: rows, error } = await SupabaseService.queryAsAdmin('bulk_campaigns', (query) =>
+        query.select('*')
+          .eq('status', 'scheduled')
+          .lte('scheduled_at', now)
+          .order('scheduled_at', { ascending: true })
+      );
 
-      const { rows } = await this.db.query(sql, [now]);
+      if (error) {
+        logger.error('Erro ao buscar campanhas agendadas', { error: error.message });
+        return;
+      }
 
-      if (rows.length === 0) {
+      if (!rows || rows.length === 0) {
         logger.debug('Nenhuma campanha agendada para iniciar');
         return;
       }
@@ -347,14 +375,17 @@ class CampaignScheduler {
    */
   async failCampaign(campaignId, errorMessage) {
     try {
-      const sql = `
-        UPDATE campaigns 
-        SET status = 'failed', 
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `;
+      const { error } = await SupabaseService.queryAsAdmin('bulk_campaigns', (query) =>
+        query.update({ 
+          status: 'failed', 
+          updated_at: new Date().toISOString() 
+        })
+        .eq('id', campaignId)
+      );
 
-      await this.db.query(sql, [campaignId]);
+      if (error) {
+        logger.error('Erro ao atualizar status da campanha', { campaignId, error: error.message });
+      }
 
       // Limpar fila e liberar lock
       await this.cleanupQueue(campaignId);
@@ -410,15 +441,16 @@ class CampaignScheduler {
   async getCampaignFromDB(campaignId) {
     logger.debug('Buscando campanha no banco', { campaignId });
 
-    const sql = 'SELECT * FROM campaigns WHERE id = ?';
-    const { rows } = await this.db.query(sql, [campaignId]);
+    const { data, error } = await SupabaseService.queryAsAdmin('bulk_campaigns', (query) =>
+      query.select('*').eq('id', campaignId).single()
+    );
 
-    if (rows.length === 0) {
-      logger.error('Campanha não encontrada no banco', { campaignId });
+    if (error || !data) {
+      logger.error('Campanha não encontrada no banco', { campaignId, error: error?.message });
       throw new Error('Campanha não encontrada');
     }
 
-    const campaign = rows[0];
+    const campaign = data;
     logger.debug('Campanha encontrada', {
       campaignId,
       status: campaign.status,
@@ -622,15 +654,14 @@ class CampaignScheduler {
     try {
       logger.info('Iniciando campanha imediatamente', { campaignId });
 
-      // Buscar campanha
-      const sql = 'SELECT * FROM campaigns WHERE id = ?';
-      const { rows } = await this.db.query(sql, [campaignId]);
+      // Buscar campanha usando Supabase
+      const { data: campaign, error } = await SupabaseService.queryAsAdmin('bulk_campaigns', (query) =>
+        query.select('*').eq('id', campaignId).single()
+      );
 
-      if (rows.length === 0) {
+      if (error || !campaign) {
         throw new Error('Campanha não encontrada');
       }
-
-      const campaign = rows[0];
 
       // Verificar se já está em execução (via lock em memória)
       if (this.processingLocks.has(campaignId)) {
@@ -745,36 +776,34 @@ class CampaignScheduler {
         logger.debug('Validação de scheduled_at aprovada');
       }
 
-      // 4. Persistir no banco
-      const updateFields = [];
-      const updateValues = [];
+      // 4. Persistir no banco usando Supabase
+      const updateData = {};
 
       if (updates.delay_min !== undefined) {
-        updateFields.push('delay_min = ?');
-        updateValues.push(updates.delay_min);
+        updateData.delay_min = updates.delay_min;
       }
 
       if (updates.delay_max !== undefined) {
-        updateFields.push('delay_max = ?');
-        updateValues.push(updates.delay_max);
+        updateData.delay_max = updates.delay_max;
       }
 
       if (updates.sending_window !== undefined) {
-        updateFields.push('sending_window = ?');
-        updateValues.push(JSON.stringify(updates.sending_window));
+        updateData.sending_window = updates.sending_window;
       }
 
       if (updates.scheduled_at !== undefined) {
-        updateFields.push('scheduled_at = ?');
-        updateValues.push(updates.scheduled_at);
+        updateData.scheduled_at = updates.scheduled_at;
       }
 
-      updateFields.push('updated_at = CURRENT_TIMESTAMP');
+      updateData.updated_at = new Date().toISOString();
 
-      const sql = `UPDATE campaigns SET ${updateFields.join(', ')} WHERE id = ?`;
-      updateValues.push(campaignId);
+      const { error } = await SupabaseService.queryAsAdmin('bulk_campaigns', (query) =>
+        query.update(updateData).eq('id', campaignId)
+      );
 
-      await this.db.query(sql, updateValues);
+      if (error) {
+        throw new Error(`Erro ao atualizar campanha: ${error.message}`);
+      }
 
       logger.info('Configuração persistida no banco', {
         campaignId,

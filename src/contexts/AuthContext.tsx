@@ -59,7 +59,7 @@ interface AuthProviderProps {
  * Map Supabase user to internal User format
  * Maintains backward compatibility with legacy code that uses user.token
  */
-function mapSupabaseUser(supabaseUser: SupabaseUser | null, accessToken: string = ''): User | null {
+function mapSupabaseUser(supabaseUser: SupabaseUser | null, accessToken = ''): User | null {
   if (!supabaseUser) return null;
   
   const metadata = supabaseUser.user_metadata || {};
@@ -112,7 +112,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
            });
            const data = await response.json();
            
-           if (data && data.authenticated && data.user) {
+           if (data?.authenticated && data.user) {
              // Construct meaningful user object from backend data
              const backendUser: User = {
                 id: data.user.id,

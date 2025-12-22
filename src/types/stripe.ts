@@ -195,9 +195,9 @@ export interface Plan {
 // ==================== Plan Sync ====================
 
 export interface PlanSyncResult {
-  synced: Array<{ id: string; name: string; stripePriceId: string }>
-  skipped: Array<{ id: string; name: string; reason: string }>
-  failed: Array<{ id: string; name: string; error: string }>
+  synced: { id: string; name: string; stripePriceId: string }[]
+  skipped: { id: string; name: string; reason: string }[]
+  failed: { id: string; name: string; error: string }[]
 }
 
 export interface PlanSyncItemResult {

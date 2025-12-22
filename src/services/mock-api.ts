@@ -90,7 +90,7 @@ export class MockAPIService {
     }
   ];
 
-  private delay(ms: number = 500): Promise<void> {
+  private delay(ms = 500): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 

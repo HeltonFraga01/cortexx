@@ -88,8 +88,8 @@ export const reportService = {
    */
   async list(
     filters: ReportFilters = {},
-    page: number = 1,
-    limit: number = 10
+    page = 1,
+    limit = 10
   ): Promise<PaginatedResult<CampaignSummary>> {
     try {
       const params: Record<string, any> = {

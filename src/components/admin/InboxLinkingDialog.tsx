@@ -251,7 +251,7 @@ export function InboxLinkingPanel({ user, onClose }: InboxLinkingPanelProps) {
               </p>
             )}
 
-            {availableInboxes && availableInboxes.length === 0 && (
+            {availableInboxes?.length === 0 && (
               <p className="text-sm text-muted-foreground text-center">
                 Nenhuma inbox disponível no sistema
               </p>

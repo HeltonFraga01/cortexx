@@ -22,8 +22,23 @@ const stripeSettingsSchema = z.object({
     .refine(val => val.startsWith('pk_'), {
       message: 'Publishable key must start with pk_',
     }),
-  webhookSecret: z.string().optional(),
+  webhookSecret: z.string()
+    .optional()
+    .refine(val => !val || val.startsWith('whsec_'), {
+      message: 'Webhook secret must start with whsec_',
+    }),
   connectEnabled: z.boolean().optional().default(false),
+});
+
+/**
+ * Schema for webhook secret only
+ */
+const webhookSecretSchema = z.object({
+  webhookSecret: z.string()
+    .min(1, 'Webhook secret is required')
+    .refine(val => val.startsWith('whsec_'), {
+      message: 'Webhook secret must start with whsec_',
+    }),
 });
 
 /**
@@ -59,6 +74,16 @@ const affiliateConfigSchema = z.object({
   payoutThreshold: z.number().int().positive().optional().default(5000),
   enabled: z.boolean().optional().default(true),
 });
+
+/**
+ * Validate webhook secret only
+ * @param {Object} data - Data to validate
+ * @returns {Object} Validated data
+ * @throws {z.ZodError} If validation fails
+ */
+function validateWebhookSecret(data) {
+  return webhookSecretSchema.parse(data);
+}
 
 /**
  * Validate Stripe settings
@@ -112,11 +137,13 @@ function validateAffiliateConfig(data) {
 
 module.exports = {
   stripeSettingsSchema,
+  webhookSecretSchema,
   checkoutSessionSchema,
   creditPurchaseSchema,
   resellerPricingSchema,
   affiliateConfigSchema,
   validateStripeSettings,
+  validateWebhookSecret,
   validateCheckoutSession,
   validateCreditPurchase,
   validateResellerPricing,

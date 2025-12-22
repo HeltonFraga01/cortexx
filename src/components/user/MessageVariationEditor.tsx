@@ -38,11 +38,11 @@ interface ValidationWarning {
 
 interface ValidationResult {
   isValid: boolean;
-  blocks: Array<{
+  blocks: {
     index: number;
     variations: string[];
     variationCount: number;
-  }>;
+  }[];
   totalCombinations: number;
   errors: ValidationError[];
   warnings: ValidationWarning[];

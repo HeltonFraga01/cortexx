@@ -98,7 +98,7 @@ export function CustomThemeRenderer({
   schema,
   ...themeProps
 }: CustomThemeRendererProps) {
-  if (!schema || !schema.blocks) {
+  if (!schema?.blocks) {
     return (
       <Alert variant="destructive">
         <AlertCircle className="h-4 w-4" />

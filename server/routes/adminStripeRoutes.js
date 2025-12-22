@@ -11,7 +11,7 @@ const router = require('express').Router();
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const StripeService = require('../services/StripeService');
-const { validateStripeSettings } = require('../validators/stripeValidator');
+const { validateStripeSettings, validateWebhookSecret } = require('../validators/stripeValidator');
 
 /**
  * Get tenant ID from request context

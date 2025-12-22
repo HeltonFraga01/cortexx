@@ -67,7 +67,7 @@ export function ReportsPage() {
     }
   }, [location.state]);
 
-  const loadReports = async (page: number = 1) => {
+  const loadReports = async (page = 1) => {
     setIsLoading(true);
     try {
       const result = await reportService.list(filters, page, pagination.limit);

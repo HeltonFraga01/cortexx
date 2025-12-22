@@ -278,7 +278,7 @@ export const WuzAPIAuthProvider = ({ children }: { children: ReactNode }) => {
     userToken: string,
     phoneNumber?: string
   ): Promise<boolean> => {
-    if (!user || user.role !== "admin") {
+    if (user?.role !== "admin") {
       toast.error("Acesso negado", {
         description: "Apenas administradores podem alternar para usuário",
       });

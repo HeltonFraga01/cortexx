@@ -194,7 +194,7 @@ export function MessageInput({ onSend, isLoading, conversationId, onTyping, onPr
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current)
       }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      if (mediaRecorderRef.current?.state === 'recording') {
         mediaRecorderRef.current.stop()
       }
     }
@@ -345,7 +345,7 @@ export function MessageInput({ onSend, isLoading, conversationId, onTyping, onPr
 
   // Stop audio recording
   const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+    if (mediaRecorderRef.current?.state === 'recording') {
       mediaRecorderRef.current.stop()
       setIsRecording(false)
       onPresence?.('available')

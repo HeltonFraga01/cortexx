@@ -39,7 +39,7 @@ export function QuotaGate({
   const quotaStatus = checkQuota(quotaType)
 
   // If no quota status found or quota is not exceeded, render children normally
-  if (!quotaStatus || !quotaStatus.exceeded) {
+  if (!quotaStatus?.exceeded) {
     return <>{children}</>
   }
 

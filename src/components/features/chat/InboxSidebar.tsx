@@ -261,7 +261,7 @@ export function InboxSidebar({
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            ref={inputRef as React.RefObject<HTMLInputElement>}
+            ref={inputRef}
             placeholder="Buscar... (Ctrl+K)"
             value={searchQuery}
             onChange={(e) => handleSearchChange(e.target.value)}

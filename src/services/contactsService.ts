@@ -70,7 +70,7 @@ class ContactsService {
    * Busca contatos por query (nome ou telefone)
    */
   searchContacts(contacts: Contact[], query: string): Contact[] {
-    if (!query || !query.trim()) return contacts;
+    if (!query?.trim()) return contacts;
 
     const searchLower = query.toLowerCase().trim();
     return contacts.filter(contact => {

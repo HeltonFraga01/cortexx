@@ -43,7 +43,7 @@ async function getRequestOptionsWithCsrf(): Promise<RequestInit> {
   }
   
   if (token) {
-    headers['Authorization'] = `Bearer ${token}`
+    headers.Authorization = `Bearer ${token}`
   }
   
   if (csrfToken) {

@@ -428,7 +428,7 @@ const UserMessages = () => {
     setShowTemplateForm(true);
   };
 
-  const useTemplate = (content: string) => {
+  const applyTemplate = (content: string) => {
     setMessage(content);
     toast.success('Template aplicado!');
   };
@@ -725,7 +725,7 @@ const UserMessages = () => {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => useTemplate(template.content)}
+                          onClick={() => applyTemplate(template.content)}
                         >
                           Usar Template
                         </Button>

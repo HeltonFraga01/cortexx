@@ -59,9 +59,7 @@ interface TablePermissions {
   canDelete: boolean;
 }
 
-interface FormData {
-  [key: string]: any;
-}
+type FormData = Record<string, any>;
 
 export function GenericTableView({ tableName, userToken }: GenericTableViewProps) {
   const navigate = useNavigate();

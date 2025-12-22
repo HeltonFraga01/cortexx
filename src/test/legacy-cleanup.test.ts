@@ -25,7 +25,7 @@ describe('Property 2: Database Connection Type Consistency', () => {
     const typesContent = fs.readFileSync(typesPath, 'utf-8');
     
     // Find DatabaseConnection interface and check for SQLITE
-    const dbConnectionMatch = typesContent.match(/interface DatabaseConnection[\s\S]*?type:\s*([^;]+);/);
+    const dbConnectionMatch = /interface DatabaseConnection[\s\S]*?type:\s*([^;]+);/.exec(typesContent);
     
     expect(dbConnectionMatch).toBeTruthy();
     if (dbConnectionMatch) {
@@ -44,7 +44,7 @@ describe('Property 2: Database Connection Type Consistency', () => {
     const serviceContent = fs.readFileSync(servicePath, 'utf-8');
     
     // Find DatabaseConnection interface and check for SQLITE
-    const dbConnectionMatch = serviceContent.match(/interface DatabaseConnection[\s\S]*?type:\s*([^;]+);/);
+    const dbConnectionMatch = /interface DatabaseConnection[\s\S]*?type:\s*([^;]+);/.exec(serviceContent);
     
     expect(dbConnectionMatch).toBeTruthy();
     if (dbConnectionMatch) {

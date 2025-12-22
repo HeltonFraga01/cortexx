@@ -2,6 +2,7 @@ const { logger } = require('../utils/logger');
 const securityLogger = require('../utils/securityLogger');
 const { validateSupabaseToken } = require('./supabaseAuth');
 const { validateSession, destroyCorruptedSession, getSessionDiagnostics } = require('../utils/sessionHelper');
+const { normalizeToUUID } = require('../utils/userIdHelper');
 
 /**
  * Helper to get user ID from request (JWT or session)
@@ -48,10 +49,12 @@ async function getWuzapiTokenFromAccount(userId, wuzapiId = null) {
   try {
     const SupabaseService = require('../services/SupabaseService');
     
-    // Convert userId to UUID format if needed
-    let uuidUserId = userId;
-    if (userId.length === 32 && !userId.includes('-')) {
-      uuidUserId = `${userId.slice(0, 8)}-${userId.slice(8, 12)}-${userId.slice(12, 16)}-${userId.slice(16, 20)}-${userId.slice(20)}`;
+    // Use helper to normalize to UUID format
+    const uuidUserId = normalizeToUUID(userId);
+    
+    if (!uuidUserId) {
+      logger.debug('Invalid userId format', { userId: userId.substring(0, 8) + '...' });
+      return null;
     }
     
     const { data: account, error } = await SupabaseService.adminClient

@@ -168,8 +168,8 @@ export class StorageManager {
   /**
    * Get all entries sorted by creation time (oldest first)
    */
-  private getEntriesSortedByAge(): Array<{ key: string; entry: StorageEntry<unknown> }> {
-    const entries: Array<{ key: string; entry: StorageEntry<unknown> }> = []
+  private getEntriesSortedByAge(): { key: string; entry: StorageEntry<unknown> }[] {
+    const entries: { key: string; entry: StorageEntry<unknown> }[] = []
     const keys = this.getAllKeys()
 
     keys.forEach(key => {

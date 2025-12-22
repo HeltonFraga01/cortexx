@@ -98,7 +98,7 @@ export function ConversationActionsSection({ conversation }: ConversationActions
       
       conversationQueries.forEach(query => {
         const key = JSON.stringify(query.queryKey)
-        previousData[key] = queryClient.getQueryData(query.queryKey) as ConversationsResponse | undefined
+        previousData[key] = queryClient.getQueryData(query.queryKey)
       })
       
       if (data.status) {
@@ -138,7 +138,7 @@ export function ConversationActionsSection({ conversation }: ConversationActions
       
       conversationQueries.forEach(query => {
         const key = JSON.stringify(query.queryKey)
-        previousData[key] = queryClient.getQueryData(query.queryKey) as ConversationsResponse | undefined
+        previousData[key] = queryClient.getQueryData(query.queryKey)
       })
       
       conversationQueries.forEach(query => {

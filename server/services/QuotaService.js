@@ -8,6 +8,7 @@
 
 const { logger } = require('../utils/logger');
 const crypto = require('crypto');
+const SupabaseService = require('./SupabaseService');
 
 // Quota types
 const QUOTA_TYPES = {
@@ -162,28 +163,30 @@ class QuotaService {
       const periodStart = this.getPeriodStart(quotaType, now);
       const periodEnd = this.getPeriodEnd(quotaType, now);
 
-      // Try to update existing record
-      const existingResult = await this.db.query(
-        `SELECT id, current_usage FROM user_quota_usage 
-         WHERE user_id = ? AND quota_type = ? AND period_start = ?`,
-        [userId, quotaType, periodStart.toISOString()]
+      // Try to find existing record using Supabase
+      const { data: existing, error: findError } = await SupabaseService.queryAsAdmin('user_quota_usage', (query) =>
+        query.select('id, used_value')
+          .eq('account_id', userId)
+          .eq('quota_key', quotaType)
+          .eq('period_start', periodStart.toISOString())
       );
 
       let newUsage;
-      if (existingResult.rows.length > 0) {
-        newUsage = existingResult.rows[0].current_usage + amount;
-        await this.db.query(
-          `UPDATE user_quota_usage SET current_usage = ?, updated_at = ? 
-           WHERE id = ?`,
-          [newUsage, now.toISOString(), existingResult.rows[0].id]
-        );
+      if (!findError && existing && existing.length > 0) {
+        newUsage = (existing[0].used_value || 0) + amount;
+        await SupabaseService.update('user_quota_usage', existing[0].id, {
+          used_value: newUsage,
+          updated_at: now.toISOString()
+        });
       } else {
         newUsage = amount;
-        await this.db.query(
-          `INSERT INTO user_quota_usage (id, user_id, quota_type, period_start, period_end, current_usage, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [this.generateId(), userId, quotaType, periodStart.toISOString(), periodEnd.toISOString(), newUsage, now.toISOString(), now.toISOString()]
-        );
+        await SupabaseService.insert('user_quota_usage', {
+          account_id: userId,
+          quota_key: quotaType,
+          period_start: periodStart.toISOString(),
+          period_end: periodEnd.toISOString(),
+          used_value: newUsage
+        });
       }
 
       logger.debug('Usage incremented', { userId, quotaType, amount, newUsage });
@@ -206,21 +209,21 @@ class QuotaService {
       const now = new Date();
       const periodStart = this.getPeriodStart(quotaType, now);
 
-      // Try to update existing record
-      const existingResult = await this.db.query(
-        `SELECT id, current_usage FROM user_quota_usage 
-         WHERE user_id = ? AND quota_type = ? AND period_start = ?`,
-        [userId, quotaType, periodStart.toISOString()]
+      // Try to find existing record using Supabase
+      const { data: existing, error: findError } = await SupabaseService.queryAsAdmin('user_quota_usage', (query) =>
+        query.select('id, used_value')
+          .eq('account_id', userId)
+          .eq('quota_key', quotaType)
+          .eq('period_start', periodStart.toISOString())
       );
 
       let newUsage = 0;
-      if (existingResult.rows.length > 0) {
-        newUsage = Math.max(0, existingResult.rows[0].current_usage - amount);
-        await this.db.query(
-          `UPDATE user_quota_usage SET current_usage = ?, updated_at = ? 
-           WHERE id = ?`,
-          [newUsage, now.toISOString(), existingResult.rows[0].id]
-        );
+      if (!findError && existing && existing.length > 0) {
+        newUsage = Math.max(0, (existing[0].used_value || 0) - amount);
+        await SupabaseService.update('user_quota_usage', existing[0].id, {
+          used_value: newUsage,
+          updated_at: now.toISOString()
+        });
       }
 
       logger.debug('Usage decremented', { userId, quotaType, amount, newUsage });
@@ -274,13 +277,18 @@ class QuotaService {
       const now = new Date();
       const periodStart = this.getPeriodStart(quotaType, now);
 
-      const result = await this.db.query(
-        `SELECT current_usage FROM user_quota_usage 
-         WHERE user_id = ? AND quota_type = ? AND period_start = ?`,
-        [userId, quotaType, periodStart.toISOString()]
+      const { data, error } = await SupabaseService.queryAsAdmin('user_quota_usage', (query) =>
+        query.select('used_value')
+          .eq('account_id', userId)
+          .eq('quota_key', quotaType)
+          .eq('period_start', periodStart.toISOString())
       );
 
-      return result.rows.length > 0 ? result.rows[0].current_usage : 0;
+      if (error || !data || data.length === 0) {
+        return 0;
+      }
+
+      return data[0].used_value || 0;
     } catch (error) {
       logger.error('Failed to get current usage', { error: error.message, userId, quotaType });
       return 0;
@@ -289,18 +297,33 @@ class QuotaService {
 
   /**
    * Count inboxes for a user (via account)
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @returns {Promise<number>} Number of inboxes
    */
   async countUserInboxes(userId) {
     try {
-      const result = await this.db.query(
-        `SELECT COUNT(*) as count FROM inboxes i
-         JOIN accounts a ON i.account_id = a.id
-         WHERE a.owner_user_id = ?`,
-        [userId]
+      // First get the account for this user
+      const { data: accounts, error: accountError } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+        query.select('id').eq('owner_user_id', userId)
       );
-      return result.rows[0]?.count || 0;
+      
+      if (accountError || !accounts || accounts.length === 0) {
+        return 0;
+      }
+      
+      const accountIds = accounts.map(a => a.id);
+      
+      // Count inboxes for these accounts
+      const { count, error } = await SupabaseService.queryAsAdmin('inboxes', (query) =>
+        query.select('*', { count: 'exact', head: true }).in('account_id', accountIds)
+      );
+      
+      if (error) {
+        throw error;
+      }
+      
+      return count || 0;
     } catch (error) {
       logger.error('Failed to count user inboxes', { error: error.message, userId });
       return 0;
@@ -309,18 +332,35 @@ class QuotaService {
 
   /**
    * Count agents for a user (via account)
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @returns {Promise<number>} Number of agents
    */
   async countUserAgents(userId) {
     try {
-      const result = await this.db.query(
-        `SELECT COUNT(*) as count FROM agents ag
-         JOIN accounts a ON ag.account_id = a.id
-         WHERE a.owner_user_id = ? AND ag.status = 'active'`,
-        [userId]
+      // First get the account for this user
+      const { data: accounts, error: accountError } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+        query.select('id').eq('owner_user_id', userId)
       );
-      return result.rows[0]?.count || 0;
+      
+      if (accountError || !accounts || accounts.length === 0) {
+        return 0;
+      }
+      
+      const accountIds = accounts.map(a => a.id);
+      
+      // Count active agents for these accounts
+      const { count, error } = await SupabaseService.queryAsAdmin('agents', (query) =>
+        query.select('*', { count: 'exact', head: true })
+          .in('account_id', accountIds)
+          .eq('status', 'active')
+      );
+      
+      if (error) {
+        throw error;
+      }
+      
+      return count || 0;
     } catch (error) {
       logger.error('Failed to count user agents', { error: error.message, userId });
       return 0;
@@ -329,18 +369,33 @@ class QuotaService {
 
   /**
    * Count teams for a user (via account)
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @returns {Promise<number>} Number of teams
    */
   async countUserTeams(userId) {
     try {
-      const result = await this.db.query(
-        `SELECT COUNT(*) as count FROM teams t
-         JOIN accounts a ON t.account_id = a.id
-         WHERE a.owner_user_id = ?`,
-        [userId]
+      // First get the account for this user
+      const { data: accounts, error: accountError } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+        query.select('id').eq('owner_user_id', userId)
       );
-      return result.rows[0]?.count || 0;
+      
+      if (accountError || !accounts || accounts.length === 0) {
+        return 0;
+      }
+      
+      const accountIds = accounts.map(a => a.id);
+      
+      // Count teams for these accounts
+      const { count, error } = await SupabaseService.queryAsAdmin('teams', (query) =>
+        query.select('*', { count: 'exact', head: true }).in('account_id', accountIds)
+      );
+      
+      if (error) {
+        throw error;
+      }
+      
+      return count || 0;
     } catch (error) {
       logger.error('Failed to count user teams', { error: error.message, userId });
       return 0;
@@ -349,7 +404,7 @@ class QuotaService {
 
   /**
    * Count webhooks for a user
-   * Uses outgoing_webhooks table - checks both userId and userToken
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID (hash)
    * @param {string} [userToken=null] - WUZAPI token
    * @returns {Promise<number>} Number of webhooks
@@ -362,12 +417,16 @@ class QuotaService {
         identifiers.push(userToken);
       }
       
-      const placeholders = identifiers.map(() => '?').join(',');
-      const result = await this.db.query(
-        `SELECT COUNT(*) as count FROM outgoing_webhooks WHERE user_id IN (${placeholders})`,
-        identifiers
+      // Count webhooks for these identifiers
+      const { count, error } = await SupabaseService.queryAsAdmin('outgoing_webhooks', (query) =>
+        query.select('*', { count: 'exact', head: true }).in('user_id', identifiers)
       );
-      return result.rows[0]?.count || 0;
+      
+      if (error) {
+        throw error;
+      }
+      
+      return count || 0;
     } catch (error) {
       logger.error('Failed to count user webhooks', { error: error.message, userId });
       return 0;
@@ -376,25 +435,35 @@ class QuotaService {
 
   /**
    * Count campaigns for a user
-   * Uses campaigns table - checks both userId and userToken in user_token field
+   * Uses Supabase query builder - counts both bulk_campaigns and agent_campaigns
    * @param {string} userId - User ID (hash)
    * @param {string} [userToken=null] - WUZAPI token
    * @returns {Promise<number>} Number of campaigns
    */
   async countUserCampaigns(userId, userToken = null) {
     try {
-      // Build list of identifiers to check
-      const identifiers = [userId];
-      if (userToken && userToken !== userId) {
-        identifiers.push(userToken);
+      // First get the account for this user
+      const { data: accounts, error: accountError } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+        query.select('id').eq('owner_user_id', userId)
+      );
+      
+      if (accountError || !accounts || accounts.length === 0) {
+        return 0;
       }
       
-      const placeholders = identifiers.map(() => '?').join(',');
-      const result = await this.db.query(
-        `SELECT COUNT(*) as count FROM campaigns WHERE user_token IN (${placeholders})`,
-        identifiers
+      const accountIds = accounts.map(a => a.id);
+      
+      // Count bulk campaigns
+      const { count: bulkCount, error: bulkError } = await SupabaseService.queryAsAdmin('bulk_campaigns', (query) =>
+        query.select('*', { count: 'exact', head: true }).in('account_id', accountIds)
       );
-      return result.rows[0]?.count || 0;
+      
+      // Count agent campaigns
+      const { count: agentCount, error: agentError } = await SupabaseService.queryAsAdmin('agent_campaigns', (query) =>
+        query.select('*', { count: 'exact', head: true }).in('account_id', accountIds)
+      );
+      
+      return (bulkCount || 0) + (agentCount || 0);
     } catch (error) {
       logger.error('Failed to count user campaigns', { error: error.message, userId });
       return 0;
@@ -403,20 +472,36 @@ class QuotaService {
 
   /**
    * Count connections for a user
-   * Connections are inboxes with wuzapi_connected = 1
+   * Connections are inboxes with wuzapi_connected = true
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @returns {Promise<number>} Number of active connections
    */
   async countUserConnections(userId) {
     try {
-      // Count connected inboxes via account
-      const result = await this.db.query(
-        `SELECT COUNT(*) as count FROM inboxes i
-         JOIN accounts a ON i.account_id = a.id
-         WHERE a.owner_user_id = ? AND i.wuzapi_connected = 1`,
-        [userId]
+      // First get the account for this user
+      const { data: accounts, error: accountError } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+        query.select('id').eq('owner_user_id', userId)
       );
-      return result.rows[0]?.count || 0;
+      
+      if (accountError || !accounts || accounts.length === 0) {
+        return 0;
+      }
+      
+      const accountIds = accounts.map(a => a.id);
+      
+      // Count connected inboxes for these accounts
+      const { count, error } = await SupabaseService.queryAsAdmin('inboxes', (query) =>
+        query.select('*', { count: 'exact', head: true })
+          .in('account_id', accountIds)
+          .eq('wuzapi_connected', true)
+      );
+      
+      if (error) {
+        throw error;
+      }
+      
+      return count || 0;
     } catch (error) {
       logger.error('Failed to count user connections', { error: error.message, userId });
       return 0;
@@ -425,25 +510,34 @@ class QuotaService {
 
   /**
    * Count bots for a user
-   * Checks both userId and userToken in user_id field
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID (hash)
    * @param {string} [userToken=null] - WUZAPI token
    * @returns {Promise<number>} Number of bots
    */
   async countUserBots(userId, userToken = null) {
     try {
-      // Build list of identifiers to check
-      const identifiers = [userId];
-      if (userToken && userToken !== userId) {
-        identifiers.push(userToken);
+      // First get the account for this user
+      const { data: accounts, error: accountError } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+        query.select('id').eq('owner_user_id', userId)
+      );
+      
+      if (accountError || !accounts || accounts.length === 0) {
+        return 0;
       }
       
-      const placeholders = identifiers.map(() => '?').join(',');
-      const result = await this.db.query(
-        `SELECT COUNT(*) as count FROM agent_bots WHERE user_id IN (${placeholders})`,
-        identifiers
+      const accountIds = accounts.map(a => a.id);
+      
+      // Count bots for these accounts
+      const { count, error } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+        query.select('*', { count: 'exact', head: true }).in('account_id', accountIds)
       );
-      return result.rows[0]?.count || 0;
+      
+      if (error) {
+        throw error;
+      }
+      
+      return count || 0;
     } catch (error) {
       logger.error('Failed to count user bots', { error: error.message, userId });
       return 0;
@@ -452,6 +546,7 @@ class QuotaService {
 
   /**
    * Set a quota override for a user
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @param {string} quotaType - Type of quota
    * @param {number} limit - New limit value
@@ -464,24 +559,23 @@ class QuotaService {
       const now = new Date().toISOString();
       
       // Check if override exists
-      const existing = await this.db.query(
-        'SELECT id FROM user_quota_overrides WHERE user_id = ? AND quota_type = ?',
-        [userId, quotaType]
+      const { data: existing, error: findError } = await SupabaseService.queryAsAdmin('user_quota_overrides', (query) =>
+        query.select('id').eq('account_id', userId).eq('quota_key', quotaType)
       );
 
-      if (existing.rows.length > 0) {
-        await this.db.query(
-          `UPDATE user_quota_overrides 
-           SET limit_value = ?, reason = ?, set_by = ?, updated_at = ?
-           WHERE user_id = ? AND quota_type = ?`,
-          [limit, reason, adminId, now, userId, quotaType]
-        );
+      if (!findError && existing && existing.length > 0) {
+        await SupabaseService.update('user_quota_overrides', existing[0].id, {
+          quota_value: limit,
+          reason: reason,
+          updated_at: now
+        });
       } else {
-        await this.db.query(
-          `INSERT INTO user_quota_overrides (id, user_id, quota_type, limit_value, reason, set_by, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [this.generateId(), userId, quotaType, limit, reason, adminId, now, now]
-        );
+        await SupabaseService.insert('user_quota_overrides', {
+          account_id: userId,
+          quota_key: quotaType,
+          quota_value: limit,
+          reason: reason
+        });
       }
 
       logger.info('Quota override set', { userId, quotaType, limit, adminId, reason });
@@ -495,6 +589,7 @@ class QuotaService {
 
   /**
    * Remove a quota override
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @param {string} quotaType - Type of quota
    * @param {string} adminId - Admin removing the override
@@ -502,10 +597,13 @@ class QuotaService {
    */
   async removeQuotaOverride(userId, quotaType, adminId) {
     try {
-      await this.db.query(
-        'DELETE FROM user_quota_overrides WHERE user_id = ? AND quota_type = ?',
-        [userId, quotaType]
+      const { error } = await SupabaseService.queryAsAdmin('user_quota_overrides', (query) =>
+        query.delete().eq('account_id', userId).eq('quota_key', quotaType)
       );
+
+      if (error) {
+        throw error;
+      }
 
       logger.info('Quota override removed', { userId, quotaType, adminId });
     } catch (error) {
@@ -516,6 +614,7 @@ class QuotaService {
 
   /**
    * Reset cycle-based quota counters for a user
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @returns {Promise<void>}
    */
@@ -526,11 +625,20 @@ class QuotaService {
       for (const quotaType of CYCLE_QUOTAS) {
         const periodStart = this.getPeriodStart(quotaType, now);
         
-        await this.db.query(
-          `UPDATE user_quota_usage SET current_usage = 0, updated_at = ?
-           WHERE user_id = ? AND quota_type = ? AND period_start = ?`,
-          [now.toISOString(), userId, quotaType, periodStart.toISOString()]
+        // Find and update existing records
+        const { data: existing } = await SupabaseService.queryAsAdmin('user_quota_usage', (query) =>
+          query.select('id')
+            .eq('account_id', userId)
+            .eq('quota_key', quotaType)
+            .eq('period_start', periodStart.toISOString())
         );
+        
+        if (existing && existing.length > 0) {
+          await SupabaseService.update('user_quota_usage', existing[0].id, {
+            used_value: 0,
+            updated_at: now.toISOString()
+          });
+        }
       }
 
       logger.info('Cycle counters reset', { userId, quotaTypes: CYCLE_QUOTAS });
@@ -566,6 +674,7 @@ class QuotaService {
 
   /**
    * Get effective limit for a quota (override or plan default)
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @param {string} quotaType - Type of quota
    * @returns {Promise<number>} Effective limit
@@ -573,13 +682,12 @@ class QuotaService {
   async getEffectiveLimit(userId, quotaType) {
     try {
       // Check for override first
-      const overrideResult = await this.db.query(
-        'SELECT limit_value FROM user_quota_overrides WHERE user_id = ? AND quota_type = ?',
-        [userId, quotaType]
+      const { data: overrides, error } = await SupabaseService.queryAsAdmin('user_quota_overrides', (query) =>
+        query.select('quota_value').eq('account_id', userId).eq('quota_key', quotaType)
       );
 
-      if (overrideResult.rows.length > 0) {
-        return overrideResult.rows[0].limit_value;
+      if (!error && overrides && overrides.length > 0) {
+        return overrides[0].quota_value;
       }
 
       // Fall back to plan default
@@ -594,126 +702,148 @@ class QuotaService {
   /**
    * Get plan quotas for a user
    * Updated for multi-tenant architecture to use tenant_plans instead of global plans
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @returns {Promise<Object>} Plan quotas from tenant-specific plans
    * Requirements: 11.1 - Use tenant_plans via subscription
    */
   async getPlanQuotas(userId) {
+    const defaultQuotas = {
+      [QUOTA_TYPES.MAX_AGENTS]: 1,
+      [QUOTA_TYPES.MAX_CONNECTIONS]: 1,
+      [QUOTA_TYPES.MAX_MESSAGES_PER_DAY]: 100,
+      [QUOTA_TYPES.MAX_MESSAGES_PER_MONTH]: 3000,
+      [QUOTA_TYPES.MAX_INBOXES]: 1,
+      [QUOTA_TYPES.MAX_TEAMS]: 1,
+      [QUOTA_TYPES.MAX_WEBHOOKS]: 5,
+      [QUOTA_TYPES.MAX_CAMPAIGNS]: 1,
+      [QUOTA_TYPES.MAX_STORAGE_MB]: 100,
+      [QUOTA_TYPES.MAX_BOTS]: 3,
+      [QUOTA_TYPES.MAX_BOT_CALLS_PER_DAY]: 100,
+      [QUOTA_TYPES.MAX_BOT_CALLS_PER_MONTH]: 3000,
+      [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_DAY]: 50,
+      [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_MONTH]: 1500,
+      [QUOTA_TYPES.MAX_BOT_TOKENS_PER_DAY]: 10000,
+      [QUOTA_TYPES.MAX_BOT_TOKENS_PER_MONTH]: 300000
+    };
+
     try {
-      // Updated to use tenant_plans instead of global plans
-      // Query path: user_subscriptions -> accounts (via owner_user_id) -> tenant_plans (via tenant_id)
-      // This ensures quotas come from tenant-specific plans, not global ones
-      const result = await this.db.query(
-        `SELECT tp.quotas->>'max_agents' as max_agents,
-                tp.quotas->>'max_connections' as max_connections, 
-                tp.quotas->>'max_messages_per_day' as max_messages_per_day,
-                tp.quotas->>'max_messages_per_month' as max_messages_per_month,
-                tp.quotas->>'max_inboxes' as max_inboxes,
-                tp.quotas->>'max_teams' as max_teams,
-                tp.quotas->>'max_webhooks' as max_webhooks,
-                tp.quotas->>'max_campaigns' as max_campaigns,
-                tp.quotas->>'max_storage_mb' as max_storage_mb,
-                tp.quotas->>'max_bots' as max_bots,
-                tp.quotas->>'max_bot_calls_per_day' as max_bot_calls_per_day,
-                tp.quotas->>'max_bot_calls_per_month' as max_bot_calls_per_month,
-                tp.quotas->>'max_bot_messages_per_day' as max_bot_messages_per_day,
-                tp.quotas->>'max_bot_messages_per_month' as max_bot_messages_per_month,
-                tp.quotas->>'max_bot_tokens_per_day' as max_bot_tokens_per_day,
-                tp.quotas->>'max_bot_tokens_per_month' as max_bot_tokens_per_month
-         FROM user_subscriptions s
-         JOIN accounts a ON a.owner_user_id = s.user_id
-         JOIN tenant_plans tp ON s.plan_id = tp.id AND tp.tenant_id = a.tenant_id
-         WHERE s.user_id = ?`,
-        [userId]
+      // Step 1: Get user subscription
+      const { data: subscriptions, error: subError } = await SupabaseService.queryAsAdmin('user_subscriptions', (query) =>
+        query.select('plan_id, account_id').eq('account_id', userId)
       );
-
-      if (result.rows.length === 0) {
-        // Return default quotas when user has no subscription
-        logger.debug('No subscription found for user, returning default quotas', { userId });
-        return {
-          [QUOTA_TYPES.MAX_AGENTS]: 1,
-          [QUOTA_TYPES.MAX_CONNECTIONS]: 1,
-          [QUOTA_TYPES.MAX_MESSAGES_PER_DAY]: 100,
-          [QUOTA_TYPES.MAX_MESSAGES_PER_MONTH]: 3000,
-          [QUOTA_TYPES.MAX_INBOXES]: 1,
-          [QUOTA_TYPES.MAX_TEAMS]: 1,
-          [QUOTA_TYPES.MAX_WEBHOOKS]: 5,
-          [QUOTA_TYPES.MAX_CAMPAIGNS]: 1,
-          [QUOTA_TYPES.MAX_STORAGE_MB]: 100,
-          [QUOTA_TYPES.MAX_BOTS]: 3,
-          // Bot usage quotas defaults
-          [QUOTA_TYPES.MAX_BOT_CALLS_PER_DAY]: 100,
-          [QUOTA_TYPES.MAX_BOT_CALLS_PER_MONTH]: 3000,
-          [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_DAY]: 50,
-          [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_MONTH]: 1500,
-          [QUOTA_TYPES.MAX_BOT_TOKENS_PER_DAY]: 10000,
-          [QUOTA_TYPES.MAX_BOT_TOKENS_PER_MONTH]: 300000
-        };
+      
+      if (subError || !subscriptions || subscriptions.length === 0) {
+        // Try with user_id field as fallback
+        const { data: subsByUserId, error: subError2 } = await SupabaseService.queryAsAdmin('user_subscriptions', (query) =>
+          query.select('plan_id, account_id')
+        );
+        
+        // Find subscription where account owner matches userId
+        if (!subsByUserId || subsByUserId.length === 0) {
+          logger.debug('No subscription found for user, returning default quotas', { userId });
+          return defaultQuotas;
+        }
+        
+        // Get accounts to find the one owned by this user
+        const { data: accounts } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+          query.select('id, tenant_id').eq('owner_user_id', userId)
+        );
+        
+        if (!accounts || accounts.length === 0) {
+          logger.debug('No account found for user, returning default quotas', { userId });
+          return defaultQuotas;
+        }
+        
+        const accountId = accounts[0].id;
+        const tenantId = accounts[0].tenant_id;
+        
+        // Find subscription for this account
+        const subscription = subsByUserId.find(s => s.account_id === accountId);
+        if (!subscription) {
+          logger.debug('No subscription found for account, returning default quotas', { userId, accountId });
+          return defaultQuotas;
+        }
+        
+        // Get tenant plan
+        const { data: plans, error: planError } = await SupabaseService.queryAsAdmin('tenant_plans', (query) =>
+          query.select('quotas').eq('id', subscription.plan_id)
+        );
+        
+        if (planError || !plans || plans.length === 0) {
+          logger.debug('No plan found, returning default quotas', { userId, planId: subscription.plan_id });
+          return defaultQuotas;
+        }
+        
+        const quotas = plans[0].quotas || {};
+        return this._parseQuotas(quotas, defaultQuotas);
       }
-
-      const row = result.rows[0];
-      // Parse values from JSON fields, with fallback to defaults
-      return {
-        [QUOTA_TYPES.MAX_AGENTS]: parseInt(row.max_agents) || 1,
-        [QUOTA_TYPES.MAX_CONNECTIONS]: parseInt(row.max_connections) || 1,
-        [QUOTA_TYPES.MAX_MESSAGES_PER_DAY]: parseInt(row.max_messages_per_day) || 100,
-        [QUOTA_TYPES.MAX_MESSAGES_PER_MONTH]: parseInt(row.max_messages_per_month) || 3000,
-        [QUOTA_TYPES.MAX_INBOXES]: parseInt(row.max_inboxes) || 1,
-        [QUOTA_TYPES.MAX_TEAMS]: parseInt(row.max_teams) || 1,
-        [QUOTA_TYPES.MAX_WEBHOOKS]: parseInt(row.max_webhooks) || 5,
-        [QUOTA_TYPES.MAX_CAMPAIGNS]: parseInt(row.max_campaigns) || 1,
-        [QUOTA_TYPES.MAX_STORAGE_MB]: parseInt(row.max_storage_mb) || 100,
-        [QUOTA_TYPES.MAX_BOTS]: parseInt(row.max_bots) || 3,
-        // Bot usage quotas
-        [QUOTA_TYPES.MAX_BOT_CALLS_PER_DAY]: parseInt(row.max_bot_calls_per_day) || 100,
-        [QUOTA_TYPES.MAX_BOT_CALLS_PER_MONTH]: parseInt(row.max_bot_calls_per_month) || 3000,
-        [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_DAY]: parseInt(row.max_bot_messages_per_day) || 50,
-        [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_MONTH]: parseInt(row.max_bot_messages_per_month) || 1500,
-        [QUOTA_TYPES.MAX_BOT_TOKENS_PER_DAY]: parseInt(row.max_bot_tokens_per_day) || 10000,
-        [QUOTA_TYPES.MAX_BOT_TOKENS_PER_MONTH]: parseInt(row.max_bot_tokens_per_month) || 300000
-      };
+      
+      // Get tenant plan directly
+      const planId = subscriptions[0].plan_id;
+      const { data: plans, error: planError } = await SupabaseService.queryAsAdmin('tenant_plans', (query) =>
+        query.select('quotas').eq('id', planId)
+      );
+      
+      if (planError || !plans || plans.length === 0) {
+        logger.debug('No plan found, returning default quotas', { userId, planId });
+        return defaultQuotas;
+      }
+      
+      const quotas = plans[0].quotas || {};
+      return this._parseQuotas(quotas, defaultQuotas);
     } catch (error) {
       logger.error('Failed to get plan quotas', { error: error.message, userId });
-      // Return default quotas on error
-      return {
-        [QUOTA_TYPES.MAX_AGENTS]: 1,
-        [QUOTA_TYPES.MAX_CONNECTIONS]: 1,
-        [QUOTA_TYPES.MAX_MESSAGES_PER_DAY]: 100,
-        [QUOTA_TYPES.MAX_MESSAGES_PER_MONTH]: 3000,
-        [QUOTA_TYPES.MAX_INBOXES]: 1,
-        [QUOTA_TYPES.MAX_TEAMS]: 1,
-        [QUOTA_TYPES.MAX_WEBHOOKS]: 5,
-        [QUOTA_TYPES.MAX_CAMPAIGNS]: 1,
-        [QUOTA_TYPES.MAX_STORAGE_MB]: 100,
-        [QUOTA_TYPES.MAX_BOTS]: 3,
-        // Bot usage quotas defaults
-        [QUOTA_TYPES.MAX_BOT_CALLS_PER_DAY]: 100,
-        [QUOTA_TYPES.MAX_BOT_CALLS_PER_MONTH]: 3000,
-        [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_DAY]: 50,
-        [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_MONTH]: 1500,
-        [QUOTA_TYPES.MAX_BOT_TOKENS_PER_DAY]: 10000,
-        [QUOTA_TYPES.MAX_BOT_TOKENS_PER_MONTH]: 300000
-      };
+      return defaultQuotas;
     }
   }
 
   /**
+   * Parse quotas from plan data
+   * @private
+   */
+  _parseQuotas(quotas, defaults) {
+    return {
+      [QUOTA_TYPES.MAX_AGENTS]: parseInt(quotas.max_agents) || defaults[QUOTA_TYPES.MAX_AGENTS],
+      [QUOTA_TYPES.MAX_CONNECTIONS]: parseInt(quotas.max_connections) || defaults[QUOTA_TYPES.MAX_CONNECTIONS],
+      [QUOTA_TYPES.MAX_MESSAGES_PER_DAY]: parseInt(quotas.max_messages_per_day) || defaults[QUOTA_TYPES.MAX_MESSAGES_PER_DAY],
+      [QUOTA_TYPES.MAX_MESSAGES_PER_MONTH]: parseInt(quotas.max_messages_per_month) || defaults[QUOTA_TYPES.MAX_MESSAGES_PER_MONTH],
+      [QUOTA_TYPES.MAX_INBOXES]: parseInt(quotas.max_inboxes) || defaults[QUOTA_TYPES.MAX_INBOXES],
+      [QUOTA_TYPES.MAX_TEAMS]: parseInt(quotas.max_teams) || defaults[QUOTA_TYPES.MAX_TEAMS],
+      [QUOTA_TYPES.MAX_WEBHOOKS]: parseInt(quotas.max_webhooks) || defaults[QUOTA_TYPES.MAX_WEBHOOKS],
+      [QUOTA_TYPES.MAX_CAMPAIGNS]: parseInt(quotas.max_campaigns) || defaults[QUOTA_TYPES.MAX_CAMPAIGNS],
+      [QUOTA_TYPES.MAX_STORAGE_MB]: parseInt(quotas.max_storage_mb) || defaults[QUOTA_TYPES.MAX_STORAGE_MB],
+      [QUOTA_TYPES.MAX_BOTS]: parseInt(quotas.max_bots) || defaults[QUOTA_TYPES.MAX_BOTS],
+      [QUOTA_TYPES.MAX_BOT_CALLS_PER_DAY]: parseInt(quotas.max_bot_calls_per_day) || defaults[QUOTA_TYPES.MAX_BOT_CALLS_PER_DAY],
+      [QUOTA_TYPES.MAX_BOT_CALLS_PER_MONTH]: parseInt(quotas.max_bot_calls_per_month) || defaults[QUOTA_TYPES.MAX_BOT_CALLS_PER_MONTH],
+      [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_DAY]: parseInt(quotas.max_bot_messages_per_day) || defaults[QUOTA_TYPES.MAX_BOT_MESSAGES_PER_DAY],
+      [QUOTA_TYPES.MAX_BOT_MESSAGES_PER_MONTH]: parseInt(quotas.max_bot_messages_per_month) || defaults[QUOTA_TYPES.MAX_BOT_MESSAGES_PER_MONTH],
+      [QUOTA_TYPES.MAX_BOT_TOKENS_PER_DAY]: parseInt(quotas.max_bot_tokens_per_day) || defaults[QUOTA_TYPES.MAX_BOT_TOKENS_PER_DAY],
+      [QUOTA_TYPES.MAX_BOT_TOKENS_PER_MONTH]: parseInt(quotas.max_bot_tokens_per_month) || defaults[QUOTA_TYPES.MAX_BOT_TOKENS_PER_MONTH]
+    };
+  }
+
+  /**
    * Get quota overrides for a user
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @returns {Promise<Object[]>} Array of overrides
    */
   async getQuotaOverrides(userId) {
     try {
-      const result = await this.db.query(
-        'SELECT quota_type, limit_value, reason, set_by FROM user_quota_overrides WHERE user_id = ?',
-        [userId]
+      const { data, error } = await SupabaseService.queryAsAdmin('user_quota_overrides', (query) =>
+        query.select('quota_key, quota_value, reason').eq('account_id', userId)
       );
+      
+      if (error || !data) {
+        return [];
+      }
 
-      return result.rows.map(row => ({
-        quotaType: row.quota_type,
-        limitValue: row.limit_value,
+      return data.map(row => ({
+        quotaType: row.quota_key,
+        limitValue: row.quota_value,
         reason: row.reason,
-        setBy: row.set_by
+        setBy: null
       }));
     } catch (error) {
       logger.error('Failed to get quota overrides', { error: error.message, userId });

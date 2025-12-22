@@ -111,7 +111,7 @@ export const useSingleMessageSender = ({ instance, onSuccess }: UseSingleMessage
         let pushname = "Cliente";
         try {
             const contactInfo = await getContactInfo(instance, number);
-            if (contactInfo.response && contactInfo.response.pushname) {
+            if (contactInfo.response?.pushname) {
                 pushname = contactInfo.response.pushname;
             }
         } catch (error) {

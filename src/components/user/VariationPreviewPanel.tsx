@@ -101,7 +101,7 @@ export function VariationPreviewPanel({
 
       const data = await response.json();
 
-      if (data.success && data.data && data.data.previews) {
+      if (data.success && data.data?.previews) {
         setPreviews(data.data.previews);
         setIsExpanded(true);
       } else {
@@ -135,7 +135,7 @@ export function VariationPreviewPanel({
     if (selections.length === 0) return message;
 
     // Criar array de partes da mensagem
-    const parts: Array<{ text: string; isVariation: boolean }> = [];
+    const parts: { text: string; isVariation: boolean }[] = [];
     let lastIndex = 0;
 
     // Ordenar seleções por posição na mensagem

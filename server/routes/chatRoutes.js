@@ -3,8 +3,9 @@ const axios = require('axios');
 const { logger } = require('../utils/logger');
 const { normalizePhoneNumber, validatePhoneFormat } = require('../utils/phoneUtils');
 const { validatePhoneWithAPI } = require('../services/PhoneValidationService');
-const { quotaMiddleware } = require('../middleware/quotaEnforcement');
+const { quotaMiddleware, getQuotaService, resolveUserId } = require('../middleware/quotaEnforcement');
 const { featureMiddleware } = require('../middleware/featureEnforcement');
+const QuotaService = require('../services/QuotaService');
 
 const router = express.Router();
 
@@ -19,6 +20,34 @@ const verifyUserToken = require('../middleware/verifyUserToken');
 // Importar serviços de variação
 const templateProcessor = require('../services/TemplateProcessor');
 const variationTracker = require('../services/VariationTracker');
+
+/**
+ * Helper to increment quota usage after successful message send
+ * @param {Object} req - Express request
+ * @param {string} userId - User ID for quota tracking
+ */
+async function incrementMessageQuota(req, userId) {
+  try {
+    const quotaService = getQuotaService(req);
+    if (!quotaService || !userId) {
+      logger.warn('Quota increment skipped - service or userId not available', { 
+        hasService: !!quotaService, 
+        hasUserId: !!userId 
+      });
+      return;
+    }
+    
+    await quotaService.incrementUsage(userId, QuotaService.QUOTA_TYPES.MAX_MESSAGES_PER_DAY, 1);
+    await quotaService.incrementUsage(userId, QuotaService.QUOTA_TYPES.MAX_MESSAGES_PER_MONTH, 1);
+    
+    logger.debug('Message quota incremented', { userId });
+  } catch (error) {
+    logger.error('Failed to increment message quota', { 
+      error: error.message, 
+      userId 
+    });
+  }
+}
 
 /**
  * Verifica se o identificador é um JID de grupo do WhatsApp
@@ -227,6 +256,10 @@ router.post('/send/text', verifyUserToken, quotaMiddleware.messages, async (req,
       await db.logSentMessage(userToken, validatedPhone, finalMessage, 'text', result);
     }
     
+    // Increment quota usage after successful send
+    const userId = resolveUserId(req);
+    await incrementMessageQuota(req, userId);
+    
     // Registrar variações usadas (se houver)
     if (processed.metadata.hasVariations && processed.selections.length > 0) {
       try {
@@ -235,7 +268,7 @@ router.post('/send/text', verifyUserToken, quotaMiddleware.messages, async (req,
           messageId: messageId || result.id || null,
           template: Body,
           selections: processed.selections,
-          recipient: normalizedPhone,
+          recipient: validatedPhone,
           userId: null // Pode ser adicionado se houver user_id disponível
         });
         
@@ -461,6 +494,10 @@ router.post('/send/image', verifyUserToken, quotaMiddleware.messages, async (req
     if (db) {
       await db.logSentMessage(userToken, validatedPhone, Caption || '[Imagem]', 'image', result);
     }
+    
+    // Increment quota usage after successful send
+    const userId = resolveUserId(req);
+    await incrementMessageQuota(req, userId);
     
     res.json({
       success: true,

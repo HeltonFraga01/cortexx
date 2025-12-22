@@ -359,7 +359,7 @@ export function BotSettings() {
                             variant="ghost"
                             size="icon"
                             className="h-6 w-6"
-                            onClick={() => copyToken(bot.accessToken!)}
+                            onClick={() => copyToken(bot.accessToken)}
                           >
                             <Copy className="h-3 w-3" />
                           </Button>

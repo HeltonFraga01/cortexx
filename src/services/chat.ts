@@ -533,7 +533,7 @@ export async function setDefaultBot(botId: number): Promise<AgentBot> {
   return extractData<AgentBot>(response)
 }
 
-export async function updateBotPriorities(priorities: Array<{ id: number; priority: number }>): Promise<AgentBot[]> {
+export async function updateBotPriorities(priorities: { id: number; priority: number }[]): Promise<AgentBot[]> {
   const response = await backendApi.put(`${BOTS_URL}/priorities`, { priorities })
   return extractData<AgentBot[]>(response)
 }
@@ -562,10 +562,10 @@ export interface AssignedBot {
   outgoingUrl: string
   includeHistory: boolean
   isDefault: boolean
-  inboxAssignments: Array<{
+  inboxAssignments: {
     inboxId: number
     inboxName: string
-  }>
+  }[]
   quotaUsage: BotQuotaUsage
 }
 

@@ -163,7 +163,7 @@ export function KanbanView({
       
       // Recarregar dados para refletir a mudança
       if (onRefresh) {
-        await onRefresh();
+        onRefresh();
       }
       
       toast.success('Status atualizado com sucesso!');

@@ -1779,6 +1779,7 @@ router.post('/contacts/import/wuzapi', requireAgentAuth(null), async (req, res) 
     });
 
   } catch (error) {
+    const { instance: reqInstance, inboxId: reqInboxId } = req.body || {};
     logger.error('Error importing contacts from WUZAPI for agent:', {
       error: error.message,
       status: error.response?.status,
@@ -1786,8 +1787,8 @@ router.post('/contacts/import/wuzapi', requireAgentAuth(null), async (req, res) 
       responseData: error.response?.data,
       code: error.code,
       agentId: req.agent?.id,
-      instance,
-      inboxId,
+      instance: reqInstance,
+      inboxId: reqInboxId,
       endpoint: '/api/agent/contacts/import/wuzapi',
       stack: error.stack
     });
@@ -1887,12 +1888,13 @@ router.post('/contacts/import/csv', requireAgentAuth(null), upload.single('file'
     });
 
   } catch (error) {
+    const { inboxId: reqInboxId } = req.body || {};
     logger.error('Error validating CSV for agent:', {
       error: error.message,
       agentId: req.agent?.id,
       filename: req.file?.originalname,
       fileSize: req.file?.size,
-      inboxId,
+      inboxId: reqInboxId,
       endpoint: '/api/agent/contacts/import/csv',
       stack: error.stack
     });

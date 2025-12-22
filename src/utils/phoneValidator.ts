@@ -73,7 +73,7 @@ function generatePhoneVariations(phone: string): string[] {
 export async function validatePhoneWithAPI(
   phone: string,
   userToken: string,
-  wuzapiBaseUrl: string = 'https://wzapi.wasend.com.br'
+  wuzapiBaseUrl = 'https://wzapi.wasend.com.br'
 ): Promise<PhoneValidationResult> {
   // Remover caracteres não numéricos
   const cleanPhone = phone.replace(/\D/g, '');

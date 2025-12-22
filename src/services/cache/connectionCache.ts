@@ -13,7 +13,7 @@ interface CacheEntry<T> {
 }
 
 export class ConnectionCache {
-  private cache: Map<string, CacheEntry<any>> = new Map();
+  private cache = new Map<string, CacheEntry<any>>();
 
   /**
    * Store data in cache with optional TTL
@@ -21,7 +21,7 @@ export class ConnectionCache {
    * @param data - Data to cache
    * @param ttl - Time to live in milliseconds (default: 5 minutes)
    */
-  set<T>(key: string, data: T, ttl: number = 300000): void {
+  set<T>(key: string, data: T, ttl = 300000): void {
     this.cache.set(key, {
       data,
       timestamp: Date.now(),

@@ -96,7 +96,7 @@ export const draftService = {
    * @param data - The send flow state to save
    * @param draftType - Type of draft (default: 'send_flow')
    */
-  async saveDraft(data: SendFlowState, draftType: string = 'send_flow'): Promise<Draft> {
+  async saveDraft(data: SendFlowState, draftType = 'send_flow'): Promise<Draft> {
     try {
       const response = await apiClient.post<DraftResponse>('/user/drafts', {
         draftType,
@@ -118,7 +118,7 @@ export const draftService = {
    * Load a draft by type (returns the most recent one)
    * @param draftType - Type of draft to load (default: 'send_flow')
    */
-  async loadDraft(draftType: string = 'send_flow'): Promise<SendFlowState | null> {
+  async loadDraft(draftType = 'send_flow'): Promise<SendFlowState | null> {
     try {
       const response = await apiClient.get<DraftListResponse>('/user/drafts', {
         params: { draft_type: draftType }
@@ -213,7 +213,7 @@ export const draftService = {
    * Check if a draft exists for the given type
    * @param draftType - Type of draft to check (default: 'send_flow')
    */
-  async hasDraft(draftType: string = 'send_flow'): Promise<boolean> {
+  async hasDraft(draftType = 'send_flow'): Promise<boolean> {
     try {
       const drafts = await this.listDrafts(draftType);
       return drafts.length > 0;

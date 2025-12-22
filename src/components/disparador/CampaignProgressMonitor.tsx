@@ -102,7 +102,7 @@ export function CampaignProgressMonitor({
   useEffect(() => {
     campaigns.forEach(campaign => {
       const progress = progressData[campaign.id];
-      if (progress && progress.status === 'completed') {
+      if (progress?.status === 'completed') {
         onCampaignComplete?.(campaign.id);
       }
     });

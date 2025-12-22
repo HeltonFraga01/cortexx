@@ -801,7 +801,7 @@ router.get('/history', verifyUserToken, async (req, res) => {
     // Get campaigns using SupabaseService
     const supabaseService = require('../services/SupabaseService');
     
-    const { data: campaigns, error } = await supabaseService.queryAsAdmin('campaigns', (query) => {
+    const { data: campaigns, error } = await supabaseService.queryAsAdmin('bulk_campaigns', (query) => {
       let q = query.select('*').eq('user_token', userToken);
       if (instance) {
         q = q.eq('instance', instance);
@@ -814,7 +814,7 @@ router.get('/history', verifyUserToken, async (req, res) => {
     }
 
     // Get total count
-    const { data: countData, error: countError } = await supabaseService.queryAsAdmin('campaigns', (query) => {
+    const { data: countData, error: countError } = await supabaseService.queryAsAdmin('bulk_campaigns', (query) => {
       let q = query.select('*', { count: 'exact', head: true }).eq('user_token', userToken);
       if (instance) {
         q = q.eq('instance', instance);

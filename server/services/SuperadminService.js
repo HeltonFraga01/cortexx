@@ -146,7 +146,7 @@ class SuperadminService {
    * @param {string} sessionToken - Session token to verify
    * @returns {Promise<Object|null>} Superadmin data if valid, null if invalid
    */
-  async verifySession(sessionToken) {
+  async verifySession(/* sessionToken */) {
     try {
       // This would verify the session token
       // Implementation depends on session storage mechanism

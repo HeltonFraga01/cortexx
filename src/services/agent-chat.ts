@@ -64,7 +64,7 @@ async function getRequestOptionsWithCsrf(): Promise<RequestInit> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json'
   }
-  if (authToken) headers['Authorization'] = `Bearer ${authToken}`
+  if (authToken) headers.Authorization = `Bearer ${authToken}`
   if (csrf) headers['CSRF-Token'] = csrf
   
   return {
@@ -712,21 +712,21 @@ export interface AgentMacro {
   id: number
   name: string
   description?: string
-  actions: Array<{
+  actions: {
     id: number
     actionType: string
     params: Record<string, unknown>
     actionOrder: number
-  }>
+  }[]
 }
 
 export interface MacroExecutionResult {
   macro: string
-  results: Array<{
+  results: {
     action: string
     success: boolean
     error?: string
-  }>
+  }[]
 }
 
 /**

@@ -18,7 +18,7 @@ const TypebotStart = ({ instance }: TypebotStartProps) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [variables, setVariables] = useState<
-    Array<{ name: string; value: string }>
+    { name: string; value: string }[]
   >([{ name: "pushName", value: "" }]);
 
   const handleStartTypebot = async (e: FormEvent) => {

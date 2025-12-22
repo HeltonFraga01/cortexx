@@ -43,8 +43,8 @@ export function validateTheme(theme: unknown): ThemeValidationResult {
 }
 
 class ThemeRegistry {
-  private themes: Map<string, EditTheme> = new Map();
-  private defaultThemeId: string = 'default';
+  private themes = new Map<string, EditTheme>();
+  private defaultThemeId = 'default';
 
   /**
    * Register a theme in the registry

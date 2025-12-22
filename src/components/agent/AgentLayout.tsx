@@ -284,10 +284,10 @@ const AgentLayout = ({ children }: AgentLayoutProps) => {
               {filteredNavItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.href || 
-                  (item.subItems && item.subItems.some(sub => location.pathname === sub.href));
+                  (item.subItems?.some(sub => location.pathname === sub.href));
                 const hasSubItems = item.subItems && item.subItems.length > 0;
                 const isExpanded = expandedMenu === item.name || 
-                  (item.subItems && item.subItems.some(sub => location.pathname === sub.href));
+                  (item.subItems?.some(sub => location.pathname === sub.href));
                 
                 if (hasSubItems) {
                   return (
@@ -319,7 +319,7 @@ const AgentLayout = ({ children }: AgentLayoutProps) => {
                               return (
                                 <button
                                   key={subItem.href}
-                                  onClick={() => handleDatabaseClick(subItem.connection!)}
+                                  onClick={() => handleDatabaseClick(subItem.connection)}
                                   disabled={isDisabled}
                                   className={cn(
                                     NAV_ITEM_BASE,
@@ -542,10 +542,10 @@ const AgentLayout = ({ children }: AgentLayoutProps) => {
               {filteredNavItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.href || 
-                  (item.subItems && item.subItems.some(sub => location.pathname === sub.href));
+                  (item.subItems?.some(sub => location.pathname === sub.href));
                 const hasSubItems = item.subItems && item.subItems.length > 0;
                 const isExpanded = expandedMenu === item.name || 
-                  (item.subItems && item.subItems.some(sub => location.pathname === sub.href));
+                  (item.subItems?.some(sub => location.pathname === sub.href));
                 
                 if (sidebarCollapsed) {
                   return (
@@ -599,7 +599,7 @@ const AgentLayout = ({ children }: AgentLayoutProps) => {
                               return (
                                 <button
                                   key={subItem.href}
-                                  onClick={() => handleDatabaseClick(subItem.connection!)}
+                                  onClick={() => handleDatabaseClick(subItem.connection)}
                                   disabled={isDisabled}
                                   className={cn(
                                     NAV_ITEM_BASE,

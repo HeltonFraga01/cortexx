@@ -58,7 +58,7 @@ export class NocoDBService {
         }
       );
 
-      if (response.data && response.data.list && response.data.list.length > 0) {
+      if (response.data?.list && response.data.list.length > 0) {
         return response.data.list[0];
       }
 
@@ -109,7 +109,7 @@ export class NocoDBService {
   /**
    * Lista todas as configurações (apenas para admin)
    */
-  async listAllConfigs(offset: number = 0, limit: number = 25): Promise<UserConfig[]> {
+  async listAllConfigs(offset = 0, limit = 25): Promise<UserConfig[]> {
     try {
       const response = await this.api.get(
         `/api/v1/db/data/noco/${this.projectId}/${this.tableId}`,

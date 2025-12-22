@@ -306,7 +306,7 @@ const DisparadorForm = ({ instance, onSuccess }: DisparadorFormProps) => {
     let pushname = "Cliente"; // Valor padrão
     try {
       const contactInfo = await getContactInfo(instance, contact.number);
-      if (contactInfo.response && contactInfo.response.pushname) {
+      if (contactInfo.response?.pushname) {
         pushname = contactInfo.response.pushname;
       }
     } catch (error) {

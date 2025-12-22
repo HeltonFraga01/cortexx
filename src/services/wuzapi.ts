@@ -269,7 +269,7 @@ export class WuzAPIService {
     return response.data;
   }
 
-  async getAvatar(userToken: string, phone: string, preview: boolean = true): Promise<{ URL: string; ID: string; Type: string; DirectPath?: string }> {
+  async getAvatar(userToken: string, phone: string, preview = true): Promise<{ URL: string; ID: string; Type: string; DirectPath?: string }> {
     // Usar rota do backend que faz proxy para WUZAPI
     const response = await backendApi.post<any>(`${this.baseUrl}/user/avatar`, 
       { Phone: phone, Preview: preview },

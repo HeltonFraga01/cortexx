@@ -14,18 +14,16 @@ const StripeService = require('../services/StripeService');
 const SubscriptionService = require('../services/SubscriptionService');
 const SupabaseService = require('../services/SupabaseService');
 const { validateCheckoutSession, validateCreditPurchase } = require('../validators/stripeValidator');
+const { normalizeToUUID } = require('../utils/userIdHelper');
 
 /**
  * Convert userId to UUID format if needed (32-char hash to UUID)
+ * Uses centralized userIdHelper for consistent conversion.
  * @param {string} userId - User ID (may be 32-char hash or UUID)
  * @returns {string} UUID formatted user ID
  */
 function toUuidFormat(userId) {
-  if (!userId) return userId;
-  if (userId.length === 32 && !userId.includes('-')) {
-    return `${userId.slice(0, 8)}-${userId.slice(8, 12)}-${userId.slice(12, 16)}-${userId.slice(16, 20)}-${userId.slice(20)}`;
-  }
-  return userId;
+  return normalizeToUUID(userId) || userId;
 }
 
 // ==================== Subscription Endpoints ====================

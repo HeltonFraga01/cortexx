@@ -150,14 +150,14 @@ const AgentDatabaseEditPage = () => {
 
           const column = nocoColumns.find(col => col.column_name === field.columnName);
 
-          if (column && column.uidt === 'Date' && currentValue instanceof Date) {
+          if (column?.uidt === 'Date' && currentValue instanceof Date) {
             const year = currentValue.getFullYear();
             const month = String(currentValue.getMonth() + 1).padStart(2, '0');
             const day = String(currentValue.getDate()).padStart(2, '0');
             transformedValue = `${year}-${month}-${day}`;
-          } else if (column && column.uidt === 'DateTime' && currentValue instanceof Date) {
+          } else if (column?.uidt === 'DateTime' && currentValue instanceof Date) {
             transformedValue = currentValue.toISOString();
-          } else if (column && column.colOptions && column.colOptions.options) {
+          } else if (column?.colOptions?.options) {
             const options = column.colOptions.options;
 
             if (Array.isArray(currentValue)) {

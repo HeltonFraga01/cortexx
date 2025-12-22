@@ -38,11 +38,11 @@ export interface CSVValidationResult {
 export interface ManualValidationResult {
   success: boolean;
   valid: Contact[];
-  invalid: Array<{
+  invalid: {
     number: string;
     reason: string;
     line: number;
-  }>;
+  }[];
   summary: {
     total: number;
     validCount: number;
@@ -202,7 +202,7 @@ class ContactImportService {
   /**
    * Valida tamanho de arquivo
    */
-  validateFileSize(file: File, maxSizeMB: number = 5): { valid: boolean; reason?: string } {
+  validateFileSize(file: File, maxSizeMB = 5): { valid: boolean; reason?: string } {
     const maxSizeBytes = maxSizeMB * 1024 * 1024;
 
     if (file.size > maxSizeBytes) {
@@ -261,8 +261,8 @@ class ContactImportService {
   validateContactVariables(
     contacts: Contact[],
     requiredVariables: string[]
-  ): { valid: boolean; missingVariables: Array<{ phone: string; missing: string[] }> } {
-    const missingVariables: Array<{ phone: string; missing: string[] }> = [];
+  ): { valid: boolean; missingVariables: { phone: string; missing: string[] }[] } {
+    const missingVariables: { phone: string; missing: string[] }[] = [];
 
     // Variáveis que são geradas dinamicamente no momento do envio
     const dynamicVariables = ['data', 'saudacao'];
@@ -289,7 +289,7 @@ class ContactImportService {
           return false;
         }
         // Validar se a variável existe no contato
-        return !contact.variables || !contact.variables[varName];
+        return !contact.variables?.[varName];
       });
 
       if (missing.length > 0) {
@@ -380,7 +380,7 @@ class ContactImportService {
   /**
    * Exporta contatos para CSV
    */
-  exportContactsToCSV(contacts: Contact[], filename: string = 'contatos.csv'): void {
+  exportContactsToCSV(contacts: Contact[], filename = 'contatos.csv'): void {
     if (contacts.length === 0) {
       return;
     }

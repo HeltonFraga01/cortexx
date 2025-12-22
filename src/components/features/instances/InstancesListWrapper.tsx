@@ -45,7 +45,7 @@ const InstancesListWrapper = () => {
     <InstancesList 
       instances={filteredInstances()} 
       isLoading={isLoading} 
-      error={error as Error | null} 
+      error={error} 
       refetch={refetch}
     />
   );

@@ -15,6 +15,7 @@ const { requireAdmin } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const SupabaseService = require('../services/SupabaseService');
 const wuzapiClient = require('../utils/wuzapiClient');
+const { normalizeToUUID } = require('../utils/userIdHelper');
 
 logger.info('adminUserInboxRoutes module loaded');
 
@@ -26,11 +27,8 @@ logger.info('adminUserInboxRoutes module loaded');
  * @returns {Promise<{account: Object, inbox: Object}>}
  */
 async function getOrCreateAccountAndInbox(userId, userToken, userName) {
-  // Convert userId to UUID format if needed
-  let uuidUserId = userId;
-  if (userId.length === 32 && !userId.includes('-')) {
-    uuidUserId = `${userId.slice(0, 8)}-${userId.slice(8, 12)}-${userId.slice(12, 16)}-${userId.slice(16, 20)}-${userId.slice(20)}`;
-  }
+  // Use helper to normalize to UUID format
+  const uuidUserId = normalizeToUUID(userId) || userId;
 
   // Try to find existing account by owner_user_id
   let { data: accounts } = await SupabaseService.getMany('accounts', { owner_user_id: uuidUserId });
@@ -123,11 +121,8 @@ router.get('/:userId/inboxes', requireAdmin, async (req, res) => {
     let account = null;
     let inboxes = [];
 
-    // Convert userId to UUID format if needed
-    let uuidUserId = userId;
-    if (userId.length === 32 && !userId.includes('-')) {
-      uuidUserId = `${userId.slice(0, 8)}-${userId.slice(8, 12)}-${userId.slice(12, 16)}-${userId.slice(16, 20)}-${userId.slice(20)}`;
-    }
+    // Use helper to normalize to UUID format
+    const uuidUserId = normalizeToUUID(userId) || userId;
 
     // First, try to get the account for this user by owner_user_id
     const { data: accountData } = await SupabaseService.getMany('accounts', { owner_user_id: uuidUserId });

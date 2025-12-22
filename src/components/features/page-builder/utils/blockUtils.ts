@@ -200,7 +200,7 @@ export function validateColumnWidths(widths: string[], columns: number): boolean
   
   if (allPercentages) {
     const sum = widths.reduce((acc, w) => {
-      const match = w.match(percentagePattern);
+      const match = percentagePattern.exec(w);
       return acc + (match ? parseFloat(match[1]) : 0);
     }, 0);
     return Math.abs(sum - 100) < 0.01; // Allow small floating point errors

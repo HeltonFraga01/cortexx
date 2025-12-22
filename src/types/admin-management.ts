@@ -276,8 +276,8 @@ export interface BulkNotifyRequest {
 }
 
 export interface BulkActionResult {
-  successful: Array<{ userId: string; [key: string]: unknown }>
-  failed: Array<{ userId: string; error: string }>
+  successful: { userId: string; [key: string]: unknown }[]
+  failed: { userId: string; error: string }[]
 }
 
 // ============================================================================

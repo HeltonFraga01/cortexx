@@ -219,7 +219,7 @@ const UserOverview = () => {
         'Content-Type': 'application/json'
       };
       if (session?.access_token) {
-        headers['Authorization'] = `Bearer ${session.access_token}`;
+        headers.Authorization = `Bearer ${session.access_token}`;
       }
       
       // Buscar estatísticas do dashboard

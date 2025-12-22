@@ -170,7 +170,7 @@ export class AccessibilityTestHelpers {
   /**
    * Verificar ARIA labels
    */
-  expectAriaLabels(elements: Array<{ selector: string; expectedLabel: string }>) {
+  expectAriaLabels(elements: { selector: string; expectedLabel: string }[]) {
     elements.forEach(({ selector, expectedLabel }) => {
       const element = screen.getByTestId(selector)
       expect(element).toHaveAttribute('aria-label', expectedLabel)
@@ -287,7 +287,7 @@ export class ApiMockHelpers {
       call[0].includes(endpoint)
     )
     
-    if (call && call[1] && call[1].body) {
+    if (call?.[1]?.body) {
       const actualPayload = JSON.parse(call[1].body)
       expect(actualPayload).toEqual(expectedPayload)
     } else {

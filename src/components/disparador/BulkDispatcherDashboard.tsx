@@ -65,7 +65,7 @@ export function BulkDispatcherDashboard({ instance, userToken }: BulkDispatcherD
   };
 
   // Load history
-  const loadHistory = async (page: number = 1) => {
+  const loadHistory = async (page = 1) => {
     try {
       setHistoryData(prev => ({ ...prev, loading: true }));
       

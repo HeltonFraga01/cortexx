@@ -24,7 +24,7 @@ type ConversationCallback = (payload: RealtimePostgresChangesPayload<Conversatio
 type MessageCallback = (payload: RealtimePostgresChangesPayload<ChatMessage>) => void
 
 // Active subscriptions tracking
-const activeChannels: Map<string, RealtimeChannel> = new Map()
+const activeChannels = new Map<string, RealtimeChannel>()
 
 /**
  * Subscribe to conversation changes for a specific account

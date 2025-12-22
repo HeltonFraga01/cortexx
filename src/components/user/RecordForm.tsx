@@ -26,12 +26,10 @@ export interface RecordFormRef {
   getValidationErrors: () => string[];
 }
 
-interface FieldValidation {
-  [fieldName: string]: {
+type FieldValidation = Record<string, {
     isValid: boolean;
     error?: string;
-  };
-}
+  }>;
 
 // Use the singleton instance for proper mocking in tests
 const databaseService = databaseConnectionsService;
@@ -253,7 +251,7 @@ const RecordForm = forwardRef<RecordFormRef, RecordFormProps>(({
 
     if (isFieldMetadata) {
       // Use type-specific validation for fields with metadata
-      return validateFieldValue(field as FieldMetadata, value);
+      return validateFieldValue(field, value);
     } else {
       // Fallback validation for fields without metadata
       if (field.editable && (value === null || value === undefined || value === '')) {
@@ -338,7 +336,7 @@ const RecordForm = forwardRef<RecordFormRef, RecordFormProps>(({
               {isFieldMetadata ? (
                 // Use TypeAwareFieldInput for fields with metadata
                 <TypeAwareFieldInput
-                  field={field as FieldMetadata}
+                  field={field}
                   value={fieldValue}
                   onChange={(value) => handleFieldChange(field.columnName, value)}
                   error={hasError ? fieldValidation.error : undefined}

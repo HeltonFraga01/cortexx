@@ -59,7 +59,7 @@ export function TemplateList({
   const [searchTerm, setSearchTerm] = useState('');
   const { confirm, ConfirmDialog } = useConfirmDialog();
 
-  const loadTemplates = async (page: number = 1) => {
+  const loadTemplates = async (page = 1) => {
     setIsLoading(true);
     try {
       const result = await templateService.list(page, pagination.limit);

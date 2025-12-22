@@ -2325,7 +2325,7 @@ router.delete('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res)
       return res.status(404).json({ success: false, error: 'Attribute not found' })
     }
 
-    await db.query('DELETE FROM contact_attributes WHERE id = ?', [id])
+    await req.app.locals.db.query('DELETE FROM contact_attributes WHERE id = ?', [id])
 
     logger.info('Contact attribute deleted', { userId, attributeId: id })
     res.json({ success: true, message: 'Attribute deleted' })
@@ -2462,7 +2462,7 @@ router.delete('/contacts/:jid/notes/:id', verifyUserToken, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Note not found' })
     }
 
-    await db.query('DELETE FROM contact_notes WHERE id = ?', [id])
+    await req.app.locals.db.query('DELETE FROM contact_notes WHERE id = ?', [id])
 
     logger.info('Contact note deleted', { userId, noteId: id })
     res.json({ success: true, message: 'Note deleted' })
@@ -2588,7 +2588,11 @@ router.get('/contacts/:jid/conversations', verifyUserToken, async (req, res) => 
     
     query += ' ORDER BY c.created_at DESC LIMIT 20'
 
-    const result = await db.query(query, params)
+    if (!req.app?.locals?.db) {
+      return res.status(500).json({ success: false, error: 'Database connection not available' })
+    }
+
+    const result = await req.app.locals.db.query(query, params)
 
     const conversations = (result.rows || []).map(row => ({
       id: row.id,
@@ -2700,15 +2704,19 @@ router.get('/macros', verifyUserToken, async (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid user token' })
     }
 
+    if (!req.app?.locals?.db) {
+      return res.status(500).json({ success: false, error: 'Database connection not available' })
+    }
+
     // Get macros with their actions
-    const macrosResult = await db.query(
+    const macrosResult = await req.app.locals.db.query(
       'SELECT id, name, description, created_at, updated_at FROM macros WHERE user_id = ? ORDER BY name ASC',
       [userId]
     )
 
     const macros = []
     for (const macro of (macrosResult.rows || [])) {
-      const actionsResult = await db.query(
+      const actionsResult = await req.app.locals.db.query(
         'SELECT id, action_type, params, action_order FROM macro_actions WHERE macro_id = ? ORDER BY action_order ASC',
         [macro.id]
       )

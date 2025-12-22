@@ -10,6 +10,7 @@
  */
 
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class LogRotationService {
   /**
@@ -144,23 +145,41 @@ class LogRotationService {
 
   /**
    * Cleanup error logs from campaign_error_logs table
+   * Note: campaign_error_logs table may not exist in Supabase - this is a no-op if table doesn't exist
    * @returns {Promise<number>} Number of deleted entries
    */
   async cleanupErrorLogs() {
     try {
-      const sql = `
-        DELETE FROM campaign_error_logs
-        WHERE created_at < datetime('now', '-' || ? || ' days')
-      `;
+      // Calculate cutoff date
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - this.errorRetentionDays);
+      const cutoffIso = cutoffDate.toISOString();
 
-      const { changes } = await this.db.query(sql, [this.errorRetentionDays]);
+      // Try to delete from campaign_error_logs using Supabase
+      // This table may not exist - if so, just return 0
+      const { data, error } = await SupabaseService.adminClient
+        .from('campaign_error_logs')
+        .delete()
+        .lt('created_at', cutoffIso)
+        .select('id');
+
+      if (error) {
+        // Table doesn't exist or other error - log and return 0
+        if (error.code === '42P01' || error.message?.includes('does not exist')) {
+          logger.debug('LogRotationService: campaign_error_logs table does not exist, skipping cleanup');
+          return 0;
+        }
+        throw error;
+      }
+
+      const deletedCount = data?.length || 0;
 
       logger.debug('LogRotationService: Error logs cleaned', {
-        deleted: changes || 0,
+        deleted: deletedCount,
         retentionDays: this.errorRetentionDays
       });
 
-      return changes || 0;
+      return deletedCount;
 
     } catch (error) {
       logger.error('LogRotationService: Error log cleanup failed', {

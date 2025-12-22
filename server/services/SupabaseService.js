@@ -182,28 +182,308 @@ class SupabaseService {
 
   /**
    * Execute raw SQL via RPC (admin only)
+   * NOTE: Supabase JS client doesn't support raw SQL execution directly.
+   * This method parses common SQL patterns and routes to appropriate Supabase methods.
+   * For complex queries, use queryAsAdmin with proper query builders.
+   * 
    * @param {string} sql - SQL query
-   * @param {object} params - Query parameters
-   * @returns {Promise<{data: any, error: any}>}
+   * @param {array|object} params - Query parameters (array for positional, object for named)
+   * @returns {Promise<{rows: array, data: any, error: any}>}
    */
-  async executeSql(sql, params = {}) {
+  async executeSql(sql, params = []) {
     try {
-      const { data, error } = await this.adminClient.rpc('exec_sql', {
-        query: sql,
-        params: JSON.stringify(params)
-      });
+      // Normalize params to array if object
+      const paramArray = Array.isArray(params) ? params : Object.values(params);
       
-      if (error) {
-        throw this.translateError(error);
+      // Parse the SQL to determine the operation type
+      const sqlLower = sql.trim().toLowerCase();
+      
+      // Handle SELECT queries
+      if (sqlLower.startsWith('select')) {
+        return await this._executeSelect(sql, paramArray);
       }
       
-      return { data, error: null };
+      // Handle INSERT queries
+      if (sqlLower.startsWith('insert')) {
+        return await this._executeInsert(sql, paramArray);
+      }
+      
+      // Handle UPDATE queries
+      if (sqlLower.startsWith('update')) {
+        return await this._executeUpdate(sql, paramArray);
+      }
+      
+      // Handle DELETE queries
+      if (sqlLower.startsWith('delete')) {
+        return await this._executeDelete(sql, paramArray);
+      }
+      
+      // For unsupported queries, log warning and return empty result
+      logger.warn('Unsupported SQL operation in executeSql', { 
+        sqlPreview: sql.substring(0, 100),
+        operation: sqlLower.split(' ')[0]
+      });
+      return { rows: [], data: null, error: null };
     } catch (error) {
       logger.error('executeSql failed', {
-        error: error.message
+        error: error.message,
+        sqlPreview: sql.substring(0, 100)
       });
-      return { data: null, error: this.translateError(error) };
+      return { rows: [], data: null, error: this.translateError(error) };
     }
+  }
+
+  /**
+   * Execute SELECT query by parsing SQL and using Supabase query builder
+   * @private
+   */
+  async _executeSelect(sql, params) {
+    try {
+      // Extract table name from SQL
+      const tableMatch = sql.match(/from\s+([a-z_]+)/i);
+      if (!tableMatch) {
+        throw new Error('Could not parse table name from SELECT query');
+      }
+      const tableName = tableMatch[1];
+      
+      // Build query using Supabase
+      let query = this.adminClient.from(tableName).select('*');
+      
+      // Parse WHERE conditions and apply them
+      const whereMatch = sql.match(/where\s+(.+?)(?:\s+order|\s+limit|\s+group|\s*$)/i);
+      if (whereMatch) {
+        const conditions = this._parseWhereConditions(whereMatch[1], params);
+        for (const condition of conditions) {
+          if (condition.operator === '=') {
+            query = query.eq(condition.column, condition.value);
+          } else if (condition.operator === 'in') {
+            query = query.in(condition.column, condition.value);
+          } else if (condition.operator === '>=') {
+            query = query.gte(condition.column, condition.value);
+          } else if (condition.operator === '<=') {
+            query = query.lte(condition.column, condition.value);
+          } else if (condition.operator === '>') {
+            query = query.gt(condition.column, condition.value);
+          } else if (condition.operator === '<') {
+            query = query.lt(condition.column, condition.value);
+          }
+        }
+      }
+      
+      // Parse ORDER BY
+      const orderMatch = sql.match(/order\s+by\s+([a-z_]+)(?:\s+(asc|desc))?/i);
+      if (orderMatch) {
+        const orderColumn = orderMatch[1];
+        const ascending = !orderMatch[2] || orderMatch[2].toLowerCase() === 'asc';
+        query = query.order(orderColumn, { ascending });
+      }
+      
+      // Parse LIMIT
+      const limitMatch = sql.match(/limit\s+(\d+)/i);
+      if (limitMatch) {
+        query = query.limit(parseInt(limitMatch[1]));
+      }
+      
+      const { data, error } = await query;
+      
+      if (error) {
+        throw error;
+      }
+      
+      return { rows: data || [], data: data, error: null };
+    } catch (error) {
+      logger.error('_executeSelect failed', { error: error.message });
+      return { rows: [], data: null, error };
+    }
+  }
+
+  /**
+   * Execute INSERT query
+   * @private
+   */
+  async _executeInsert(sql, params) {
+    try {
+      // Extract table name
+      const tableMatch = sql.match(/insert\s+into\s+([a-z_]+)/i);
+      if (!tableMatch) {
+        throw new Error('Could not parse table name from INSERT query');
+      }
+      const tableName = tableMatch[1];
+      
+      // Extract column names
+      const columnsMatch = sql.match(/\(([^)]+)\)\s*values/i);
+      if (!columnsMatch) {
+        throw new Error('Could not parse columns from INSERT query');
+      }
+      const columns = columnsMatch[1].split(',').map(c => c.trim());
+      
+      // Build insert data object
+      const insertData = {};
+      columns.forEach((col, idx) => {
+        if (idx < params.length) {
+          insertData[col] = params[idx];
+        }
+      });
+      
+      const { data, error } = await this.adminClient
+        .from(tableName)
+        .insert(insertData)
+        .select();
+      
+      if (error) {
+        throw error;
+      }
+      
+      return { rows: data || [], data: data, error: null };
+    } catch (error) {
+      logger.error('_executeInsert failed', { error: error.message });
+      return { rows: [], data: null, error };
+    }
+  }
+
+  /**
+   * Execute UPDATE query
+   * @private
+   */
+  async _executeUpdate(sql, params) {
+    try {
+      // Extract table name
+      const tableMatch = sql.match(/update\s+([a-z_]+)/i);
+      if (!tableMatch) {
+        throw new Error('Could not parse table name from UPDATE query');
+      }
+      const tableName = tableMatch[1];
+      
+      // Extract SET clause
+      const setMatch = sql.match(/set\s+(.+?)\s+where/i);
+      if (!setMatch) {
+        throw new Error('Could not parse SET clause from UPDATE query');
+      }
+      
+      // Parse SET assignments
+      const setClause = setMatch[1];
+      const assignments = setClause.split(',').map(a => a.trim());
+      const updateData = {};
+      let paramIndex = 0;
+      
+      for (const assignment of assignments) {
+        const [column] = assignment.split('=').map(s => s.trim());
+        if (assignment.includes('?')) {
+          updateData[column] = params[paramIndex++];
+        }
+      }
+      
+      // Build query
+      let query = this.adminClient.from(tableName).update(updateData);
+      
+      // Parse WHERE conditions
+      const whereMatch = sql.match(/where\s+(.+?)$/i);
+      if (whereMatch) {
+        const remainingParams = params.slice(paramIndex);
+        const conditions = this._parseWhereConditions(whereMatch[1], remainingParams);
+        for (const condition of conditions) {
+          if (condition.operator === '=') {
+            query = query.eq(condition.column, condition.value);
+          }
+        }
+      }
+      
+      const { data, error } = await query.select();
+      
+      if (error) {
+        throw error;
+      }
+      
+      return { rows: data || [], data: data, error: null };
+    } catch (error) {
+      logger.error('_executeUpdate failed', { error: error.message });
+      return { rows: [], data: null, error };
+    }
+  }
+
+  /**
+   * Execute DELETE query
+   * @private
+   */
+  async _executeDelete(sql, params) {
+    try {
+      // Extract table name
+      const tableMatch = sql.match(/delete\s+from\s+([a-z_]+)/i);
+      if (!tableMatch) {
+        throw new Error('Could not parse table name from DELETE query');
+      }
+      const tableName = tableMatch[1];
+      
+      // Build query
+      let query = this.adminClient.from(tableName).delete();
+      
+      // Parse WHERE conditions
+      const whereMatch = sql.match(/where\s+(.+?)$/i);
+      if (whereMatch) {
+        const conditions = this._parseWhereConditions(whereMatch[1], params);
+        for (const condition of conditions) {
+          if (condition.operator === '=') {
+            query = query.eq(condition.column, condition.value);
+          } else if (condition.operator === 'in') {
+            query = query.in(condition.column, condition.value);
+          }
+        }
+      }
+      
+      const { data, error } = await query;
+      
+      if (error) {
+        throw error;
+      }
+      
+      return { rows: [], data: null, error: null };
+    } catch (error) {
+      logger.error('_executeDelete failed', { error: error.message });
+      return { rows: [], data: null, error };
+    }
+  }
+
+  /**
+   * Parse WHERE conditions from SQL
+   * @private
+   */
+  _parseWhereConditions(whereClause, params) {
+    const conditions = [];
+    let paramIndex = 0;
+    
+    // Split by AND (simple parsing, doesn't handle OR or complex expressions)
+    const parts = whereClause.split(/\s+and\s+/i);
+    
+    for (const part of parts) {
+      // Handle IN clause
+      const inMatch = part.match(/([a-z_]+)\s+in\s*\(([^)]+)\)/i);
+      if (inMatch) {
+        const column = inMatch[1];
+        const placeholders = inMatch[2].split(',').map(p => p.trim());
+        const values = [];
+        for (const ph of placeholders) {
+          if (ph === '?') {
+            values.push(params[paramIndex++]);
+          } else {
+            values.push(ph.replace(/'/g, ''));
+          }
+        }
+        conditions.push({ column, operator: 'in', value: values });
+        continue;
+      }
+      
+      // Handle comparison operators
+      const compMatch = part.match(/([a-z_]+)\s*(>=|<=|>|<|=)\s*\?/i);
+      if (compMatch) {
+        conditions.push({
+          column: compMatch[1],
+          operator: compMatch[2],
+          value: params[paramIndex++]
+        });
+      }
+    }
+    
+    return conditions;
   }
 
   /**
@@ -411,30 +691,14 @@ class SupabaseService {
   }
 
   /**
-   * Execute raw SQL (for compatibility)
+   * Execute raw SQL with array params (for compatibility)
+   * Routes to executeSql which now handles SQL parsing
    * @param {string} sql - SQL query
    * @param {array} params - Query parameters
    * @returns {Promise<{rows: array, error: any}>}
    */
-  async executeSql(sql, params = []) {
-    try {
-      // Use RPC for raw SQL execution
-      const { data, error } = await this.adminClient.rpc('execute_sql', {
-        query: sql,
-        params: params
-      });
-      
-      if (error) {
-        // If RPC doesn't exist, log warning
-        logger.warn('executeSql RPC not available, returning empty result');
-        return { rows: [], error: null };
-      }
-      
-      return { rows: data || [], error: null };
-    } catch (error) {
-      logger.error('executeSql failed', { sql, error: error.message });
-      return { rows: [], error };
-    }
+  async executeSqlWithArrayParams(sql, params = []) {
+    return this.executeSql(sql, params);
   }
 }
 

@@ -184,7 +184,7 @@ export interface BulkResult {
   totalUsers: number;
   successCount: number;
   failureCount: number;
-  failures: Array<{ userId: string; error: string }>;
+  failures: { userId: string; error: string }[];
 }
 
 // API Response types

@@ -307,7 +307,7 @@ function mapRecordsToEvents(
         
         if (typeof rawDateValue === 'string') {
           // Check if it's an ISO date string (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss)
-          if (rawDateValue.match(/^\d{4}-\d{2}-\d{2}/)) {
+          if (/^\d{4}-\d{2}-\d{2}/.exec(rawDateValue)) {
             // Extract date parts to create local date
             const dateParts = rawDateValue.split(/[-T:]/);
             const year = parseInt(dateParts[0], 10);

@@ -40,8 +40,10 @@ class Database {
       if (error) throw error;
       return { rows: [{ test: 1 }] };
     }
-    // Route to Supabase RPC or direct query
-    return SupabaseService.executeSql(sql, params);
+    // Route to Supabase SQL parser
+    const result = await SupabaseService.executeSql(sql, params);
+    // Ensure we always return { rows: [] } format for compatibility
+    return { rows: result.rows || result.data || [] };
   }
 
   // Branding config methods

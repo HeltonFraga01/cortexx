@@ -129,7 +129,7 @@ export function ContactPanel({ conversation, onClose, onNavigateToConversation }
       
       conversationQueries.forEach(query => {
         const key = JSON.stringify(query.queryKey)
-        previousData[key] = queryClient.getQueryData(query.queryKey) as ConversationsResponse | undefined
+        previousData[key] = queryClient.getQueryData(query.queryKey)
       })
       
       conversationQueries.forEach(query => {
@@ -168,7 +168,7 @@ export function ContactPanel({ conversation, onClose, onNavigateToConversation }
       
       conversationQueries.forEach(query => {
         const key = JSON.stringify(query.queryKey)
-        previousData[key] = queryClient.getQueryData(query.queryKey) as ConversationsResponse | undefined
+        previousData[key] = queryClient.getQueryData(query.queryKey)
       })
       
       conversationQueries.forEach(query => {
@@ -210,7 +210,7 @@ export function ContactPanel({ conversation, onClose, onNavigateToConversation }
       
       conversationQueries.forEach(query => {
         const key = JSON.stringify(query.queryKey)
-        previousData[key] = queryClient.getQueryData(query.queryKey) as ConversationsResponse | undefined
+        previousData[key] = queryClient.getQueryData(query.queryKey)
       })
       
       conversationQueries.forEach(query => {

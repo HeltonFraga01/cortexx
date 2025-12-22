@@ -9,6 +9,7 @@
 
 const { logger } = require('../utils/logger');
 const crypto = require('crypto');
+const SupabaseService = require('./SupabaseService');
 
 // User features - controlled by subscription plans
 const USER_FEATURES = {
@@ -112,6 +113,7 @@ class FeatureFlagService {
 
   /**
    * Check if a feature is enabled for a user
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @param {string} featureName - Feature name
    * @returns {Promise<boolean>} True if enabled
@@ -119,13 +121,12 @@ class FeatureFlagService {
   async isFeatureEnabled(userId, featureName) {
     try {
       // Check for override first
-      const overrideResult = await this.db.query(
-        'SELECT enabled FROM user_feature_overrides WHERE user_id = ? AND feature_name = ?',
-        [userId, featureName]
+      const { data: overrides, error } = await SupabaseService.queryAsAdmin('user_feature_overrides', (query) =>
+        query.select('enabled').eq('account_id', userId).eq('feature_key', featureName)
       );
 
-      if (overrideResult.rows.length > 0) {
-        return overrideResult.rows[0].enabled === 1;
+      if (!error && overrides && overrides.length > 0) {
+        return overrides[0].enabled === true;
       }
 
       // Fall back to plan default
@@ -139,6 +140,7 @@ class FeatureFlagService {
 
   /**
    * Set a feature override for a user
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @param {string} featureName - Feature name
    * @param {boolean} enabled - Whether feature is enabled
@@ -152,26 +154,24 @@ class FeatureFlagService {
       }
 
       const now = new Date().toISOString();
-      const enabledInt = enabled ? 1 : 0;
       
-      const existing = await this.db.query(
-        'SELECT id FROM user_feature_overrides WHERE user_id = ? AND feature_name = ?',
-        [userId, featureName]
+      const { data: existing, error: findError } = await SupabaseService.queryAsAdmin('user_feature_overrides', (query) =>
+        query.select('id').eq('account_id', userId).eq('feature_key', featureName)
       );
 
-      if (existing.rows.length > 0) {
-        await this.db.query(
-          `UPDATE user_feature_overrides 
-           SET enabled = ?, set_by = ?, updated_at = ?
-           WHERE user_id = ? AND feature_name = ?`,
-          [enabledInt, adminId, now, userId, featureName]
-        );
+      if (!findError && existing && existing.length > 0) {
+        await SupabaseService.update('user_feature_overrides', existing[0].id, {
+          enabled: enabled,
+          reason: adminId,
+          updated_at: now
+        });
       } else {
-        await this.db.query(
-          `INSERT INTO user_feature_overrides (id, user_id, feature_name, enabled, set_by, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [this.generateId(), userId, featureName, enabledInt, adminId, now, now]
-        );
+        await SupabaseService.insert('user_feature_overrides', {
+          account_id: userId,
+          feature_key: featureName,
+          enabled: enabled,
+          reason: adminId
+        });
       }
 
       logger.info('Feature override set', { userId, featureName, enabled, adminId });
@@ -185,6 +185,7 @@ class FeatureFlagService {
 
   /**
    * Remove a feature override
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @param {string} featureName - Feature name
    * @param {string} adminId - Admin removing the override
@@ -192,10 +193,13 @@ class FeatureFlagService {
    */
   async removeFeatureOverride(userId, featureName, adminId) {
     try {
-      await this.db.query(
-        'DELETE FROM user_feature_overrides WHERE user_id = ? AND feature_name = ?',
-        [userId, featureName]
+      const { error } = await SupabaseService.queryAsAdmin('user_feature_overrides', (query) =>
+        query.delete().eq('account_id', userId).eq('feature_key', featureName)
       );
+
+      if (error) {
+        throw error;
+      }
 
       logger.info('Feature override removed', { userId, featureName, adminId });
     } catch (error) {
@@ -206,6 +210,7 @@ class FeatureFlagService {
 
   /**
    * Propagate plan feature change to all users on that plan
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} planId - Plan ID
    * @param {string} featureName - Feature name
    * @param {boolean} enabled - New value
@@ -213,25 +218,33 @@ class FeatureFlagService {
    */
   async propagatePlanFeatureChange(planId, featureName, enabled) {
     try {
-      // Get users on this plan without override for this feature
-      const result = await this.db.query(
-        `SELECT s.user_id FROM user_subscriptions s
-         WHERE s.plan_id = ?
-         AND NOT EXISTS (
-           SELECT 1 FROM user_feature_overrides o 
-           WHERE o.user_id = s.user_id AND o.feature_name = ?
-         )`,
-        [planId, featureName]
+      // Get users on this plan
+      const { data: subscriptions, error: subError } = await SupabaseService.queryAsAdmin('user_subscriptions', (query) =>
+        query.select('account_id').eq('plan_id', planId)
       );
+
+      if (subError || !subscriptions) {
+        return 0;
+      }
+
+      // Get users with overrides for this feature
+      const { data: overrides } = await SupabaseService.queryAsAdmin('user_feature_overrides', (query) =>
+        query.select('account_id').eq('feature_key', featureName)
+      );
+
+      const overrideAccountIds = new Set((overrides || []).map(o => o.account_id));
+      
+      // Count users without overrides
+      const usersAffected = subscriptions.filter(s => !overrideAccountIds.has(s.account_id)).length;
 
       logger.info('Plan feature change propagated', {
         planId,
         featureName,
         enabled,
-        usersAffected: result.rows.length
+        usersAffected
       });
 
-      return result.rows.length;
+      return usersAffected;
     } catch (error) {
       logger.error('Failed to propagate feature change', { error: error.message, planId, featureName });
       throw error;
@@ -263,23 +276,33 @@ class FeatureFlagService {
 
   /**
    * Get plan features for a user
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @returns {Promise<Object>} Plan features
    */
   async getPlanFeatures(userId) {
     try {
-      const result = await this.db.query(
-        `SELECT p.features FROM user_subscriptions s
-         JOIN plans p ON s.plan_id = p.id
-         WHERE s.user_id = ?`,
-        [userId]
+      // Get user subscription with plan
+      const { data: subscriptions, error: subError } = await SupabaseService.queryAsAdmin('user_subscriptions', (query) =>
+        query.select('plan_id').eq('account_id', userId)
       );
-
-      if (result.rows.length === 0) {
+      
+      if (subError || !subscriptions || subscriptions.length === 0) {
+        return {};
+      }
+      
+      const planId = subscriptions[0].plan_id;
+      
+      // Get plan features
+      const { data: plans, error: planError } = await SupabaseService.queryAsAdmin('plans', (query) =>
+        query.select('features').eq('id', planId)
+      );
+      
+      if (planError || !plans || plans.length === 0) {
         return {};
       }
 
-      const features = result.rows[0].features;
+      const features = plans[0].features;
       return typeof features === 'string' ? JSON.parse(features) : features || {};
     } catch (error) {
       logger.error('Failed to get plan features', { error: error.message, userId });
@@ -289,20 +312,24 @@ class FeatureFlagService {
 
   /**
    * Get feature overrides for a user
+   * Uses Supabase query builder instead of raw SQL
    * @param {string} userId - User ID
    * @returns {Promise<Object[]>} Array of overrides
    */
   async getFeatureOverrides(userId) {
     try {
-      const result = await this.db.query(
-        'SELECT feature_name, enabled, set_by FROM user_feature_overrides WHERE user_id = ?',
-        [userId]
+      const { data, error } = await SupabaseService.queryAsAdmin('user_feature_overrides', (query) =>
+        query.select('feature_key, enabled, reason').eq('account_id', userId)
       );
+      
+      if (error || !data) {
+        return [];
+      }
 
-      return result.rows.map(row => ({
-        featureName: row.feature_name,
-        enabled: row.enabled === 1,
-        setBy: row.set_by
+      return data.map(row => ({
+        featureName: row.feature_key,
+        enabled: row.enabled === true,
+        setBy: row.reason
       }));
     } catch (error) {
       logger.error('Failed to get feature overrides', { error: error.message, userId });

@@ -37,7 +37,7 @@ export const adminDashboardService = {
   /**
    * Get growth metrics over time
    */
-  async getGrowthMetrics(days: number = 30): Promise<GrowthMetric[]> {
+  async getGrowthMetrics(days = 30): Promise<GrowthMetric[]> {
     const response = await api.get<ApiResponse<GrowthMetric[]>>(`${BASE_URL}/growth?days=${days}`)
     return response.data?.data || []
   }

@@ -65,13 +65,13 @@ export interface CampaignProgressEnhanced {
   elapsedTime: string | null;
   elapsedMs?: number;
   processedCount?: number;
-  recentErrors: Array<{
+  recentErrors: {
     contactId?: string;
     contactPhone?: string;
     errorType: string;
     errorMessage: string;
     timestamp: string;
-  }>;
+  }[];
 }
 
 export interface CampaignProgress {
@@ -142,10 +142,10 @@ export interface CampaignComparison {
   };
   best: CampaignReport | null;
   worst: CampaignReport | null;
-  insights: Array<{
+  insights: {
     type: 'success' | 'warning' | 'info';
     message: string;
-  }>;
+  }[];
 }
 
 export interface PaginationParams {
@@ -591,8 +591,8 @@ class BulkCampaignService {
    */
   async listByStatus(
     status: CampaignCategory,
-    page: number = 1,
-    limit: number = 20,
+    page = 1,
+    limit = 20,
     instance?: string
   ): Promise<PaginatedResponse<Campaign>> {
     const statusMap: Record<CampaignCategory, string[]> = {

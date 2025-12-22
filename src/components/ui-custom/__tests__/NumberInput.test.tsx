@@ -270,7 +270,7 @@ describe('NumberInput', () => {
   describe('Focus Behavior', () => {
     it('should convert formatted value to raw number on focus', () => {
       render(<NumberInput value={1234} mode="integer" />);
-      const input = screen.getByRole('textbox') as HTMLInputElement;
+      const input = screen.getByRole('textbox');
       
       // Initially formatted
       expect(input).toHaveValue('1.234');

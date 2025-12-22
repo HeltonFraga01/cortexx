@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const SupabaseService = require('./SupabaseService');
 const StripeService = require('./StripeService');
 const PlanService = require('./PlanService');
+const { normalizeToUUID, isUUID, isWuzapiHash } = require('../utils/userIdHelper');
 
 const SUBSCRIPTION_STATUS = {
   TRIAL: 'trial',
@@ -39,15 +40,17 @@ class SubscriptionService {
 
   /**
    * Create an account for a user who doesn't have one yet
-   * @param {string} userId - WUZAPI user ID (32-char hash)
+   * @param {string} userId - WUZAPI user ID (32-char hash or UUID)
    * @returns {Promise<string|null>} Account ID or null if failed
    */
   async createAccountForUser(userId) {
     try {
-      // Convert userId to UUID format
-      let uuidUserId = userId;
-      if (userId && userId.length === 32 && !userId.includes('-')) {
-        uuidUserId = `${userId.slice(0, 8)}-${userId.slice(8, 12)}-${userId.slice(12, 16)}-${userId.slice(16, 20)}-${userId.slice(20)}`;
+      // Use helper to normalize to UUID format
+      const uuidUserId = normalizeToUUID(userId);
+      
+      if (!uuidUserId) {
+        logger.error('Invalid userId format for account creation', { userId: userId?.substring(0, 8) + '...' });
+        return null;
       }
 
       const now = new Date().toISOString();
@@ -57,7 +60,7 @@ class SubscriptionService {
         id: accountId,
         name: `Account - ${userId.substring(0, 8)}`,
         owner_user_id: uuidUserId,
-        wuzapi_token: userId,
+        wuzapi_token: userId, // Keep original format for WUZAPI compatibility
         timezone: 'America/Sao_Paulo',
         locale: 'pt-BR',
         status: 'active',
@@ -85,22 +88,26 @@ class SubscriptionService {
   }
 
   /**
-   * Get account_id from user_id (which is the WUZAPI user hash)
+   * Get account_id from user_id (which is the WUZAPI user hash or UUID)
    * The user_id maps to accounts.owner_user_id
+   * 
+   * Uses userIdHelper for consistent ID normalization.
    */
   async getAccountIdFromUserId(userId) {
     try {
-      // Convert userId to UUID format if needed
-      let uuidUserId = userId;
-      if (userId && userId.length === 32 && !userId.includes('-')) {
-        uuidUserId = `${userId.slice(0, 8)}-${userId.slice(8, 12)}-${userId.slice(12, 16)}-${userId.slice(16, 20)}-${userId.slice(20)}`;
+      // Use helper to normalize to UUID format
+      const uuidUserId = normalizeToUUID(userId);
+      
+      if (!uuidUserId) {
+        logger.debug('Invalid userId format', { userId: userId?.substring(0, 8) + '...' });
+        return null;
       }
 
       const { data: accounts, error } = await SupabaseService.getMany('accounts', { owner_user_id: uuidUserId });
       
       if (error) throw error;
       if (!accounts || accounts.length === 0) {
-        // Try by wuzapi_token as fallback
+        // Try by wuzapi_token as fallback (for legacy compatibility)
         const { data: accountsByToken } = await SupabaseService.getMany('accounts', { wuzapi_token: userId });
         if (accountsByToken && accountsByToken.length > 0) {
           return accountsByToken[0].id;

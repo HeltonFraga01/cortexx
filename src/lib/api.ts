@@ -1350,7 +1350,7 @@ export const parseCsvContacts = (
       .filter((line) => line.trim() !== "")
       .map((line) => {
         const values = parseCSVLine(line);
-        const contact: { [key: string]: string } = {};
+        const contact: Record<string, string> = {};
 
         correctedHeaders.forEach((header, index) => {
           let value = values[index] || "";
@@ -1620,7 +1620,7 @@ const cleanExpiredCache = () => {
 export const getContactInfo = async (
   instance: string,
   phoneNumber: string,
-  timeout: number = 5000
+  timeout = 5000
 ): Promise<ApiResponse<ContactInfo>> => {
   try {
     // Garantir que o número esteja formatado corretamente (com código do país)
@@ -1908,7 +1908,7 @@ async function fetchWithCsrf<T>(
   }
   
   if (jwtToken) {
-    headers['Authorization'] = `Bearer ${jwtToken}`
+    headers.Authorization = `Bearer ${jwtToken}`
   }
   
   const response = await fetch(url, {

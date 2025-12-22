@@ -66,11 +66,11 @@ export interface InteractiveData {
   type: 'buttons' | 'list' | 'buttons_response' | 'list_response'
   text?: string
   buttonText?: string
-  buttons?: Array<{ id: string; text: string }>
-  sections?: Array<{ 
+  buttons?: { id: string; text: string }[]
+  sections?: { 
     title: string
-    rows: Array<{ id: string; title: string; description?: string }> 
-  }>
+    rows: { id: string; title: string; description?: string }[] 
+  }[]
   selectedId?: string
   selectedTitle?: string
 }
@@ -458,11 +458,11 @@ export interface Macro {
 
 export interface MacroExecutionResult {
   macro: string
-  results: Array<{
+  results: {
     action: string
     success: boolean
     error?: string
-  }>
+  }[]
 }
 
 // ==================== Bot Test Chat Types ====================

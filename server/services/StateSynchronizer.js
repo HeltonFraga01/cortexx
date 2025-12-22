@@ -12,6 +12,7 @@
  */
 
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class StateSynchronizer {
   /**
@@ -102,23 +103,18 @@ class StateSynchronizer {
    */
   async syncCampaignState(campaignId, status, progress) {
     try {
-      const sql = `
-        UPDATE campaigns 
-        SET current_index = ?,
-            sent_count = ?,
-            failed_count = ?,
-            status = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `;
+      const { error } = await SupabaseService.adminClient
+        .from('bulk_campaigns')
+        .update({
+          current_index: progress?.currentIndex || 0,
+          sent_count: progress?.stats?.sent || 0,
+          failed_count: progress?.stats?.failed || 0,
+          status: status,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', campaignId);
 
-      await this.db.query(sql, [
-        progress?.currentIndex || 0,
-        progress?.stats?.sent || 0,
-        progress?.stats?.failed || 0,
-        status,
-        campaignId
-      ]);
+      if (error) throw error;
 
       logger.debug('Campaign state synced', {
         campaignId,
@@ -146,15 +142,14 @@ class StateSynchronizer {
       logger.info('Restoring running campaigns after restart');
 
       // Find campaigns that were running or had active locks
-      const sql = `
-        SELECT * FROM campaigns 
-        WHERE status = 'running' 
-           OR (processing_lock IS NOT NULL AND status != 'completed' AND status != 'cancelled' AND status != 'failed')
-      `;
+      const { data: rows, error } = await SupabaseService.adminClient
+        .from('bulk_campaigns')
+        .select('*')
+        .or('status.eq.running,and(processing_lock.not.is.null,status.not.in.(completed,cancelled,failed))');
 
-      const { rows } = await this.db.query(sql);
+      if (error) throw error;
 
-      if (rows.length === 0) {
+      if (!rows || rows.length === 0) {
         logger.info('No campaigns to restore');
         return [];
       }
@@ -169,16 +164,17 @@ class StateSynchronizer {
       for (const campaign of rows) {
         try {
           // Mark as paused and clear lock
-          const updateSql = `
-            UPDATE campaigns 
-            SET status = 'paused',
-                processing_lock = NULL,
-                lock_acquired_at = NULL,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-          `;
+          const { error: updateError } = await SupabaseService.adminClient
+            .from('bulk_campaigns')
+            .update({
+              status: 'paused',
+              processing_lock: null,
+              lock_acquired_at: null,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', campaign.id);
 
-          await this.db.query(updateSql, [campaign.id]);
+          if (updateError) throw updateError;
 
           logger.info('Campaign restored as paused', {
             campaignId: campaign.id,
@@ -227,13 +223,14 @@ class StateSynchronizer {
       const inconsistencies = [];
 
       // 1. Check for campaigns marked as running in DB but not in memory
-      const runningInDbSql = `
-        SELECT id, name, status FROM campaigns 
-        WHERE status = 'running'
-      `;
-      const { rows: runningInDb } = await this.db.query(runningInDbSql);
+      const { data: runningInDb, error: runningError } = await SupabaseService.adminClient
+        .from('bulk_campaigns')
+        .select('id, name, status')
+        .eq('status', 'running');
 
-      for (const campaign of runningInDb) {
+      if (runningError) throw runningError;
+
+      for (const campaign of (runningInDb || [])) {
         const queue = this.scheduler.getActiveQueue(campaign.id);
         if (!queue) {
           inconsistencies.push({
@@ -250,10 +247,14 @@ class StateSynchronizer {
       // 2. Check for campaigns in memory but with wrong status in DB
       const activeQueues = this.scheduler.getActiveQueues();
       for (const { campaignId, status } of activeQueues) {
-        const checkSql = 'SELECT id, name, status FROM campaigns WHERE id = ?';
-        const { rows } = await this.db.query(checkSql, [campaignId]);
+        const { data: rows, error: checkError } = await SupabaseService.adminClient
+          .from('bulk_campaigns')
+          .select('id, name, status')
+          .eq('id', campaignId);
 
-        if (rows.length > 0 && rows[0].status !== status) {
+        if (checkError) throw checkError;
+
+        if (rows && rows.length > 0 && rows[0].status !== status) {
           inconsistencies.push({
             type: 'STATUS_MISMATCH',
             campaignId,
@@ -266,14 +267,16 @@ class StateSynchronizer {
       }
 
       // 3. Check for stale locks (older than 10 minutes)
-      const staleLocksSql = `
-        SELECT id, name, processing_lock, lock_acquired_at FROM campaigns 
-        WHERE processing_lock IS NOT NULL 
-          AND lock_acquired_at < datetime('now', '-10 minutes')
-      `;
-      const { rows: staleLocks } = await this.db.query(staleLocksSql);
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      const { data: staleLocks, error: staleError } = await SupabaseService.adminClient
+        .from('bulk_campaigns')
+        .select('id, name, processing_lock, lock_acquired_at')
+        .not('processing_lock', 'is', null)
+        .lt('lock_acquired_at', tenMinutesAgo);
 
-      for (const campaign of staleLocks) {
+      if (staleError) throw staleError;
+
+      for (const campaign of (staleLocks || [])) {
         inconsistencies.push({
           type: 'STALE_LOCK',
           campaignId: campaign.id,
@@ -319,10 +322,10 @@ class StateSynchronizer {
           switch (inconsistency.type) {
             case 'RUNNING_NOT_IN_MEMORY':
               // Mark as paused since it's not actually running
-              await this.db.query(
-                'UPDATE campaigns SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                ['paused', inconsistency.campaignId]
-              );
+              await SupabaseService.adminClient
+                .from('bulk_campaigns')
+                .update({ status: 'paused', updated_at: new Date().toISOString() })
+                .eq('id', inconsistency.campaignId);
               logger.info('Corrected RUNNING_NOT_IN_MEMORY', {
                 campaignId: inconsistency.campaignId
               });
@@ -331,10 +334,10 @@ class StateSynchronizer {
 
             case 'STATUS_MISMATCH':
               // Update DB to match memory status
-              await this.db.query(
-                'UPDATE campaigns SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                [inconsistency.memoryStatus, inconsistency.campaignId]
-              );
+              await SupabaseService.adminClient
+                .from('bulk_campaigns')
+                .update({ status: inconsistency.memoryStatus, updated_at: new Date().toISOString() })
+                .eq('id', inconsistency.campaignId);
               logger.info('Corrected STATUS_MISMATCH', {
                 campaignId: inconsistency.campaignId,
                 newStatus: inconsistency.memoryStatus
@@ -344,10 +347,14 @@ class StateSynchronizer {
 
             case 'STALE_LOCK':
               // Clear stale lock
-              await this.db.query(
-                'UPDATE campaigns SET processing_lock = NULL, lock_acquired_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                [inconsistency.campaignId]
-              );
+              await SupabaseService.adminClient
+                .from('bulk_campaigns')
+                .update({ 
+                  processing_lock: null, 
+                  lock_acquired_at: null, 
+                  updated_at: new Date().toISOString() 
+                })
+                .eq('id', inconsistency.campaignId);
               logger.info('Corrected STALE_LOCK', {
                 campaignId: inconsistency.campaignId
               });

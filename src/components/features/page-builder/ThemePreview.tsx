@@ -192,7 +192,7 @@ async function fetchNocoDBRecords(
   connection: DatabaseConnection,
   userLinkField?: string,
   userToken?: string,
-  limit: number = 10
+  limit = 10
 ): Promise<{ records: Record<string, any>[]; error?: string }> {
   try {
     const baseURL = connection.host;

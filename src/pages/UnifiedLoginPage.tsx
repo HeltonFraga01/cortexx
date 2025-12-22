@@ -168,7 +168,7 @@ const UnifiedLoginPage = () => {
     if (!authLoading && isAuthenticated && user) {
        // Use role directly from user object (handles both Supabase and Backend users)
        const role = user.role;
-       const from = (location.state as any)?.from?.pathname;
+       const from = (location.state)?.from?.pathname;
        navigate(from || getRedirectPath(role), { replace: true });
     }
   }, [authLoading, isAuthenticated, user, navigate, location]);
@@ -247,7 +247,7 @@ const UnifiedLoginPage = () => {
 
       // Get user role and redirect - Requirements: 8.1, 8.2, 8.3, 8.4, 8.5
       const userRole = getUserRole(data.user);
-      const from = (location.state as any)?.from?.pathname;
+      const from = (location.state)?.from?.pathname;
       navigate(from || getRedirectPath(userRole), { replace: true });
 
     } catch (err) {

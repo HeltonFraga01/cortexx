@@ -53,12 +53,12 @@ export interface ConversationWithRelations extends Conversation {
 }
 
 export interface MessageWithRelations extends ChatMessage {
-  reactions?: Array<{
+  reactions?: {
     id: string
     emoji: string
     reactor_jid: string
     created_at: string
-  }>
+  }[]
   senderAgent?: {
     id: string
     name: string
@@ -382,7 +382,7 @@ export async function getMessages(
 
   // Get reactions for messages
   const messageIds = results.map(m => m.id)
-  let reactionsMap = new Map<string, MessageWithRelations['reactions']>()
+  const reactionsMap = new Map<string, MessageWithRelations['reactions']>()
 
   if (messageIds.length > 0) {
     const { data: reactions } = await supabase

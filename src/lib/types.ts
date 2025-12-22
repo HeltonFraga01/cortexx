@@ -82,18 +82,16 @@ export interface TypebotStartPayload {
   typebot: string;
   remoteJid: string;
   startSession: boolean;
-  variables?: Array<{
+  variables?: {
     name: string;
     value: string;
-  }>;
+  }[];
 }
 
 export interface WebhookConfig {
   enabled: boolean;
   url: string;
-  headers: {
-    [key: string]: string;
-  };
+  headers: Record<string, string>;
   byEvents: boolean;
   base64: boolean;
   events: WebhookEventType[];
@@ -336,12 +334,12 @@ export interface NocoDBColumnMetadata {
   dtxs?: string; // Data Type Extended Scale
   au?: boolean; // Auto Update
   colOptions?: {
-    options?: Array<{
+    options?: {
       id: string;
       title: string;
       color?: string;
       order?: number;
-    }>;
+    }[];
   };
   meta?: Record<string, any>;
 }

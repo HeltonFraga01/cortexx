@@ -16,8 +16,37 @@ const { logger } = require('../utils/logger');
 const { validatePhoneWithAPI } = require('../services/PhoneValidationService');
 const ChatService = require('../services/ChatService');
 const OutgoingWebhookService = require('../services/OutgoingWebhookService');
-const { quotaMiddleware, incrementQuotaUsage } = require('../middleware/quotaEnforcement');
+const { quotaMiddleware, incrementQuotaUsage, getQuotaService, resolveUserId } = require('../middleware/quotaEnforcement');
 const SupabaseService = require('../services/SupabaseService');
+const QuotaService = require('../services/QuotaService');
+
+/**
+ * Helper to increment quota usage after successful message send
+ * @param {Object} req - Express request
+ */
+async function incrementBotMessageQuota(req) {
+  try {
+    const quotaService = getQuotaService(req);
+    const userId = resolveUserId(req);
+    
+    if (!quotaService || !userId) {
+      logger.warn('Bot proxy: Quota increment skipped - service or userId not available', { 
+        hasService: !!quotaService, 
+        hasUserId: !!userId 
+      });
+      return;
+    }
+    
+    await quotaService.incrementUsage(userId, QuotaService.QUOTA_TYPES.MAX_MESSAGES_PER_DAY, 1);
+    await quotaService.incrementUsage(userId, QuotaService.QUOTA_TYPES.MAX_MESSAGES_PER_MONTH, 1);
+    
+    logger.debug('Bot proxy: Message quota incremented', { userId });
+  } catch (error) {
+    logger.error('Bot proxy: Failed to increment message quota', { 
+      error: error.message 
+    });
+  }
+}
 
 const router = express.Router();
 
@@ -364,6 +393,9 @@ router.post('/send/text', verifyUserToken, quotaMiddleware.messages, quotaMiddle
       }
     }
 
+    // Increment quota usage after successful send
+    await incrementBotMessageQuota(req);
+
     logger.info('Bot proxy: Message sent and stored', {
       conversationId: conversation.id,
       messageId: wuzapiMessageId,
@@ -562,6 +594,9 @@ router.post('/send/image', verifyUserToken, quotaMiddleware.messages, quotaMiddl
       }
     }
 
+    // Increment quota usage after successful send
+    await incrementBotMessageQuota(req);
+
     res.json({
       success: true,
       message: 'Imagem enviada e registrada com sucesso',
@@ -727,6 +762,9 @@ router.post('/send/audio', verifyUserToken, quotaMiddleware.messages, quotaMiddl
         });
       }
     }
+
+    // Increment quota usage after successful send
+    await incrementBotMessageQuota(req);
 
     res.json({
       success: true,
@@ -902,6 +940,9 @@ router.post('/send/document', verifyUserToken, quotaMiddleware.messages, quotaMi
       }
     }
 
+    // Increment quota usage after successful send
+    await incrementBotMessageQuota(req);
+
     res.json({
       success: true,
       message: 'Documento enviado e registrado com sucesso',
@@ -1071,6 +1112,9 @@ router.post('/send/video', verifyUserToken, quotaMiddleware.messages, quotaMiddl
       }
     }
 
+    // Increment quota usage after successful send
+    await incrementBotMessageQuota(req);
+
     res.json({
       success: true,
       message: 'Vídeo enviado e registrado com sucesso',
@@ -1236,6 +1280,9 @@ router.post('/send/sticker', verifyUserToken, quotaMiddleware.messages, quotaMid
         });
       }
     }
+
+    // Increment quota usage after successful send
+    await incrementBotMessageQuota(req);
 
     res.json({
       success: true,

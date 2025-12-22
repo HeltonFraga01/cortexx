@@ -42,7 +42,7 @@ async function getAuthHeaders(): Promise<HeadersInit> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.access_token) {
-      headers['Authorization'] = `Bearer ${session.access_token}`;
+      headers.Authorization = `Bearer ${session.access_token}`;
     }
   } catch (error) {
     console.warn('Failed to get Supabase session:', error);

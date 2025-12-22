@@ -113,7 +113,7 @@ export function ConversationView({
       
       conversationQueries.forEach(query => {
         const key = JSON.stringify(query.queryKey)
-        previousData[key] = queryClient.getQueryData(query.queryKey) as ConversationsResponse | undefined
+        previousData[key] = queryClient.getQueryData(query.queryKey)
       })
       
       // Optimistically update all conversation caches
@@ -188,7 +188,7 @@ export function ConversationView({
       
       conversationQueries.forEach(query => {
         const key = JSON.stringify(query.queryKey)
-        previousData[key] = queryClient.getQueryData(query.queryKey) as ConversationsResponse | undefined
+        previousData[key] = queryClient.getQueryData(query.queryKey)
       })
       
       // Optimistically update all conversation caches
@@ -609,8 +609,7 @@ export function ConversationView({
                       const previousMessage = index > 0 ? dateMessages[index - 1] : null
                       const showParticipant = isGroupConversation && 
                         message.direction === 'incoming' &&
-                        (!previousMessage || 
-                         previousMessage.direction !== 'incoming' ||
+                        (previousMessage?.direction !== 'incoming' ||
                          previousMessage.participantJid !== message.participantJid)
                       
                       return (

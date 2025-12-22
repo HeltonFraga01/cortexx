@@ -80,7 +80,7 @@ export function ContactImportButton({
     return Math.min(2000 * Math.pow(2, attempt), 10000); // Max 10s
   };
 
-  const handleImport = async (isRetry: boolean = false) => {
+  const handleImport = async (isRetry = false) => {
     // Validações de pré-requisitos
     if (!instance) {
       toast.error('Instância não selecionada', {

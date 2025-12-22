@@ -211,7 +211,7 @@ export const simulateUserFlow = {
     const user = userEvent.setup()
     
     for (const [name, value] of Object.entries(fields)) {
-      const input = document.querySelector(`[name="${name}"]`) as HTMLInputElement
+      const input = document.querySelector(`[name="${name}"]`)!
       if (input) {
         await user.clear(input)
         await user.type(input, value)
@@ -232,7 +232,7 @@ export const simulateUserFlow = {
     const { userEvent } = await import('@testing-library/user-event')
     const user = userEvent.setup()
     
-    const select = document.querySelector(`[name="${selectName}"]`) as HTMLSelectElement
+    const select = document.querySelector(`[name="${selectName}"]`)!
     if (select) {
       await user.selectOptions(select, optionValue)
     }

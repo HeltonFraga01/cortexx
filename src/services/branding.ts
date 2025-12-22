@@ -8,10 +8,10 @@ import { IS_DEVELOPMENT } from '@/config/environment';
 export class BrandingService {
   private static instance: BrandingService;
   private cache: BrandingConfig | null = null;
-  private cacheTimestamp: number = 0;
+  private cacheTimestamp = 0;
   private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutos
   private refreshPromise: Promise<ApiResponse<BrandingConfig>> | null = null;
-  private eventListeners: Map<string, Function[]> = new Map();
+  private eventListeners = new Map<string, ((...args: unknown[]) => void)[]>();
 
   private constructor() {}
 
@@ -491,14 +491,14 @@ export class BrandingService {
   /**
    * Sistema de eventos para notificar mudanças
    */
-  addEventListener(event: string, callback: Function): void {
+  addEventListener(event: string, callback: (...args: unknown[]) => void): void {
     if (!this.eventListeners.has(event)) {
       this.eventListeners.set(event, []);
     }
     this.eventListeners.get(event)!.push(callback);
   }
 
-  removeEventListener(event: string, callback: Function): void {
+  removeEventListener(event: string, callback: (...args: unknown[]) => void): void {
     const listeners = this.eventListeners.get(event);
     if (listeners) {
       const index = listeners.indexOf(callback);

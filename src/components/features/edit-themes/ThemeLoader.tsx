@@ -134,6 +134,14 @@ export function ThemeLoader({
   const DefaultThemeComponent = defaultTheme.component;
   const fallbackElement = <DefaultThemeComponent {...themeProps} />;
 
+  // Handle built-in themes (from registry) - must be before early return
+  const theme = useMemo(() => {
+    if (themeId && !isCustomTheme(themeId)) {
+      return themeRegistry.get(themeId);
+    }
+    return themeRegistry.getDefault();
+  }, [themeId]);
+
   // Handle custom themes (from Page Builder)
   if (isCustomTheme(themeId)) {
     const customThemeId = getCustomThemeId(themeId!);
@@ -150,14 +158,7 @@ export function ThemeLoader({
     );
   }
 
-  // Handle built-in themes (from registry)
-  const theme = useMemo(() => {
-    if (themeId) {
-      return themeRegistry.get(themeId);
-    }
-    return themeRegistry.getDefault();
-  }, [themeId]);
-
+  // Handle built-in themes
   const ThemeComponent = theme.component;
   
   return (

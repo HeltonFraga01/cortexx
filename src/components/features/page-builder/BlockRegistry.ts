@@ -58,7 +58,7 @@ export function validateBlockDefinition(block: unknown): { valid: boolean; error
 }
 
 class BlockRegistry {
-  private blocks: Map<BlockType, BlockDefinition> = new Map();
+  private blocks = new Map<BlockType, BlockDefinition>();
 
   /**
    * Register a block definition

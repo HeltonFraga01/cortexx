@@ -15,6 +15,7 @@ const SubscriptionService = require('../services/SubscriptionService');
 const TenantPlanService = require('../services/TenantPlanService');
 const AdminAuditService = require('../services/AdminAuditService');
 const SupabaseService = require('../services/SupabaseService');
+const { normalizeToUUID } = require('../utils/userIdHelper');
 
 const router = express.Router();
 
@@ -52,11 +53,8 @@ function getTenantId(req) {
  */
 async function validateUserTenant(userId, tenantId) {
   try {
-    // Convert userId to UUID format if needed
-    let uuidUserId = userId;
-    if (userId && userId.length === 32 && !userId.includes('-')) {
-      uuidUserId = `${userId.slice(0, 8)}-${userId.slice(8, 12)}-${userId.slice(12, 16)}-${userId.slice(16, 20)}-${userId.slice(20)}`;
-    }
+    // Use helper to normalize to UUID format
+    const uuidUserId = normalizeToUUID(userId) || userId;
 
     // Find account by owner_user_id or wuzapi_token
     const { data: accounts, error } = await SupabaseService.adminClient

@@ -92,7 +92,7 @@ export function AgentRecipientSelector({
 
     // Has name filter
     if (hasNameFilter !== null) {
-      const hasName = (c: typeof agendaContacts[0]) => Boolean(c.name && c.name.trim())
+      const hasName = (c: typeof agendaContacts[0]) => Boolean(c.name?.trim())
       filtered = filtered.filter(c => hasNameFilter ? hasName(c) : !hasName(c))
     }
 
@@ -331,7 +331,7 @@ export function AgentRecipientSelector({
   }
 
   // Handle database contacts import
-  const handleDatabaseContactsImported = (importedContacts: Array<{ phone: string; name?: string; variables?: Record<string, any> }>) => {
+  const handleDatabaseContactsImported = (importedContacts: { phone: string; name?: string; variables?: Record<string, any> }[]) => {
     const contacts: Contact[] = importedContacts.map(c => ({
       id: c.phone,
       phone: c.phone,

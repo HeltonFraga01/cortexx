@@ -182,7 +182,7 @@ const UserDatabaseModern = () => {
   // Efeito para lidar com o redirecionamento do modo "single"
   useEffect(() => {
     const handleSingleRecordRedirect = async () => {
-      if (selectedConnection && selectedConnection.default_view_mode === 'single' && user?.token) {
+      if (selectedConnection?.default_view_mode === 'single' && user?.token) {
         // Evitar loop se já estiver carregando
         if (loadingRecords) return;
 
@@ -240,11 +240,11 @@ const UserDatabaseModern = () => {
         if (filterField === 'all') {
           return visibleFields.some(field => {
             const value = record[field.columnName];
-            return value && value.toString().toLowerCase().includes(searchTerm.toLowerCase());
+            return value?.toString().toLowerCase().includes(searchTerm.toLowerCase());
           });
         } else {
           const value = record[filterField];
-          return value && value.toString().toLowerCase().includes(searchTerm.toLowerCase());
+          return value?.toString().toLowerCase().includes(searchTerm.toLowerCase());
         }
       });
     }

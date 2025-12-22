@@ -7,11 +7,11 @@
  */
 export function updateMetaTag(property: string, content: string): void {
   // Tenta encontrar meta tag por property (Open Graph)
-  let meta = document.querySelector(`meta[property="${property}"]`) as HTMLMetaElement;
+  let meta = document.querySelector(`meta[property="${property}"]`)!;
   
   // Se não encontrou, tenta por name (Twitter Card e outras)
   if (!meta) {
-    meta = document.querySelector(`meta[name="${property}"]`) as HTMLMetaElement;
+    meta = document.querySelector(`meta[name="${property}"]`)!;
   }
   
   // Se ainda não existe, cria uma nova meta tag

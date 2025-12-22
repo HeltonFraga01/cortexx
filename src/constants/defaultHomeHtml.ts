@@ -13,7 +13,7 @@
  * @param appName - Nome da aplicação (padrão: 'WUZAPI')
  * @returns HTML da landing page com placeholders substituídos
  */
-export const getDefaultHomeHtml = (appName: string = 'WUZAPI'): string => {
+export const getDefaultHomeHtml = (appName = 'WUZAPI'): string => {
   return DEFAULT_HOME_HTML_TEMPLATE
     .replace(/\{\{APP_NAME\}\}/g, appName)
     .replace(/\{\{APP_NAME_MANAGER\}\}/g, `${appName} Manager`);

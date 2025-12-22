@@ -47,10 +47,10 @@ export class AdaptivePoller<T = unknown> {
   private options: Required<AdaptivePollerOptions>
   private currentInterval: number
   private timerId: ReturnType<typeof setTimeout> | null = null
-  private idleCount: number = 0
+  private idleCount = 0
   private lastResult: T | null = null
-  private isRunning: boolean = false
-  private isPaused: boolean = false
+  private isRunning = false
+  private isPaused = false
   private pollFn: PollingCallback<T> | null = null
   private resultFn: ResultCallback<T> | null = null
   private visibilityHandler: (() => void) | null = null

@@ -255,11 +255,24 @@ function requireOwner(req, res, next) {
 }
 
 /**
- * Middleware to require admin access (owner or administrator)
+ * Middleware to require admin access via Supabase role (owner or administrator)
  * Must be used after validateSupabaseToken
+ * 
+ * @deprecated Use `requireAdmin` from `auth.js` instead for full JWT + session support.
+ * This function only checks Supabase user_metadata.role.
+ * 
+ * Renamed from `requireAdmin` to `requireSupabaseAdmin` to avoid confusion
+ * with the more comprehensive `requireAdmin` in auth.js.
+ */
+function requireSupabaseAdmin(req, res, next) {
+  return requireRole('owner', 'administrator')(req, res, next);
+}
+
+/**
+ * @deprecated Alias for requireSupabaseAdmin. Use `requireAdmin` from `auth.js` instead.
  */
 function requireAdmin(req, res, next) {
-  return requireRole('owner', 'administrator')(req, res, next);
+  return requireSupabaseAdmin(req, res, next);
 }
 
 /**
@@ -301,7 +314,8 @@ module.exports = {
   requireRole,
   requireUserRole,
   requireOwner,
-  requireAdmin,
+  requireAdmin, // Deprecated, kept for backwards compatibility
+  requireSupabaseAdmin, // New name, use this if you specifically need Supabase role check
   optionalSupabaseAuth,
   getAdminClient,
   extractSubdomain

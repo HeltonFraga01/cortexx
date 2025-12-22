@@ -96,7 +96,7 @@ const UserDatabase = () => {
     
     return visibleFields.some(field => {
       const value = record[field.columnName];
-      return value && value.toString().toLowerCase().includes(searchTerm.toLowerCase());
+      return value?.toString().toLowerCase().includes(searchTerm.toLowerCase());
     });
   });
 
