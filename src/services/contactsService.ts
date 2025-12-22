@@ -6,7 +6,7 @@
  */
 
 import { Contact } from './bulkCampaignService';
-import { Tag, ContactGroup } from './contactsStorageService';
+import { Tag, ContactGroup } from './contactsApiService';
 import { 
   validatePhoneFormat, 
   normalizePhoneNumber, 

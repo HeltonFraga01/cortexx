@@ -1,0 +1,242 @@
+# Implementation Plan: Contacts Database Migration
+
+## Overview
+
+Este plano implementa a migração do sistema de contatos do localStorage para o Supabase, seguindo a arquitetura definida no design. A implementação é dividida em fases: banco de dados, backend, frontend e migração.
+
+## Tasks
+
+- [x] 1. Criar estrutura de banco de dados no Supabase
+  - [x] 1.1 Criar tabela `contacts` com campos e constraints
+    - Campos: id, tenant_id, account_id, phone, name, avatar_url, whatsapp_jid, source, linked_user_id, metadata, last_import_at, created_by, created_by_type, updated_by, updated_by_type, created_at, updated_at
+    - Constraint UNIQUE(account_id, phone)
+    - _Requirements: 1.1, 1.2, 2.1_
+  - [x] 1.2 Criar tabela `contact_tags` com campos e constraints
+    - Campos: id, tenant_id, account_id, name, color, created_at, updated_at
+    - Constraint UNIQUE(account_id, name)
+    - _Requirements: 3.1_
+  - [x] 1.3 Criar tabela `contact_tag_members` para associação contato-tag
+    - Campos: id, contact_id, tag_id, created_at
+    - Foreign keys com ON DELETE CASCADE
+    - _Requirements: 3.2_
+  - [x] 1.4 Criar tabela `contact_groups` com campos e constraints
+    - Campos: id, tenant_id, account_id, name, description, created_at, updated_at
+    - Constraint UNIQUE(account_id, name)
+    - _Requirements: 4.1_
+  - [x] 1.5 Criar tabela `contact_group_members` para associação contato-grupo
+    - Campos: id, group_id, contact_id, created_at
+    - Foreign keys com ON DELETE CASCADE
+    - _Requirements: 4.2_
+  - [x] 1.6 Criar políticas RLS para isolamento por tenant_id e account_id
+    - Policy para contacts, contact_tags, contact_groups
+    - Verificar acesso via current_setting('app.tenant_id') e current_setting('app.account_id')
+    - _Requirements: 2.1, 2.2, 5.5_
+  - [x] 1.7 Criar índices para otimização de queries
+    - Índice em contacts(account_id, phone)
+    - Índice em contacts(account_id, name)
+    - Índice em contact_tags(account_id)
+    - _Requirements: 8.3_
+
+- [x] 2. Implementar serviço backend ContactsService
+  - [x] 2.1 Criar `server/services/ContactsService.js` com estrutura base
+    - Importar SupabaseService
+    - Definir classe ContactsService
+    - _Requirements: 1.1_
+  - [x] 2.2 Implementar métodos CRUD de contatos
+    - getContacts(accountId, options) com paginação e filtros
+    - getContactById(accountId, contactId)
+    - createContact(accountId, tenantId, contactData, createdBy)
+    - updateContact(accountId, contactId, updates, updatedBy)
+    - deleteContacts(accountId, contactIds)
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 8.1, 8.2_
+  - [x] 2.3 Implementar métodos de importação e merge
+    - importFromWhatsApp(accountId, tenantId, contacts, createdBy)
+    - mergeContacts(accountId, newContacts, existingContacts)
+    - Usar phone como chave única para merge
+    - Preservar tags e grupos existentes
+    - _Requirements: 9.1, 9.2, 9.3, 9.4_
+  - [x] 2.4 Implementar métodos de tags
+    - getTags(accountId)
+    - createTag(accountId, tenantId, tagData)
+    - deleteTag(accountId, tagId)
+    - addTagsToContacts(accountId, contactIds, tagIds)
+    - removeTagsFromContacts(accountId, contactIds, tagIds)
+    - _Requirements: 3.1, 3.2, 3.3, 3.4_
+  - [x] 2.5 Implementar métodos de grupos
+    - getGroups(accountId)
+    - createGroup(accountId, tenantId, groupData)
+    - updateGroup(accountId, groupId, updates)
+    - deleteGroup(accountId, groupId)
+    - addContactsToGroup(accountId, groupId, contactIds)
+    - removeContactsFromGroup(accountId, groupId, contactIds)
+    - _Requirements: 4.1, 4.2, 4.3, 4.4_
+  - [x] 2.6 Implementar método de migração do localStorage
+    - migrateFromLocalStorage(accountId, tenantId, localStorageData)
+    - Processar contatos, tags e grupos
+    - Retornar resultado detalhado
+    - _Requirements: 6.2_
+  - [x] 2.7 Implementar método de criação de usuário a partir de contato
+    - createUserFromContact(accountId, contactId, userData)
+    - Criar usuário e atualizar linked_user_id no contato
+    - _Requirements: 7.2, 7.3_
+
+- [x] 3. Implementar rotas backend para contatos
+  - [x] 3.1 Criar `server/routes/userContactsRoutes.js` com estrutura base
+    - Importar express, middleware de auth, ContactsService
+    - Configurar router
+    - _Requirements: 1.5_
+  - [x] 3.2 Implementar rotas CRUD de contatos
+    - GET /api/user/contacts - listar com paginação
+    - GET /api/user/contacts/:id - buscar por ID
+    - POST /api/user/contacts - criar
+    - PUT /api/user/contacts/:id - atualizar
+    - DELETE /api/user/contacts - deletar múltiplos
+    - _Requirements: 1.1, 1.2, 1.3, 1.4_
+  - [x] 3.3 Implementar rotas de importação e migração
+    - POST /api/user/contacts/import - importar do WhatsApp
+    - POST /api/user/contacts/migrate - migrar do localStorage
+    - _Requirements: 6.2, 9.1_
+  - [x] 3.4 Implementar rotas de tags
+    - GET /api/user/contacts/tags
+    - POST /api/user/contacts/tags
+    - DELETE /api/user/contacts/tags/:id
+    - POST /api/user/contacts/tags/assign
+    - POST /api/user/contacts/tags/remove
+    - _Requirements: 3.1, 3.2, 3.3, 3.4_
+  - [x] 3.5 Implementar rotas de grupos
+    - GET /api/user/contacts/groups
+    - POST /api/user/contacts/groups
+    - PUT /api/user/contacts/groups/:id
+    - DELETE /api/user/contacts/groups/:id
+    - POST /api/user/contacts/groups/:id/members
+    - DELETE /api/user/contacts/groups/:id/members
+    - _Requirements: 4.1, 4.2, 4.3, 4.4_
+  - [x] 3.6 Implementar rota de criação de usuário
+    - POST /api/user/contacts/:id/create-user
+    - _Requirements: 7.2_
+  - [x] 3.7 Registrar rotas no index.js do servidor
+    - Adicionar userContactsRoutes ao app
+    - _Requirements: 1.5_
+
+- [x] 4. Implementar verificação de permissões para agentes
+  - [x] 4.1 Criar middleware de verificação de permissões de contatos
+    - Verificar se é agent ou user
+    - Para agents, verificar permissões de contacts (read/write/delete)
+    - _Requirements: 5.4, 11.2, 11.3, 11.4, 11.5_
+  - [x] 4.2 Aplicar middleware nas rotas que modificam dados
+    - POST, PUT, DELETE devem verificar permissões
+    - GET pode ser acessado com permissão read
+    - _Requirements: 11.5_
+
+- [x] 5. Checkpoint - Verificar backend
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 6. Implementar serviço frontend para API de contatos
+  - [x] 6.1 Criar `src/services/contactsApiService.ts` com tipos e estrutura
+    - Definir interfaces Contact, Tag, ContactGroup, QueryOptions
+    - Importar api.ts para chamadas HTTP
+    - _Requirements: 1.5_
+  - [x] 6.2 Implementar métodos de contatos
+    - getContacts(options): Promise<PaginatedResponse<Contact>>
+    - getContactById(id): Promise<Contact>
+    - createContact(data): Promise<Contact>
+    - updateContact(id, data): Promise<Contact>
+    - deleteContacts(ids): Promise<void>
+    - _Requirements: 1.1, 1.2, 1.3, 1.4_
+  - [x] 6.3 Implementar métodos de importação e migração
+    - importFromWhatsApp(instance): Promise<ImportResult>
+    - migrateFromLocalStorage(data): Promise<MigrationResult>
+    - _Requirements: 6.2, 9.1_
+  - [x] 6.4 Implementar métodos de tags
+    - getTags(): Promise<Tag[]>
+    - createTag(data): Promise<Tag>
+    - deleteTag(id): Promise<void>
+    - addTagsToContacts(contactIds, tagIds): Promise<void>
+    - removeTagsFromContacts(contactIds, tagIds): Promise<void>
+    - _Requirements: 3.1, 3.2, 3.3, 3.4_
+  - [x] 6.5 Implementar métodos de grupos
+    - getGroups(): Promise<ContactGroup[]>
+    - createGroup(data): Promise<ContactGroup>
+    - updateGroup(id, data): Promise<ContactGroup>
+    - deleteGroup(id): Promise<void>
+    - addContactsToGroup(groupId, contactIds): Promise<void>
+    - removeContactsFromGroup(groupId, contactIds): Promise<void>
+    - _Requirements: 4.1, 4.2, 4.3, 4.4_
+  - [x] 6.6 Implementar método de criação de usuário
+    - createUserFromContact(contactId, userData): Promise<User>
+    - _Requirements: 7.2_
+
+- [x] 7. Atualizar hook useContacts para usar API
+  - [x] 7.1 Refatorar useContacts para usar contactsApiService
+    - Substituir chamadas ao localStorage por chamadas à API
+    - Manter interface pública do hook compatível
+    - _Requirements: 1.5_
+  - [x] 7.2 Implementar detecção e migração de dados do localStorage
+    - Verificar se há dados no localStorage ao carregar
+    - Oferecer migração se houver dados
+    - Limpar localStorage após migração bem-sucedida
+    - _Requirements: 6.1, 6.2, 6.3, 6.4_
+  - [x] 7.3 Implementar estados de loading e error adequados
+    - Loading durante operações assíncronas
+    - Tratamento de erros com mensagens apropriadas
+    - _Requirements: 8.4_
+
+- [x] 8. Atualizar página UserContacts
+  - [x] 8.1 Atualizar componente para usar novo hook
+    - Remover referências diretas ao contactsStorageService
+    - Usar dados do hook atualizado
+    - _Requirements: 1.5_
+  - [x] 8.2 Implementar modal de migração do localStorage
+    - Detectar dados existentes
+    - Mostrar opção de migrar ou descartar
+    - Feedback de progresso e resultado
+    - _Requirements: 6.1, 6.3, 6.4_
+  - [x] 8.3 Atualizar paginação para usar server-side
+    - Passar parâmetros de página para API
+    - Atualizar total count do servidor
+    - _Requirements: 8.1_
+
+- [x] 9. Checkpoint - Verificar integração frontend-backend
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [ ] 10. Implementar testes de propriedade
+  - [ ] 10.1 Configurar fast-check para testes de propriedade
+    - Instalar fast-check
+    - Configurar ambiente de teste
+    - _Requirements: Testing Strategy_
+  - [ ] 10.2 Implementar teste Property 1: Contact CRUD Round-Trip
+    - **Property 1: Contact CRUD Round-Trip**
+    - **Validates: Requirements 1.1, 1.2, 1.3, 1.4**
+  - [ ] 10.3 Implementar teste Property 2: Account Isolation
+    - **Property 2: Account Isolation**
+    - **Validates: Requirements 2.2, 2.3, 2.5, 5.1, 5.2**
+  - [ ] 10.4 Implementar teste Property 5: Tag CRUD Consistency
+    - **Property 5: Tag CRUD Consistency**
+    - **Validates: Requirements 3.1, 3.2, 3.3, 3.4**
+  - [ ] 10.5 Implementar teste Property 6: Group CRUD Consistency
+    - **Property 6: Group CRUD Consistency**
+    - **Validates: Requirements 4.1, 4.2, 4.3, 4.4**
+  - [ ] 10.6 Implementar teste Property 9: Agent Permission Enforcement
+    - **Property 9: Agent Permission Enforcement**
+    - **Validates: Requirements 5.4, 11.2, 11.3, 11.4, 11.5**
+
+- [x] 11. Limpeza e documentação
+  - [x] 11.1 Remover código legado do localStorage
+    - Atualizar imports em arquivos que usavam contactsStorageService
+    - Manter contactsStorageService.ts para migração (será removido após migração completa)
+    - _Requirements: 6.3_
+  - [x] 11.2 Atualizar documentação
+    - Documentar novas rotas de API
+    - Atualizar guias de desenvolvimento
+    - _Requirements: Documentation_
+
+- [x] 12. Final checkpoint - Verificar implementação completa
+  - Ensure all tests pass, ask the user if questions arise.
+
+## Notes
+
+- Todas as tasks são obrigatórias para implementação completa
+- Cada task referencia os requisitos específicos para rastreabilidade
+- Checkpoints garantem validação incremental
+- Testes de propriedade validam propriedades universais de correção
+- Testes unitários validam exemplos específicos e casos de borda

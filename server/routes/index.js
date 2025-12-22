@@ -26,6 +26,7 @@ const adminAutomationRoutes = require('./adminAutomationRoutes');
 const userTableAccessRoutes = require('./userTableAccessRoutes');
 const userCustomThemesRoutes = require('./userCustomThemesRoutes');
 const contactImportRoutes = require('./contactImportRoutes');
+const userContactsRoutes = require('./userContactsRoutes');
 const mediaRoutes = require('./mediaRoutes');
 const botProxyRoutes = require('./botProxyRoutes');
 const linkPreviewRoutes = require('./linkPreviewRoutes');
@@ -141,6 +142,13 @@ function setupRoutes(app) {
   logger.debug('Registering /api/user/contacts', { 
     routeCount: contactImportRoutes.stack ? contactImportRoutes.stack.length : 0 
   });
+  // New contacts routes (Supabase-based) - more specific paths first
+  app.use('/api/user/contacts/tags', userContactsRoutes);
+  app.use('/api/user/contacts/groups', userContactsRoutes);
+  app.use('/api/user/contacts/import', userContactsRoutes);
+  app.use('/api/user/contacts/migrate', userContactsRoutes);
+  app.use('/api/user/contacts', userContactsRoutes);
+  // Legacy contact import routes (for backward compatibility)
   app.use('/api/user/contacts', contactImportRoutes);
   app.use('/api/user/plans', userPlanRoutes); // Available plans for upgrade - MUST come BEFORE generic user routes
   app.use('/api/user', userSubscriptionRoutes); // subscription, quotas, features

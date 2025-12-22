@@ -2,366 +2,605 @@
  * useContacts Hook
  * 
  * Hook principal para gerenciamento de contatos.
- * Gerencia estado, importação, atualização e persistência de contatos.
+ * Usa API backend com Supabase para persistência.
+ * Detecta e oferece migração de dados do localStorage.
+ * 
+ * Requirements: 1.5, 6.1, 6.2, 6.3, 6.4, 8.4
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import { Contact } from '@/services/bulkCampaignService';
-import { Tag, ContactGroup } from '@/services/contactsStorageService';
-import { contactsStorageService } from '@/services/contactsStorageService';
-import { contactImportService } from '@/services/contactImportService';
-import { contactsService } from '@/services/contactsService';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
+import {
+  contactsApi,
+  Contact,
+  Tag,
+  ContactGroup,
+  ContactsQueryOptions,
+  PaginatedResponse,
+  CreateContactData,
+  UpdateContactData,
+  CreateTagData,
+  CreateGroupData,
+  UpdateGroupData,
+  LocalStorageData,
+  MigrationResult,
+  ContactStats
+} from '@/services/contactsApiService';
+
+// Re-export types for consumers
+export type { Contact, Tag, ContactGroup, ContactsQueryOptions, PaginatedResponse, ContactStats };
+
+// localStorage keys for migration detection
+const STORAGE_KEYS = {
+  CONTACTS: 'wuzapi_contacts',
+  TAGS: 'wuzapi_tags',
+  GROUPS: 'wuzapi_groups',
+};
+
+interface UseContactsOptions {
+  autoLoad?: boolean;
+  pageSize?: number;
+}
 
 interface UseContactsReturn {
+  // Data
   contacts: Contact[];
   tags: Tag[];
   groups: ContactGroup[];
+  stats: ContactStats;
+  
+  // Pagination
+  total: number;
+  page: number;
+  pageSize: number;
+  
+  // State
   loading: boolean;
   error: string | null;
-  importContacts: (instance: string, token: string) => Promise<void>;
-  updateContact: (phone: string, updates: Partial<Contact>) => void;
-  deleteContacts: (phones: string[]) => void;
-  addTag: (tag: Omit<Tag, 'id'>) => void;
-  removeTag: (tagId: string) => void;
-  addTagsToContacts: (contactPhones: string[], tagIds: string[]) => void;
-  removeTagsFromContacts: (contactPhones: string[], tagIds: string[]) => void;
-  createGroup: (name: string, contactIds: string[]) => void;
-  updateGroup: (groupId: string, updates: Partial<ContactGroup>) => void;
-  deleteGroup: (groupId: string) => void;
-  refreshContacts: () => void;
+  
+  // Migration
+  hasLocalStorageData: boolean;
+  migrationPending: boolean;
+  migrateFromLocalStorage: () => Promise<MigrationResult>;
+  dismissMigration: () => void;
+  
+  // Contacts CRUD
+  loadContacts: (options?: ContactsQueryOptions) => Promise<void>;
+  createContact: (data: CreateContactData) => Promise<Contact>;
+  updateContact: (id: string, updates: UpdateContactData) => Promise<Contact>;
+  deleteContacts: (ids: string[]) => Promise<void>;
+  
+  // Import
+  importContacts: (contacts: Array<{ phone: string; name?: string; avatarUrl?: string; whatsappJid?: string }>) => Promise<void>;
+  
+  // Tags
+  loadTags: () => Promise<void>;
+  addTag: (data: CreateTagData) => Promise<Tag>;
+  removeTag: (tagId: string) => Promise<void>;
+  addTagsToContacts: (contactIds: string[], tagIds: string[]) => Promise<void>;
+  removeTagsFromContacts: (contactIds: string[], tagIds: string[]) => Promise<void>;
+  
+  // Groups
+  loadGroups: () => Promise<void>;
+  createGroup: (data: CreateGroupData) => Promise<ContactGroup>;
+  updateGroup: (groupId: string, updates: UpdateGroupData) => Promise<ContactGroup>;
+  deleteGroup: (groupId: string) => Promise<void>;
+  addContactsToGroup: (groupId: string, contactIds: string[]) => Promise<void>;
+  removeContactsFromGroup: (groupId: string, contactIds: string[]) => Promise<void>;
+  
+  // Stats
+  loadStats: () => Promise<void>;
+  
+  // Refresh
+  refreshContacts: () => Promise<void>;
 }
 
-export function useContacts(): UseContactsReturn {
+/**
+ * Check if there's data in localStorage that needs migration
+ */
+function checkLocalStorageData(): LocalStorageData | null {
+  try {
+    const contactsRaw = localStorage.getItem(STORAGE_KEYS.CONTACTS);
+    const tagsRaw = localStorage.getItem(STORAGE_KEYS.TAGS);
+    const groupsRaw = localStorage.getItem(STORAGE_KEYS.GROUPS);
+
+    if (!contactsRaw && !tagsRaw && !groupsRaw) {
+      return null;
+    }
+
+    const data: LocalStorageData = {};
+
+    if (contactsRaw) {
+      const parsed = JSON.parse(contactsRaw);
+      if (parsed.contacts?.length > 0) {
+        data.contacts = parsed.contacts.map((c: Record<string, unknown>) => ({
+          phone: c.phone as string,
+          name: c.name as string | undefined,
+          avatarUrl: c.avatarUrl as string | undefined,
+          whatsappJid: c.whatsappJid as string | undefined,
+          source: c.source as string | undefined,
+          metadata: c.variables as Record<string, unknown> | undefined,
+        }));
+      }
+    }
+
+    if (tagsRaw) {
+      const parsed = JSON.parse(tagsRaw);
+      if (parsed.tags?.length > 0) {
+        data.tags = parsed.tags.map((t: Record<string, unknown>) => ({
+          id: t.id as string,
+          name: t.name as string,
+          color: t.color as string | undefined,
+        }));
+      }
+    }
+
+    if (groupsRaw) {
+      const parsed = JSON.parse(groupsRaw);
+      if (parsed.groups?.length > 0) {
+        data.groups = parsed.groups.map((g: Record<string, unknown>) => ({
+          id: g.id as string,
+          name: g.name as string,
+          description: g.description as string | undefined,
+        }));
+      }
+    }
+
+    // Return null if no actual data
+    if (!data.contacts?.length && !data.tags?.length && !data.groups?.length) {
+      return null;
+    }
+
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Clear localStorage after successful migration
+ */
+function clearLocalStorageData(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.CONTACTS);
+    localStorage.removeItem(STORAGE_KEYS.TAGS);
+    localStorage.removeItem(STORAGE_KEYS.GROUPS);
+    localStorage.removeItem('wuzapi_contacts_metadata');
+    localStorage.removeItem('wuzapi_contacts_preferences');
+    localStorage.removeItem('wuzapi_last_import');
+    localStorage.removeItem('wuzapi_contacts_by_instance');
+  } catch {
+    // Ignore errors
+  }
+}
+
+export function useContacts(options: UseContactsOptions = {}): UseContactsReturn {
+  const { autoLoad = true, pageSize: defaultPageSize = 50 } = options;
+
+  // Data state
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [groups, setGroups] = useState<ContactGroup[]>([]);
+  const [stats, setStats] = useState<ContactStats>({
+    total: 0,
+    withName: 0,
+    withoutName: 0,
+    totalTags: 0
+  });
+
+  // Pagination state
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(defaultPageSize);
+
+  // Loading/error state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Carregar dados do localStorage ao montar
+  // Migration state
+  const [localStorageData, setLocalStorageData] = useState<LocalStorageData | null>(null);
+  const [migrationPending, setMigrationPending] = useState(false);
+  const [migrationDismissed, setMigrationDismissed] = useState(false);
+
+  // Track if initial load has happened
+  const initialLoadDone = useRef(false);
+
+  // Check for localStorage data on mount
   useEffect(() => {
-    try {
-      const loadedContacts = contactsStorageService.loadContacts();
-      const loadedTags = contactsStorageService.loadTags();
-      const loadedGroups = contactsStorageService.loadGroups();
-
-      setContacts(loadedContacts);
-      setTags(loadedTags);
-      setGroups(loadedGroups);
-
-      // Limpar dados antigos
-      contactsStorageService.cleanOldData(7);
-    } catch (err: any) {
-      const errorMessage = 'Erro ao carregar dados salvos';
-      console.error(errorMessage, { error: err });
-      setError(errorMessage);
-      toast.error(errorMessage, {
-        description: 'Os dados podem estar corrompidos. Tente importar novamente.',
-      });
+    const data = checkLocalStorageData();
+    if (data) {
+      setLocalStorageData(data);
+      setMigrationPending(true);
     }
   }, []);
 
-  // Salvar contatos quando mudarem
-  useEffect(() => {
-    if (contacts.length > 0) {
-      try {
-        contactsStorageService.saveContacts(contacts);
-      } catch (err: any) {
-        console.error('Erro ao salvar contatos:', { error: err });
-        // Não mostrar toast aqui para evitar spam, apenas log
-      }
-    }
-  }, [contacts]);
-
-  // Salvar tags quando mudarem
-  useEffect(() => {
-    if (tags.length > 0) {
-      try {
-        contactsStorageService.saveTags(tags);
-      } catch (err: any) {
-        console.error('Erro ao salvar tags:', { error: err });
-        // Não mostrar toast aqui para evitar spam, apenas log
-      }
-    }
-  }, [tags]);
-
-  // Salvar grupos quando mudarem
-  useEffect(() => {
-    if (groups.length > 0) {
-      try {
-        contactsStorageService.saveGroups(groups);
-      } catch (err: any) {
-        console.error('Erro ao salvar grupos:', { error: err });
-        // Não mostrar toast aqui para evitar spam, apenas log
-      }
-    }
-  }, [groups]);
-
-  // Importar contatos da WUZAPI
-  const importContacts = useCallback(async (instance: string, token: string) => {
+  // Load contacts from API
+  const loadContacts = useCallback(async (queryOptions: ContactsQueryOptions = {}) => {
     try {
       setLoading(true);
       setError(null);
 
-      console.log('📥 Iniciando importação de contatos', {
-        instance,
-        tokenPrefix: token.substring(0, 8) + '...',
-        existingContactsCount: contacts.length
+      const response = await contactsApi.getContacts({
+        page: queryOptions.page || page,
+        pageSize: queryOptions.pageSize || pageSize,
+        ...queryOptions
       });
 
-      // Buscar novos contatos da WUZAPI
-      const result = await contactImportService.importFromWuzapi(instance, token);
-      
-      console.log('✅ Contatos recebidos da WUZAPI', {
-        newContactsCount: result.contacts.length,
-        hasWarning: !!result.warning
-      });
+      setContacts(response.data);
+      setTotal(response.total);
+      setPage(response.page);
+      setPageSize(response.pageSize);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao carregar contatos';
+      setError(message);
+      toast.error('Erro ao carregar contatos', { description: message });
+    } finally {
+      setLoading(false);
+    }
+  }, [page, pageSize]);
 
-      // Carregar contatos existentes do storage (para garantir dados mais recentes)
-      const existingContacts = contactsStorageService.loadContacts();
-      
-      console.log('📂 Contatos existentes carregados', {
-        existingCount: existingContacts.length
-      });
+  // Load tags from API
+  const loadTags = useCallback(async () => {
+    try {
+      const data = await contactsApi.getTags();
+      setTags(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao carregar tags';
+      toast.error('Erro ao carregar tags', { description: message });
+    }
+  }, []);
 
-      // Fazer merge inteligente dos contatos
-      const mergedContacts = contactsStorageService.mergeContacts(
-        result.contacts,
-        existingContacts
-      );
-      
-      console.log('🔄 Merge concluído', {
-        totalContacts: mergedContacts.length,
-        newContacts: result.contacts.length,
-        existingContacts: existingContacts.length
-      });
+  // Load groups from API
+  const loadGroups = useCallback(async () => {
+    try {
+      const data = await contactsApi.getGroups();
+      setGroups(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao carregar grupos';
+      toast.error('Erro ao carregar grupos', { description: message });
+    }
+  }, []);
 
-      // Salvar contatos mesclados com metadados
-      contactsStorageService.saveContactsWithMetadata(mergedContacts, instance);
-      
-      // Atualizar estado
-      setContacts(mergedContacts);
+  // Load stats from API
+  const loadStats = useCallback(async () => {
+    try {
+      const data = await contactsApi.getStats();
+      setStats(data);
+    } catch (err) {
+      // Silently fail - stats are not critical
+      console.error('Failed to load stats:', err);
+    }
+  }, []);
 
-      // Calcular estatísticas para o toast
-      const added = mergedContacts.length - existingContacts.length;
-      const updated = result.contacts.length - added;
+  // Initial load
+  useEffect(() => {
+    if (autoLoad && !initialLoadDone.current) {
+      initialLoadDone.current = true;
+      loadContacts();
+      loadTags();
+      loadGroups();
+      loadStats();
+    }
+  }, [autoLoad, loadContacts, loadTags, loadGroups, loadStats]);
 
-      console.log('📊 Estatísticas da importação', {
-        total: mergedContacts.length,
-        added,
-        updated,
-        unchanged: existingContacts.length - updated
-      });
+  // Create contact
+  const createContact = useCallback(async (data: CreateContactData): Promise<Contact> => {
+    try {
+      setLoading(true);
+      const contact = await contactsApi.createContact(data);
+      setContacts(prev => [contact, ...prev]);
+      setTotal(prev => prev + 1);
+      toast.success('Contato criado com sucesso');
+      return contact;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao criar contato';
+      toast.error('Erro ao criar contato', { description: message });
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-      // Mostrar mensagem de sucesso com detalhes
-      if (added > 0 && updated > 0) {
-        toast.success('Contatos importados com sucesso', {
-          description: `${added} novos, ${updated} atualizados`
+  // Update contact
+  const updateContact = useCallback(async (id: string, updates: UpdateContactData): Promise<Contact> => {
+    try {
+      setLoading(true);
+      const contact = await contactsApi.updateContact(id, updates);
+      setContacts(prev => prev.map(c => c.id === id ? contact : c));
+      toast.success('Contato atualizado');
+      return contact;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao atualizar contato';
+      toast.error('Erro ao atualizar contato', { description: message });
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Delete contacts
+  const deleteContacts = useCallback(async (ids: string[]): Promise<void> => {
+    try {
+      setLoading(true);
+      await contactsApi.deleteContacts(ids);
+      setContacts(prev => prev.filter(c => !ids.includes(c.id)));
+      setTotal(prev => prev - ids.length);
+      toast.success(`${ids.length} contato(s) removido(s)`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao remover contatos';
+      toast.error('Erro ao remover contatos', { description: message });
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Import contacts from WhatsApp
+  const importContacts = useCallback(async (
+    contactsToImport: Array<{ phone: string; name?: string; avatarUrl?: string; whatsappJid?: string }>
+  ): Promise<void> => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const result = await contactsApi.importFromWhatsApp(contactsToImport);
+
+      // Reload contacts and stats after import
+      await Promise.all([loadContacts(), loadStats()]);
+
+      if (result.imported > 0 && result.updated > 0) {
+        toast.success('Contatos importados', {
+          description: `${result.imported} novos, ${result.updated} atualizados`
         });
-      } else if (added > 0) {
-        toast.success(`${added} novos contatos importados`);
-      } else if (updated > 0) {
-        toast.success(`${updated} contatos atualizados`);
+      } else if (result.imported > 0) {
+        toast.success(`${result.imported} novos contatos importados`);
+      } else if (result.updated > 0) {
+        toast.success(`${result.updated} contatos atualizados`);
       } else {
         toast.success('Contatos sincronizados', {
           description: 'Nenhuma alteração necessária'
         });
       }
-
-      // Mostrar aviso se houver
-      if (result.warning) {
-        toast.warning('Atenção', {
-          description: result.warning
-        });
-      }
-    } catch (err: any) {
-      const errorMessage = err.message || 'Erro ao importar contatos';
-      setError(errorMessage);
-      
-      // Log detalhado do erro para debugging
-      console.error('❌ Erro ao importar contatos:', {
-        error: err,
-        instance,
-        message: errorMessage,
-        stack: err.stack,
-        response: err.response?.data
-      });
-      
-      // Re-throw para que o componente possa tratar
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao importar contatos';
+      setError(message);
+      toast.error('Erro ao importar contatos', { description: message });
       throw err;
     } finally {
       setLoading(false);
     }
-  }, [contacts]);
+  }, [loadContacts, loadStats]);
 
-  // Atualizar um contato
-  const updateContact = useCallback((phone: string, updates: Partial<Contact>) => {
+  // Add tag
+  const addTag = useCallback(async (data: CreateTagData): Promise<Tag> => {
     try {
-      setContacts(prev => prev.map(contact => 
-        contact.phone === phone 
-          ? { ...contact, ...updates }
-          : contact
-      ));
-    } catch (err: any) {
-      const errorMessage = 'Erro ao atualizar contato';
-      console.error(errorMessage, { error: err, phone, updates });
-      toast.error(errorMessage, {
-        description: err.message || 'Tente novamente',
-      });
+      const tag = await contactsApi.createTag(data);
+      setTags(prev => [...prev, tag]);
+      toast.success(`Tag "${data.name}" criada`);
+      return tag;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao criar tag';
+      toast.error('Erro ao criar tag', { description: message });
+      throw err;
     }
   }, []);
 
-  // Deletar contatos
-  const deleteContacts = useCallback((phones: string[]) => {
+  // Remove tag
+  const removeTag = useCallback(async (tagId: string): Promise<void> => {
     try {
-      setContacts(prev => prev.filter(contact => !phones.includes(contact.phone)));
-      toast.success(`${phones.length} contato(s) removido(s)`);
-    } catch (err: any) {
-      const errorMessage = 'Erro ao remover contatos';
-      console.error(errorMessage, { error: err, phones });
-      toast.error(errorMessage, {
-        description: err.message || 'Tente novamente',
-      });
-    }
-  }, []);
-
-  // Adicionar nova tag
-  const addTag = useCallback((tag: Omit<Tag, 'id'>) => {
-    try {
-      const newTag = contactsService.createTag(tag);
-      setTags(prev => [...prev, newTag]);
-      toast.success(`Tag "${tag.name}" criada`);
-    } catch (err: any) {
-      const errorMessage = 'Erro ao criar tag';
-      console.error(errorMessage, { error: err, tag });
-      toast.error(errorMessage, {
-        description: err.message || 'Tente novamente',
-      });
-    }
-  }, []);
-
-  // Remover tag
-  const removeTag = useCallback((tagId: string) => {
-    try {
-      setTags(prev => contactsService.deleteTag(prev, tagId));
+      await contactsApi.deleteTag(tagId);
+      setTags(prev => prev.filter(t => t.id !== tagId));
       toast.success('Tag removida');
-    } catch (err: any) {
-      const errorMessage = 'Erro ao remover tag';
-      console.error(errorMessage, { error: err, tagId });
-      toast.error(errorMessage, {
-        description: err.message || 'Tente novamente',
-      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao remover tag';
+      toast.error('Erro ao remover tag', { description: message });
+      throw err;
     }
   }, []);
 
-  // Adicionar tags a contatos
-  const addTagsToContacts = useCallback((contactPhones: string[], tagIds: string[]) => {
+  // Add tags to contacts
+  const addTagsToContacts = useCallback(async (contactIds: string[], tagIds: string[]): Promise<void> => {
     try {
-      const tagsToAdd = tags.filter(t => tagIds.includes(t.id));
-      setContacts(prev => contactsService.addTagsToContacts(prev, contactPhones, tagsToAdd));
-      toast.success(`Tags adicionadas a ${contactPhones.length} contato(s)`);
-    } catch (err: any) {
-      const errorMessage = 'Erro ao adicionar tags';
-      console.error(errorMessage, { error: err, contactPhones, tagIds });
-      toast.error(errorMessage, {
-        description: err.message || 'Tente novamente',
-      });
+      await contactsApi.addTagsToContacts(contactIds, tagIds);
+      // Reload contacts to get updated tags
+      await loadContacts();
+      toast.success(`Tags adicionadas a ${contactIds.length} contato(s)`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao adicionar tags';
+      toast.error('Erro ao adicionar tags', { description: message });
+      throw err;
     }
-  }, [tags]);
+  }, [loadContacts]);
 
-  // Remover tags de contatos
-  const removeTagsFromContacts = useCallback((contactPhones: string[], tagIds: string[]) => {
+  // Remove tags from contacts
+  const removeTagsFromContacts = useCallback(async (contactIds: string[], tagIds: string[]): Promise<void> => {
     try {
-      setContacts(prev => contactsService.removeTagsFromContacts(prev, contactPhones, tagIds));
-      toast.success(`Tags removidas de ${contactPhones.length} contato(s)`);
-    } catch (err: any) {
-      const errorMessage = 'Erro ao remover tags';
-      console.error(errorMessage, { error: err, contactPhones, tagIds });
-      toast.error(errorMessage, {
-        description: err.message || 'Tente novamente',
-      });
+      await contactsApi.removeTagsFromContacts(contactIds, tagIds);
+      // Reload contacts to get updated tags
+      await loadContacts();
+      toast.success(`Tags removidas de ${contactIds.length} contato(s)`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao remover tags';
+      toast.error('Erro ao remover tags', { description: message });
+      throw err;
     }
-  }, []);
+  }, [loadContacts]);
 
-  // Criar grupo
-  const createGroup = useCallback((name: string, contactIds: string[]) => {
+  // Create group
+  const createGroup = useCallback(async (data: CreateGroupData): Promise<ContactGroup> => {
     try {
-      const newGroup = contactsService.createGroup(name, contactIds);
-      setGroups(prev => [...prev, newGroup]);
-      toast.success(`Grupo "${name}" criado com ${contactIds.length} contato(s)`);
-    } catch (err: any) {
-      const errorMessage = 'Erro ao criar grupo';
-      console.error(errorMessage, { error: err, name, contactIds });
-      toast.error(errorMessage, {
-        description: err.message || 'Tente novamente',
-      });
+      const group = await contactsApi.createGroup(data);
+      setGroups(prev => [...prev, group]);
+      toast.success(`Grupo "${data.name}" criado`);
+      return group;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao criar grupo';
+      toast.error('Erro ao criar grupo', { description: message });
+      throw err;
     }
   }, []);
 
-  // Atualizar grupo
-  const updateGroup = useCallback((groupId: string, updates: Partial<ContactGroup>) => {
+  // Update group
+  const updateGroup = useCallback(async (groupId: string, updates: UpdateGroupData): Promise<ContactGroup> => {
     try {
-      setGroups(prev => contactsService.updateGroup(prev, groupId, updates));
+      const group = await contactsApi.updateGroup(groupId, updates);
+      setGroups(prev => prev.map(g => g.id === groupId ? group : g));
       toast.success('Grupo atualizado');
-    } catch (err: any) {
-      const errorMessage = 'Erro ao atualizar grupo';
-      console.error(errorMessage, { error: err, groupId, updates });
-      toast.error(errorMessage, {
-        description: err.message || 'Tente novamente',
-      });
+      return group;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao atualizar grupo';
+      toast.error('Erro ao atualizar grupo', { description: message });
+      throw err;
     }
   }, []);
 
-  // Deletar grupo
-  const deleteGroup = useCallback((groupId: string) => {
+  // Delete group
+  const deleteGroup = useCallback(async (groupId: string): Promise<void> => {
     try {
-      setGroups(prev => contactsService.deleteGroup(prev, groupId));
+      await contactsApi.deleteGroup(groupId);
+      setGroups(prev => prev.filter(g => g.id !== groupId));
       toast.success('Grupo removido');
-    } catch (err: any) {
-      const errorMessage = 'Erro ao remover grupo';
-      console.error(errorMessage, { error: err, groupId });
-      toast.error(errorMessage, {
-        description: err.message || 'Tente novamente',
-      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao remover grupo';
+      toast.error('Erro ao remover grupo', { description: message });
+      throw err;
     }
   }, []);
 
-  // Recarregar contatos do storage
-  const refreshContacts = useCallback(() => {
+  // Add contacts to group
+  const addContactsToGroup = useCallback(async (groupId: string, contactIds: string[]): Promise<void> => {
     try {
-      const loadedContacts = contactsStorageService.loadContacts();
-      const loadedTags = contactsStorageService.loadTags();
-      const loadedGroups = contactsStorageService.loadGroups();
-
-      setContacts(loadedContacts);
-      setTags(loadedTags);
-      setGroups(loadedGroups);
-    } catch (err: any) {
-      const errorMessage = 'Erro ao recarregar contatos';
-      console.error(errorMessage, { error: err });
-      toast.error(errorMessage, {
-        description: err.message || 'Tente novamente',
-      });
+      await contactsApi.addContactsToGroup(groupId, contactIds);
+      // Reload groups to get updated count
+      await loadGroups();
+      toast.success(`${contactIds.length} contato(s) adicionado(s) ao grupo`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao adicionar contatos ao grupo';
+      toast.error('Erro ao adicionar contatos ao grupo', { description: message });
+      throw err;
     }
+  }, [loadGroups]);
+
+  // Remove contacts from group
+  const removeContactsFromGroup = useCallback(async (groupId: string, contactIds: string[]): Promise<void> => {
+    try {
+      await contactsApi.removeContactsFromGroup(groupId, contactIds);
+      // Reload groups to get updated count
+      await loadGroups();
+      toast.success(`${contactIds.length} contato(s) removido(s) do grupo`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao remover contatos do grupo';
+      toast.error('Erro ao remover contatos do grupo', { description: message });
+      throw err;
+    }
+  }, [loadGroups]);
+
+  // Migrate from localStorage
+  const migrateFromLocalStorage = useCallback(async (): Promise<MigrationResult> => {
+    if (!localStorageData) {
+      return { contacts: 0, tags: 0, groups: 0, errors: [] };
+    }
+
+    try {
+      setLoading(true);
+      const result = await contactsApi.migrateFromLocalStorage(localStorageData);
+
+      if (result.errors.length === 0) {
+        // Clear localStorage on success
+        clearLocalStorageData();
+        setLocalStorageData(null);
+        setMigrationPending(false);
+
+        // Reload data
+        await loadContacts();
+        await loadTags();
+        await loadGroups();
+
+        toast.success('Migração concluída', {
+          description: `${result.contacts} contatos, ${result.tags} tags, ${result.groups} grupos migrados`
+        });
+      } else {
+        toast.warning('Migração parcial', {
+          description: `${result.errors.length} erro(s) durante a migração`
+        });
+      }
+
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro na migração';
+      toast.error('Erro na migração', { description: message });
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [localStorageData, loadContacts, loadTags, loadGroups]);
+
+  // Dismiss migration
+  const dismissMigration = useCallback(() => {
+    setMigrationDismissed(true);
+    setMigrationPending(false);
   }, []);
+
+  // Refresh all data
+  const refreshContacts = useCallback(async () => {
+    await Promise.all([
+      loadContacts(),
+      loadTags(),
+      loadGroups(),
+      loadStats()
+    ]);
+  }, [loadContacts, loadTags, loadGroups, loadStats]);
 
   return {
+    // Data
     contacts,
     tags,
     groups,
+    stats,
+
+    // Pagination
+    total,
+    page,
+    pageSize,
+
+    // State
     loading,
     error,
-    importContacts,
+
+    // Migration
+    hasLocalStorageData: !!localStorageData && !migrationDismissed,
+    migrationPending: migrationPending && !migrationDismissed,
+    migrateFromLocalStorage,
+    dismissMigration,
+
+    // Contacts CRUD
+    loadContacts,
+    createContact,
     updateContact,
     deleteContacts,
+
+    // Import
+    importContacts,
+
+    // Tags
+    loadTags,
     addTag,
     removeTag,
     addTagsToContacts,
     removeTagsFromContacts,
+
+    // Groups
+    loadGroups,
     createGroup,
     updateGroup,
     deleteGroup,
+    addContactsToGroup,
+    removeContactsFromGroup,
+
+    // Stats
+    loadStats,
+
+    // Refresh
     refreshContacts,
   };
 }

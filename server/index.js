@@ -78,6 +78,7 @@ const userBillingRoutes = require('./routes/userBillingRoutes');
 const userTableAccessRoutes = require('./routes/userTableAccessRoutes');
 const userCustomThemesRoutes = require('./routes/userCustomThemesRoutes');
 const contactImportRoutes = require('./routes/contactImportRoutes');
+const userContactsRoutes = require('./routes/userContactsRoutes');
 const contactListRoutes = require('./routes/contactListRoutes');
 // bulkCampaignRoutes removed (unused)
 const linkPreviewRoutes = require('./routes/linkPreviewRoutes');
@@ -529,6 +530,11 @@ app.use('/api/admin/tables', adminTablesRoutes);
 app.use('/api/admin/custom-themes', adminCustomThemesRoutes);
 app.use('/api/admin/automation', adminAutomationRoutes);
 app.use('/api/admin/custom-links', customLinksRoutes); // Rotas admin de custom links
+
+// New contacts routes (Supabase-based)
+// Mount once - internal routes handle /tags, /groups, /import/wuzapi, etc.
+app.use('/api/user/contacts', userContactsRoutes);
+// Legacy contact import routes (for backward compatibility)
 app.use('/api/user/contacts', contactImportRoutes);
 app.use('/api/user/contact-lists', contactListRoutes);
 

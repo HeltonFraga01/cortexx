@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { Contact } from '@/services/bulkCampaignService'
-import { Tag, ContactGroup } from '@/services/contactsStorageService'
+import { Tag, ContactGroup } from '@/services/contactsApiService'
 import { getMyContacts, importContactsFromInbox, type AgentContact } from '@/services/agent-data'
 import { useAgentInbox } from '@/contexts/AgentInboxContext'
 import { toast } from 'sonner'

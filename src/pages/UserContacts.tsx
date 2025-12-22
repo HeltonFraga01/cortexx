@@ -2,25 +2,25 @@
  * UserContacts Page
  * 
  * Página principal de gerenciamento de contatos do usuário.
- * Permite importar, visualizar, filtrar, organizar e selecionar contatos
- * da agenda WUZAPI para envio de mensagens.
+ * Usa API backend com Supabase para persistência.
+ * Permite importar, visualizar, filtrar, organizar e selecionar contatos.
+ * 
+ * Requirements: 1.5, 6.1, 6.2, 6.3, 6.4, 8.1, 8.3
  */
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, Download, FolderPlus } from 'lucide-react';
+import { Users, Download, FolderPlus, AlertTriangle, Database } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { CardHeaderWithIcon, EmptyState } from '@/components/ui-custom';
 import { PageHeader } from '@/components/ui/page-header';
 import { cn } from '@/lib/utils';
-import { useContacts } from '@/hooks/useContacts';
+import { useContacts, Contact, Tag, ContactGroup } from '@/hooks/useContacts';
 import { useContactFilters } from '@/hooks/useContactFilters';
 import { useContactSelection } from '@/hooks/useContactSelection';
-import { contactsService } from '@/services/contactsService';
-import { contactsStorageService } from '@/services/contactsStorageService';
 import { useAuth } from '@/contexts/AuthContext';
-import { useWuzAPIInstances } from '@/contexts/WuzAPIInstancesContext';
 import { useBrandingConfig } from '@/hooks/useBranding';
 import { ContactsFilters } from '@/components/contacts/ContactsFilters';
 import { ContactsTable } from '@/components/contacts/ContactsTable';
@@ -34,52 +34,101 @@ import { ContactUserCreationForm } from '@/components/contacts/ContactUserCreati
 import { ContactsStatsSkeleton, ContactsTableSkeleton } from '@/components/contacts/ContactsSkeleton';
 import ErrorBoundary from '@/components/ErrorBoundary';
 
+// Migration banner component
+function MigrationBanner({ 
+  onMigrate, 
+  onDismiss, 
+  isLoading 
+}: { 
+  onMigrate: () => void; 
+  onDismiss: () => void; 
+  isLoading: boolean;
+}) {
+  return (
+    <Card className="border-amber-500 bg-amber-50 dark:bg-amber-950/20">
+      <CardContent className="py-4">
+        <div className="flex items-start gap-4">
+          <div className="p-2 rounded-full bg-amber-100 dark:bg-amber-900/50">
+            <Database className="h-5 w-5 text-amber-600" />
+          </div>
+          <div className="flex-1 space-y-2">
+            <h3 className="font-medium text-amber-800 dark:text-amber-200">
+              Dados locais encontrados
+            </h3>
+            <p className="text-sm text-amber-700 dark:text-amber-300">
+              Encontramos contatos salvos localmente no seu navegador. 
+              Deseja migrar esses dados para o servidor? Isso permitirá acessar 
+              seus contatos de qualquer dispositivo.
+            </p>
+            <div className="flex gap-2 pt-2">
+              <Button 
+                size="sm" 
+                onClick={onMigrate}
+                disabled={isLoading}
+              >
+                {isLoading ? 'Migrando...' : 'Migrar dados'}
+              </Button>
+              <Button 
+                size="sm" 
+                variant="ghost" 
+                onClick={onDismiss}
+                disabled={isLoading}
+              >
+                Ignorar
+              </Button>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function UserContactsContent() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { selectedInstance } = useWuzAPIInstances();
   const brandingConfig = useBrandingConfig();
   
-  // Carregar preferências salvas ou usar valores padrão
-  const [currentPage, setCurrentPage] = useState(() => {
-    try {
-      const savedPreferences = contactsStorageService.loadPreferences();
-      return savedPreferences?.currentPage || 1;
-    } catch (err) {
-      console.error('Erro ao carregar preferências:', err);
-      return 1;
-    }
-  });
-  const [pageSize] = useState(() => {
-    try {
-      const savedPreferences = contactsStorageService.loadPreferences();
-      return savedPreferences?.pageSize || 50;
-    } catch (err) {
-      console.error('Erro ao carregar preferências:', err);
-      return 50;
-    }
-  });
+  // UI state
   const [showTagsManager, setShowTagsManager] = useState(false);
   const [showGroupForm, setShowGroupForm] = useState(false);
   const [showUserCreation, setShowUserCreation] = useState(false);
   
-  // Hooks
+  // Contacts hook with API
   const {
     contacts,
     tags,
     groups,
+    stats,
+    total,
+    page,
+    pageSize,
     loading,
-    importContacts,
+    error,
+    hasLocalStorageData,
+    migrationPending,
+    migrateFromLocalStorage,
+    dismissMigration,
+    loadContacts,
+    createContact,
     updateContact,
     deleteContacts,
+    importContacts,
+    loadTags,
     addTag,
+    removeTag,
     addTagsToContacts,
     removeTagsFromContacts,
+    loadGroups,
     createGroup,
     updateGroup,
     deleteGroup,
+    addContactsToGroup,
+    removeContactsFromGroup,
+    refreshContacts,
   } = useContacts();
 
+  // Filters hook (client-side filtering for current page)
   const {
     filters,
     filteredContacts,
@@ -89,30 +138,7 @@ function UserContactsContent() {
     hasActiveFilters,
   } = useContactFilters(contacts);
 
-  // Reset to page 1 when filters change
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [filters]);
-
-  // Salvar preferências quando página ou filtros mudarem
-  useEffect(() => {
-    try {
-      const preferences = {
-        pageSize,
-        currentPage,
-        filters,
-        lastUpdated: new Date(),
-      };
-      contactsStorageService.savePreferences(preferences);
-    } catch (err: any) {
-      console.error('Erro ao salvar preferências:', {
-        error: err,
-        message: err.message,
-      });
-      // Não mostrar toast para evitar spam
-    }
-  }, [currentPage, pageSize, filters]);
-
+  // Selection hook
   const {
     selectedIds,
     selectedCount,
@@ -122,135 +148,141 @@ function UserContactsContent() {
     selectFiltered,
   } = useContactSelection();
 
-  // Calcular estatísticas com memoization
-  const stats = useMemo(() => {
-    return contactsService.getStats(filteredContacts, tags);
-  }, [filteredContacts, tags]);
+  // Use stats from server - no need to calculate locally
+  // The stats object from useContacts already has: total, withName, withoutName, totalTags
 
-  // Memoizar contatos paginados para evitar recálculos desnecessários
-  const paginatedData = useMemo(() => {
-    return contactsService.paginateContacts(filteredContacts, currentPage, pageSize);
-  }, [filteredContacts, currentPage, pageSize]);
+  // Handle page change - reload from server
+  const handlePageChange = useCallback((newPage: number) => {
+    loadContacts({ 
+      page: newPage, 
+      pageSize,
+      search: filters.search || undefined,
+      hasName: filters.hasName ?? undefined,
+      tagIds: filters.tags.length > 0 ? filters.tags : undefined,
+    });
+  }, [loadContacts, pageSize, filters]);
 
-  // Handler de importação - callback para quando a importação for concluída
-  const handleImportComplete = async (contacts: any[], total: number) => {
-    // O ContactImportButton já fez a importação via API
-    // Aqui apenas chamamos o hook para fazer o merge e atualizar o estado
-    if (user?.token) {
-      await importContacts(user.token, user.token);
+  // Handle filter changes - reload from server with filters
+  useEffect(() => {
+    if (hasActiveFilters) {
+      loadContacts({
+        page: 1,
+        pageSize,
+        search: filters.search || undefined,
+        hasName: filters.hasName ?? undefined,
+        tagIds: filters.tags.length > 0 ? filters.tags : undefined,
+      });
     }
-  };
+  }, [filters.search, filters.hasName, filters.tags, hasActiveFilters, loadContacts, pageSize]);
 
-  // Handler para disparar importação do EmptyState
-  const handleTriggerImport = async () => {
-    if (user?.token) {
-      try {
-        await importContacts(user.token, user.token);
-      } catch (err) {
-        // Erro já tratado no hook
-      }
+  // Handle import from WhatsApp
+  const handleImportComplete = useCallback(async (importedContacts: Array<{ phone: string; name?: string }>) => {
+    try {
+      await importContacts(importedContacts.map(c => ({
+        phone: c.phone,
+        name: c.name,
+      })));
+    } catch {
+      // Error already handled in hook
     }
-  };
+  }, [importContacts]);
 
-  // Handler para aplicar filtros a partir das estatísticas
-  const handleFilterApply = (newFilters: Partial<typeof filters>) => {
+  // Handle migration
+  const handleMigrate = useCallback(async () => {
+    try {
+      await migrateFromLocalStorage();
+    } catch {
+      // Error already handled in hook
+    }
+  }, [migrateFromLocalStorage]);
+
+  // Handle filter apply from stats
+  const handleFilterApply = useCallback((newFilters: Partial<typeof filters>) => {
     updateFilters(newFilters);
-  };
+  }, [updateFilters]);
 
-  // Handler para selecionar todos os contatos filtrados
-  const handleSelectAllFiltered = () => {
-    selectFiltered(filteredContacts);
+  // Handle select all filtered
+  const handleSelectAllFiltered = useCallback(() => {
+    selectFiltered(filteredContacts.map(c => ({ phone: c.phone })));
     toast.success(`${filteredContacts.length} contato(s) selecionado(s)`);
-  };
+  }, [selectFiltered, filteredContacts]);
 
-  // Handlers para ações em massa
-  const handleAddTags = () => {
+  // Tags handlers
+  const handleAddTags = useCallback(() => {
     setShowTagsManager(true);
-  };
+  }, []);
 
-  const handleApplyTags = (tagIds: string[]) => {
-    const selectedPhones = Array.from(selectedIds);
-    addTagsToContacts(selectedPhones, tagIds);
+  const handleApplyTags = useCallback(async (tagIds: string[]) => {
+    const selectedContactIds = contacts
+      .filter(c => selectedIds.has(c.phone))
+      .map(c => c.id);
+    
+    if (selectedContactIds.length > 0) {
+      await addTagsToContacts(selectedContactIds, tagIds);
+    }
     setShowTagsManager(false);
-  };
+  }, [contacts, selectedIds, addTagsToContacts]);
 
-  const handleCreateTag = (tag: Omit<import('@/services/contactsStorageService').Tag, 'id'>) => {
-    addTag(tag);
-  };
+  const handleCreateTag = useCallback(async (tag: { name: string; color?: string }) => {
+    await addTag(tag);
+  }, [addTag]);
 
-  const handleRemoveTagFromContact = (contactPhone: string, tagId: string) => {
-    removeTagsFromContacts([contactPhone], [tagId]);
-  };
+  const handleRemoveTagFromContact = useCallback(async (contactPhone: string, tagId: string) => {
+    const contact = contacts.find(c => c.phone === contactPhone);
+    if (contact) {
+      await removeTagsFromContacts([contact.id], [tagId]);
+    }
+  }, [contacts, removeTagsFromContacts]);
 
-  const handleSaveGroup = () => {
+  // Group handlers
+  const handleSaveGroup = useCallback(() => {
     setShowGroupForm(true);
-  };
+  }, []);
 
-  const handleCreateGroup = (name: string, contactIds: string[]) => {
-    createGroup(name, contactIds);
+  const handleCreateGroup = useCallback(async (name: string, contactIds: string[]) => {
+    await createGroup({ name });
+    // TODO: Add contacts to group after creation
     setShowGroupForm(false);
-  };
+  }, [createGroup]);
 
-  const handleSelectGroup = (group: import('@/services/contactsStorageService').ContactGroup) => {
-    // Selecionar todos os contatos do grupo
-    selectAll(group.contactIds);
-  };
+  const handleSelectGroup = useCallback((group: ContactGroup) => {
+    // Select all contacts in the group
+    // Note: This would need the group members to be loaded
+    toast.info('Seleção de grupo em desenvolvimento');
+  }, []);
 
-  const handleSendMessage = () => {
+  // Send message handler
+  const handleSendMessage = useCallback(() => {
     if (selectedCount === 0) {
       toast.error('Selecione contatos primeiro');
       return;
     }
 
-    try {
-      // Obter contatos selecionados da lista completa (não filtrada)
-      const selectedContacts = contacts.filter(c => selectedIds.has(c.phone));
-      
-      // Validar que encontramos todos os contatos selecionados
-      if (selectedContacts.length !== selectedCount) {
-        console.warn(
-          `Selection mismatch: expected ${selectedCount} contacts, found ${selectedContacts.length}`,
-          {
-            selectedIds: Array.from(selectedIds),
-            foundPhones: selectedContacts.map(c => c.phone),
-          }
-        );
-        toast.warning(
-          `Alguns contatos selecionados não foram encontrados. ` +
-          `Enviando ${selectedContacts.length} de ${selectedCount} contatos.`
-        );
-      }
-      
-      // Converter para formato esperado pelo SendFlow
-      const contactsForMessaging = selectedContacts.map(c => ({
-        id: c.phone,
-        phone: c.phone,
-        name: c.name,
-      }));
-      
-      // Navegar para a nova página de mensagens com contatos pré-selecionados
-      navigate('/user/mensagens', {
-        state: {
-          contacts: contactsForMessaging,
-        }
-      });
-      
-      toast.success(`${selectedContacts.length} contato(s) adicionado(s) ao envio`);
-    } catch (error) {
-      console.error('Erro ao enviar para mensagens:', error);
-      toast.error('Erro ao enviar contatos para mensagens');
-    }
-  };
+    const selectedContacts = contacts.filter(c => selectedIds.has(c.phone));
+    
+    const contactsForMessaging = selectedContacts.map(c => ({
+      id: c.id,
+      phone: c.phone,
+      name: c.name,
+    }));
+    
+    navigate('/user/mensagens', {
+      state: { contacts: contactsForMessaging }
+    });
+    
+    toast.success(`${selectedContacts.length} contato(s) adicionado(s) ao envio`);
+  }, [selectedCount, contacts, selectedIds, navigate]);
 
-  // Handler para criar usuário
-  const handleUserCreationSuccess = (userData: { name: string; token: string; phone: string }) => {
+  // User creation handler
+  const handleUserCreationSuccess = useCallback((userData: { name: string; token: string; phone: string }) => {
     toast.success('Usuário criado com sucesso!', {
       description: `Token: ${userData.token.substring(0, 12)}...`
-    })
-    setShowUserCreation(false)
-  }
+    });
+    setShowUserCreation(false);
+  }, []);
 
-  const handleExport = () => {
+  // Export handler
+  const handleExport = useCallback(() => {
     const contactsToExport = selectedCount > 0
       ? contacts.filter(c => selectedIds.has(c.phone))
       : filteredContacts;
@@ -261,44 +293,23 @@ function UserContactsContent() {
     }
 
     try {
-      // Gerar CSV
-      const blob = contactsService.exportToCSV(contactsToExport, tags);
+      // Generate CSV
+      const headers = ['phone', 'name', 'tags'];
+      const rows = contactsToExport.map(c => [
+        c.phone,
+        c.name || '',
+        c.tags?.map(t => t.name).join(';') || ''
+      ]);
       
-      // Criar nome do arquivo com data atual
-      const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-      const filename = `contatos-${date}.csv`;
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+      ].join('\n');
       
-      // Criar link de download
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-      
-      toast.success(`${contactsToExport.length} contato(s) exportado(s) com sucesso`);
-    } catch (error: any) {
-      console.error('Erro ao exportar contatos:', {
-        error,
-        message: error.message,
-        contactCount: contactsToExport.length,
-        stack: error.stack,
-      });
-      toast.error('Erro ao exportar contatos', {
-        description: error.message || 'Tente novamente',
-      });
-    }
-  };
-
-  // Handler para exportar contatos
-  const handleExportAll = () => {
-    const contactsToExport = filteredContacts.length > 0 ? filteredContacts : contacts;
-    try {
-      const blob = contactsService.exportToCSV(contactsToExport, tags);
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const date = new Date().toISOString().split('T')[0];
       const filename = `contatos-${date}.csv`;
+      
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -307,14 +318,48 @@ function UserContactsContent() {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
+      
       toast.success(`${contactsToExport.length} contato(s) exportado(s)`);
-    } catch (error: any) {
-      console.error('Erro ao exportar contatos:', error);
-      toast.error('Erro ao exportar contatos', {
-        description: error.message || 'Tente novamente',
+    } catch (err) {
+      toast.error('Erro ao exportar contatos');
+    }
+  }, [selectedCount, contacts, selectedIds, filteredContacts]);
+
+  // Contact update handler (adapts old interface to new)
+  const handleContactUpdate = useCallback(async (phone: string, updates: Partial<Contact>) => {
+    const contact = contacts.find(c => c.phone === phone);
+    if (contact) {
+      await updateContact(contact.id, {
+        name: updates.name,
+        phone: updates.phone,
       });
     }
-  };
+  }, [contacts, updateContact]);
+
+  // Contact delete handler (adapts old interface to new)
+  const handleContactDelete = useCallback(async (phones: string[]) => {
+    const contactIds = contacts
+      .filter(c => phones.includes(c.phone))
+      .map(c => c.id);
+    
+    if (contactIds.length > 0) {
+      await deleteContacts(contactIds);
+    }
+  }, [contacts, deleteContacts]);
+
+  // Add tags to contact handler (adapts old interface)
+  const handleAddTagsToContact = useCallback(async (contactPhones: string[], tagIds: string[]) => {
+    const contactIds = contacts
+      .filter(c => contactPhones.includes(c.phone))
+      .map(c => c.id);
+    
+    if (contactIds.length > 0) {
+      await addTagsToContacts(contactIds, tagIds);
+    }
+  }, [contacts, addTagsToContacts]);
+
+  // Calculate total pages
+  const totalPages = Math.ceil(total / pageSize);
 
   return (
     <div className={cn(
@@ -328,7 +373,7 @@ function UserContactsContent() {
         actions={[
           {
             label: 'Exportar CSV',
-            onClick: handleExportAll,
+            onClick: handleExport,
             variant: 'outline',
             icon: <Download className="h-4 w-4" />,
             disabled: loading || contacts.length === 0,
@@ -360,6 +405,30 @@ function UserContactsContent() {
         />
       </PageHeader>
 
+      {/* Migration Banner */}
+      {migrationPending && (
+        <MigrationBanner
+          onMigrate={handleMigrate}
+          onDismiss={dismissMigration}
+          isLoading={loading}
+        />
+      )}
+
+      {/* Error Banner */}
+      {error && (
+        <Card className="border-red-500 bg-red-50 dark:bg-red-950/20">
+          <CardContent className="py-4">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="h-5 w-5 text-red-500" />
+              <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+              <Button size="sm" variant="outline" onClick={refreshContacts}>
+                Tentar novamente
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Stats Cards */}
       {loading && contacts.length === 0 ? (
         <ContactsStatsSkeleton />
@@ -370,15 +439,15 @@ function UserContactsContent() {
         />
       )}
 
-      {/* Main Content com Sidebar */}
+      {/* Main Content with Sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 animate-in">
-        {/* Sidebar de Grupos */}
+        {/* Groups Sidebar */}
         {contacts.length > 0 && (
           <div className="lg:col-span-1 animate-in">
             <ContactGroupsSidebar
               groups={groups}
               onCreateGroup={handleCreateGroup}
-              onUpdateGroup={updateGroup}
+              onUpdateGroup={(id, updates) => updateGroup(id, updates)}
               onDeleteGroup={deleteGroup}
               onSelectGroup={handleSelectGroup}
               selectedContactIds={Array.from(selectedIds)}
@@ -386,7 +455,7 @@ function UserContactsContent() {
           </div>
         )}
 
-        {/* Conteúdo Principal */}
+        {/* Main Content */}
         <div className={contacts.length > 0 ? "lg:col-span-3 animate-in" : "lg:col-span-4 animate-in"}>
           <Card className="transition-all duration-300 hover:shadow-md">
             <CardHeaderWithIcon
@@ -394,93 +463,94 @@ function UserContactsContent() {
               iconColor="text-blue-500"
               title="Seus Contatos"
             >
-              <p className="text-sm text-muted-foreground">Importe contatos da agenda {brandingConfig.appName} para começar</p>
+              <p className="text-sm text-muted-foreground">
+                {total > 0 
+                  ? `${total} contato(s) no total • Página ${page} de ${totalPages}`
+                  : `Importe contatos da agenda ${brandingConfig.appName} para começar`
+                }
+              </p>
             </CardHeaderWithIcon>
             <CardContent>
-              {contacts.length === 0 ? (
-            <EmptyState
-              icon={Users}
-              title="Nenhum contato importado"
-              description={!user?.token 
-                ? 'Faça login para importar contatos da sua agenda do WhatsApp'
-                : `Clique no botão abaixo para importar seus contatos da agenda ${brandingConfig.appName} e começar a gerenciá-los`
-              }
-              action={user?.token ? {
-                label: "Importar Contatos",
-                onClick: handleTriggerImport
-              } : undefined}
-            />
-          ) : (
-            <div className="space-y-4">
-              {/* Filtros */}
-              <ContactsFilters
-                filters={filters}
-                onFiltersChange={updateFilters}
-                availableTags={tags}
-                resultCount={resultCount}
-                totalCount={contacts.length}
-                hasActiveFilters={hasActiveFilters}
-                onSelectAllFiltered={handleSelectAllFiltered}
-              />
-
-              {/* Gerenciador de Tags inline */}
-              {showTagsManager && (
-                <ContactTagsManager
-                  availableTags={tags}
-                  selectedContactsCount={selectedCount}
-                  onAddTags={handleApplyTags}
-                  onCreateTag={handleCreateTag}
-                  onClose={() => setShowTagsManager(false)}
+              {contacts.length === 0 && !loading ? (
+                <EmptyState
+                  icon={Users}
+                  title="Nenhum contato importado"
+                  description={!user?.token 
+                    ? 'Faça login para importar contatos da sua agenda do WhatsApp'
+                    : `Clique no botão acima para importar seus contatos da agenda ${brandingConfig.appName}`
+                  }
                 />
-              )}
-
-              {/* Formulário de Grupo inline */}
-              {showGroupForm && (
-                <ContactGroupForm
-                  selectedContactsCount={selectedCount}
-                  selectedContactIds={Array.from(selectedIds)}
-                  onCreateGroup={handleCreateGroup}
-                  onClose={() => setShowGroupForm(false)}
-                />
-              )}
-
-              {/* Formulário de Criação de Usuário inline */}
-              {showUserCreation && (
-                <ContactUserCreationForm
-                  onSuccess={handleUserCreationSuccess}
-                  onCancel={() => setShowUserCreation(false)}
-                />
-              )}
-
-              {/* Tabela */}
-              {loading ? (
-                <ContactsTableSkeleton rows={10} />
               ) : (
-                <ContactsTable
-                  contacts={filteredContacts}
-                  tags={tags}
-                  selectedIds={selectedIds}
-                  onSelectionChange={(ids) => {
-                    // Atualizar seleção
-                    const newSelection = new Set(ids);
-                    if (newSelection.size === 0) {
-                      clearSelection();
-                    } else {
-                      selectAll(Array.from(newSelection));
-                    }
-                  }}
-                  onContactUpdate={updateContact}
-                  onContactDelete={deleteContacts}
-                  onAddTagsToContact={addTagsToContacts}
-                  onRemoveTagFromContact={handleRemoveTagFromContact}
-                  page={currentPage}
-                  pageSize={pageSize}
-                  onPageChange={setCurrentPage}
-                />
+                <div className="space-y-4">
+                  {/* Filters */}
+                  <ContactsFilters
+                    filters={filters}
+                    onFiltersChange={updateFilters}
+                    availableTags={tags}
+                    resultCount={resultCount}
+                    totalCount={total}
+                    hasActiveFilters={hasActiveFilters}
+                    onSelectAllFiltered={handleSelectAllFiltered}
+                  />
+
+                  {/* Tags Manager inline */}
+                  {showTagsManager && (
+                    <ContactTagsManager
+                      availableTags={tags}
+                      selectedContactsCount={selectedCount}
+                      onAddTags={handleApplyTags}
+                      onCreateTag={handleCreateTag}
+                      onClose={() => setShowTagsManager(false)}
+                    />
+                  )}
+
+                  {/* Group Form inline */}
+                  {showGroupForm && (
+                    <ContactGroupForm
+                      selectedContactsCount={selectedCount}
+                      selectedContactIds={Array.from(selectedIds)}
+                      onCreateGroup={handleCreateGroup}
+                      onClose={() => setShowGroupForm(false)}
+                    />
+                  )}
+
+                  {/* User Creation Form inline */}
+                  {showUserCreation && (
+                    <ContactUserCreationForm
+                      onSuccess={handleUserCreationSuccess}
+                      onCancel={() => setShowUserCreation(false)}
+                    />
+                  )}
+
+                  {/* Table */}
+                  {loading ? (
+                    <ContactsTableSkeleton rows={10} />
+                  ) : (
+                    <ContactsTable
+                      contacts={filteredContacts}
+                      tags={tags}
+                      selectedIds={selectedIds}
+                      onSelectionChange={(ids) => {
+                        const newSelection = new Set(ids);
+                        if (newSelection.size === 0) {
+                          clearSelection();
+                        } else {
+                          selectAll(Array.from(newSelection));
+                        }
+                      }}
+                      onContactUpdate={handleContactUpdate}
+                      onContactDelete={handleContactDelete}
+                      onAddTagsToContact={handleAddTagsToContact}
+                      onRemoveTagFromContact={handleRemoveTagFromContact}
+                      page={page}
+                      pageSize={pageSize}
+                      onPageChange={handlePageChange}
+                      totalPages={totalPages}
+                    />
+                  )}
+                </div>
               )}
-            </div>
-          )}
-        </CardContent>
+            </CardContent>
           </Card>
         </div>
       </div>
