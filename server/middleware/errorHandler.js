@@ -237,12 +237,93 @@ class ErrorHandler {
 
   /**
    * Middleware para validar formato básico de token
+   * Suporta tanto WUZAPI token no header 'token' quanto JWT no header 'Authorization'
+   * Se JWT for detectado (em qualquer header), busca o WUZAPI token da tabela accounts
+   * 
    * @param {Object} req - Objeto de requisição do Express
    * @param {Object} res - Objeto de resposta do Express
    * @param {Function} next - Função next do Express
    */
-  validateTokenFormat(req, res, next) {
-    const token = req.headers.token;
+  async validateTokenFormat(req, res, next) {
+    let token = req.headers.token;
+    
+    // Helper function to check if a string looks like a JWT
+    const isJWT = (str) => {
+      if (!str || typeof str !== 'string') return false;
+      const parts = str.split('.');
+      return parts.length === 3 && str.startsWith('eyJ');
+    };
+    
+    // Helper function to resolve JWT to WUZAPI token
+    const resolveJwtToWuzapiToken = async () => {
+      try {
+        const { validateSupabaseToken } = require('./supabaseAuth');
+        const { getWuzapiTokenFromAccount } = require('./auth');
+        
+        // Get JWT from Authorization header or token header
+        const authHeader = req.headers.authorization;
+        let jwtToken = null;
+        
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          jwtToken = authHeader.substring(7);
+        } else if (isJWT(token)) {
+          jwtToken = token;
+        }
+        
+        if (!jwtToken || !isJWT(jwtToken)) {
+          return null;
+        }
+        
+        await new Promise((resolve, reject) => {
+          validateSupabaseToken(req, res, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+        
+        const userId = req.user?.id;
+        const wuzapiId = req.user?.user_metadata?.wuzapi_id;
+        
+        if (userId) {
+          // Pass wuzapiId for auto-correction of invalid tokens
+          const wuzapiToken = await getWuzapiTokenFromAccount(userId, wuzapiId);
+          if (wuzapiToken) {
+            logger.debug('WUZAPI token resolved from JWT', { 
+              userId: userId.substring(0, 8) + '...',
+              hasToken: true 
+            });
+            return wuzapiToken;
+          } else {
+            logger.warn('No WUZAPI token found for JWT user', { 
+              userId: userId.substring(0, 8) + '...' 
+            });
+          }
+        }
+        return null;
+      } catch (jwtError) {
+        logger.debug('JWT validation failed in validateTokenFormat', { 
+          error: jwtError.message 
+        });
+        return null;
+      }
+    };
+    
+    // Check if token header contains a JWT (frontend might send JWT in token header)
+    if (token && isJWT(token)) {
+      const wuzapiToken = await resolveJwtToWuzapiToken();
+      if (wuzapiToken) {
+        req.headers.token = wuzapiToken;
+        token = wuzapiToken;
+      }
+    }
+    // If no token in header, try to get from Authorization header
+    else if (!token) {
+      const wuzapiToken = await resolveJwtToWuzapiToken();
+      if (wuzapiToken) {
+        req.headers.token = wuzapiToken;
+        token = wuzapiToken;
+      }
+    }
     
     if (!token) {
       return this.handleMissingToken(req, res);

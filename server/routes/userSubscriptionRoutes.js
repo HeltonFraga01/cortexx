@@ -9,7 +9,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { requireUser } = require('../middleware/auth');
+const { requireUser, getUserId, getUserToken } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const SubscriptionService = require('../services/SubscriptionService');
 const QuotaService = require('../services/QuotaService');
@@ -41,9 +41,9 @@ function initServices(db) {
  * Get current user's subscription details
  */
 router.get('/subscription', requireUser, async (req, res) => {
+  const userId = getUserId(req);
   try {
     initServices(req.app.locals.db);
-    const userId = req.session.userId;
     
     const subscription = await subscriptionService.getUserSubscription(userId);
     
@@ -61,7 +61,7 @@ router.get('/subscription', requireUser, async (req, res) => {
   } catch (error) {
     logger.error('Failed to get user subscription', {
       error: error.message,
-      userId: req.session.userId
+      userId
     });
     res.status(500).json({
       success: false,
@@ -75,10 +75,10 @@ router.get('/subscription', requireUser, async (req, res) => {
  * Get current user's quotas with usage
  */
 router.get('/quotas', requireUser, async (req, res) => {
+  const userId = getUserId(req);
+  const userToken = getUserToken(req);
   try {
     initServices(req.app.locals.db);
-    const userId = req.session.userId;
-    const userToken = req.session.userToken; // Pass userToken for accurate resource counting
     
     const quotas = await quotaService.getUserQuotas(userId, userToken);
     
@@ -96,7 +96,7 @@ router.get('/quotas', requireUser, async (req, res) => {
   } catch (error) {
     logger.error('Failed to get user quotas', {
       error: error.message,
-      userId: req.session.userId
+      userId
     });
     res.status(500).json({
       success: false,
@@ -110,11 +110,11 @@ router.get('/quotas', requireUser, async (req, res) => {
  * Get specific quota status for current user
  */
 router.get('/quotas/:quotaType', requireUser, async (req, res) => {
+  const userId = getUserId(req);
+  const userToken = getUserToken(req);
+  const { quotaType } = req.params;
   try {
     initServices(req.app.locals.db);
-    const userId = req.session.userId;
-    const userToken = req.session.userToken; // Pass userToken for accurate resource counting
-    const { quotaType } = req.params;
     
     const status = await quotaService.checkQuota(userId, quotaType, 1, userToken);
     const threshold = await quotaService.checkAlertThreshold(userId, quotaType);
@@ -130,8 +130,8 @@ router.get('/quotas/:quotaType', requireUser, async (req, res) => {
   } catch (error) {
     logger.error('Failed to get quota status', {
       error: error.message,
-      userId: req.session.userId,
-      quotaType: req.params.quotaType
+      userId,
+      quotaType
     });
     res.status(500).json({
       success: false,
@@ -145,9 +145,9 @@ router.get('/quotas/:quotaType', requireUser, async (req, res) => {
  * Get current user's features
  */
 router.get('/features', requireUser, async (req, res) => {
+  const userId = getUserId(req);
   try {
     initServices(req.app.locals.db);
-    const userId = req.session.userId;
     
     const features = await featureFlagService.getUserFeatures(userId);
     
@@ -158,7 +158,7 @@ router.get('/features', requireUser, async (req, res) => {
   } catch (error) {
     logger.error('Failed to get user features', {
       error: error.message,
-      userId: req.session.userId
+      userId
     });
     res.status(500).json({
       success: false,
@@ -172,10 +172,10 @@ router.get('/features', requireUser, async (req, res) => {
  * Check if a specific feature is enabled for current user
  */
 router.get('/features/:featureName', requireUser, async (req, res) => {
+  const userId = getUserId(req);
+  const { featureName } = req.params;
   try {
     initServices(req.app.locals.db);
-    const userId = req.session.userId;
-    const { featureName } = req.params;
     
     const enabled = await featureFlagService.isFeatureEnabled(userId, featureName);
     const features = await featureFlagService.getUserFeatures(userId);
@@ -192,8 +192,8 @@ router.get('/features/:featureName', requireUser, async (req, res) => {
   } catch (error) {
     logger.error('Failed to check feature', {
       error: error.message,
-      userId: req.session.userId,
-      featureName: req.params.featureName
+      userId,
+      featureName
     });
     res.status(500).json({
       success: false,
@@ -212,10 +212,11 @@ router.get('/features/:featureName', requireUser, async (req, res) => {
  * Requirements: 3.1, 3.2, 3.3, 3.4, 5.2, 5.3
  */
 router.get('/account-summary', requireUser, async (req, res) => {
+  const userId = getUserId(req);
+  const userToken = getUserToken(req);
   try {
     initServices(req.app.locals.db);
     const db = req.app.locals.db;
-    const userId = req.session.userId;
     
     // Ensure user has a subscription (assign default plan if missing)
     const SubscriptionEnsurer = require('../services/SubscriptionEnsurer');
@@ -236,7 +237,6 @@ router.get('/account-summary', requireUser, async (req, res) => {
     
     try {
       // Pass userToken for accurate resource counting (webhooks, campaigns, bots)
-      const userToken = req.session.userToken;
       quotas = await quotaService.getUserQuotas(userId, userToken);
     } catch (err) {
       logger.warn('Failed to get quotas, using defaults', { userId, error: err.message });
@@ -292,7 +292,7 @@ router.get('/account-summary', requireUser, async (req, res) => {
     logger.error('Failed to get account summary', {
       error: error.message,
       stack: error.stack,
-      userId: req.session.userId
+      userId
     });
     res.status(500).json({
       success: false,

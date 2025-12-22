@@ -8,7 +8,7 @@
  */
 
 const express = require('express');
-const { requireUser } = require('../middleware/auth');
+const { requireUser, getUserId } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const PlanService = require('../services/PlanService');
 const SubscriptionService = require('../services/SubscriptionService');
@@ -44,6 +44,7 @@ function getSubscriptionService(req) {
  * List all active plans available for subscription/upgrade
  */
 router.get('/', requireUser, async (req, res) => {
+  const userId = getUserId(req);
   try {
     const service = getPlanService(req);
     const subService = getSubscriptionService(req);
@@ -58,7 +59,7 @@ router.get('/', requireUser, async (req, res) => {
     // Get current user subscription to mark current plan
     let currentPlanId = null;
     if (subService) {
-      const subscription = await subService.getUserSubscription(req.session.userId);
+      const subscription = await subService.getUserSubscription(userId);
       currentPlanId = subscription?.planId || null;
     }
 
@@ -84,7 +85,7 @@ router.get('/', requireUser, async (req, res) => {
     formattedPlans.sort((a, b) => a.priceCents - b.priceCents);
 
     logger.info('User plans listed', {
-      userId: req.session.userId,
+      userId,
       count: formattedPlans.length,
       endpoint: '/api/user/plans'
     });
@@ -93,7 +94,7 @@ router.get('/', requireUser, async (req, res) => {
   } catch (error) {
     logger.error('Failed to list user plans', {
       error: error.message,
-      userId: req.session.userId,
+      userId,
       endpoint: '/api/user/plans'
     });
     res.status(500).json({ error: error.message });

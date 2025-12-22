@@ -18,6 +18,7 @@ import { CreditPurchase } from '@/components/user/billing/CreditPurchase';
 
 import { WuzAPIService, SessionStatus, WebhookConfig } from '@/services/wuzapi';
 import { getAccountSummary, type QuotaStatus } from '@/services/user-subscription';
+import { supabase } from '@/lib/supabase';
 import { 
   Wifi, 
   WifiOff, 
@@ -212,12 +213,19 @@ const UserOverview = () => {
     if (!user?.token) return;
     
     try {
+      // Get Supabase JWT token for authentication
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+      }
+      
       // Buscar estatísticas do dashboard
       const response = await fetch('/api/user/dashboard-stats', {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers,
         credentials: 'include' // IMPORTANTE: Envia cookies de sessão
       });
 

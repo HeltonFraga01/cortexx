@@ -33,6 +33,7 @@ const UserDashboard = () => {
       <DraftProvider>
         <Routes>
           <Route path="/" element={<UserOverview />} />
+          <Route path="/dashboard" element={<UserOverview />} />
           <Route path="/messages" element={<UserMessages />} />
           
           {/* Legacy disparador - redirect to new messaging system */}

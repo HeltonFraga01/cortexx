@@ -288,7 +288,9 @@ export const validatePhoneNumber = async (
   // Verifica se existe no WhatsApp
   try {
     // Obter CSRF token
-    const csrfResponse = await fetch('/api/auth/csrf-token');
+    const csrfResponse = await fetch('/api/auth/csrf-token', {
+      credentials: 'include'
+    });
     const csrfData = await csrfResponse.json();
     const csrfToken = csrfData.csrfToken;
     
@@ -300,6 +302,7 @@ export const validatePhoneNumber = async (
         'token': instance,
         'csrf-token': csrfToken
       },
+      credentials: 'include',
       body: JSON.stringify({
         Phone: normalized
       })

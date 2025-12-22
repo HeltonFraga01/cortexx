@@ -159,6 +159,7 @@ export async function loginAdmin(email: string, password: string): Promise<AuthR
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include',
       body: JSON.stringify({ email, password }),
     });
 

@@ -261,14 +261,18 @@ router.get('/import/wuzapi', verifyUserToken, async (req, res) => {
     });
 
   } catch (error) {
+    // Use req.userToken which is set by verifyUserToken middleware
+    const tokenForLog = req.userToken ? req.userToken.substring(0, 8) + '...' : 'unknown';
+    const instanceForLog = req.query?.instance || 'unknown';
+    
     logger.error('Erro ao importar contatos do WUZAPI:', {
       error: error.message,
       status: error.response?.status,
       statusText: error.response?.statusText,
       responseData: error.response?.data,
       code: error.code,
-      instance,
-      userToken: userToken.substring(0, 8) + '...'
+      instance: instanceForLog,
+      userToken: tokenForLog
     });
 
     let statusCode = 500;

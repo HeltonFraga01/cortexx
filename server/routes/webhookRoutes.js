@@ -1,6 +1,8 @@
 const express = require('express');
 const axios = require('axios');
 const { logger } = require('../utils/logger');
+const { validateSupabaseToken } = require('../middleware/supabaseAuth');
+const { getUserToken, getWuzapiTokenFromAccount } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -9,17 +11,90 @@ const router = express.Router();
  * Handles webhook configuration and management
  */
 
-// Middleware para verificar token do usuário (via header ou sessão)
+// Cache para WUZAPI tokens (evita chamadas repetidas ao banco)
+const wuzapiTokenCache = new Map();
+const WUZAPI_CACHE_TTL = 5 * 60 * 1000; // 5 minutos
+
+/**
+ * Get WUZAPI token from cache or database
+ * @param {string} userId - Supabase user ID
+ * @param {string} wuzapiId - Optional WUZAPI user ID from JWT metadata
+ */
+async function getCachedWuzapiToken(userId, wuzapiId = null) {
+  if (!userId) return null;
+  
+  // Check cache first
+  const cached = wuzapiTokenCache.get(userId);
+  if (cached && Date.now() - cached.timestamp < WUZAPI_CACHE_TTL) {
+    logger.debug('WUZAPI token obtained from cache (webhookRoutes)', { userId: userId.substring(0, 8) + '...' });
+    return cached.token;
+  }
+  
+  // Fetch from database (and potentially from WUZAPI API if wuzapiId is provided)
+  const token = await getWuzapiTokenFromAccount(userId, wuzapiId);
+  if (token) {
+    wuzapiTokenCache.set(userId, { token, timestamp: Date.now() });
+    logger.debug('WUZAPI token obtained from database (webhookRoutes)', { userId: userId.substring(0, 8) + '...' });
+  }
+  
+  return token;
+}
+
+// Middleware para verificar token do usuário (via JWT Supabase, header ou sessão)
 const verifyUserToken = async (req, res, next) => {
   let userToken = null;
   
-  // Tentar obter token do header primeiro
+  // Tentar obter token do header Authorization (JWT Supabase)
   const authHeader = req.headers.authorization;
-  const tokenHeader = req.headers.token;
   
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    userToken = authHeader.substring(7);
-  } else if (tokenHeader) {
+    try {
+      // Validate Supabase JWT and extract user data
+      await new Promise((resolve, reject) => {
+        validateSupabaseToken(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      // Get userId and wuzapiId from validated JWT
+      const userId = req.user?.id;
+      const wuzapiId = req.user?.user_metadata?.wuzapi_id;
+      
+      if (userId) {
+        // First try to get token from JWT metadata
+        userToken = getUserToken(req);
+        
+        // If not in metadata, fetch from accounts table (passing wuzapiId for auto-correction)
+        if (!userToken) {
+          userToken = await getCachedWuzapiToken(userId, wuzapiId);
+          
+          if (userToken) {
+            logger.debug('WUZAPI token fetched from accounts table', { 
+              userId: userId.substring(0, 8) + '...',
+              hasToken: true 
+            });
+          } else {
+            logger.warn('No WUZAPI token found for user in accounts table', { 
+              userId: userId.substring(0, 8) + '...' 
+            });
+          }
+        }
+      }
+      
+      if (userToken) {
+        req.userToken = userToken;
+        req.userId = userId;
+        return next();
+      }
+    } catch (error) {
+      logger.debug('JWT validation failed, trying other methods', { error: error.message });
+    }
+  }
+  
+  // Tentar obter token do header 'token' (legacy)
+  const tokenHeader = req.headers.token;
+  if (tokenHeader) {
     userToken = tokenHeader;
   } else if (req.session?.userToken) {
     // Fallback para token da sessão

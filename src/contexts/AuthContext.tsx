@@ -107,7 +107,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       } else {
         // Fallback: Check backend session (cookie-based)
         try {
-           const response = await fetch('/api/auth/status?t=' + Date.now());
+           const response = await fetch('/api/auth/status?t=' + Date.now(), {
+             credentials: 'include'
+           });
            const data = await response.json();
            
            if (data && data.authenticated && data.user) {

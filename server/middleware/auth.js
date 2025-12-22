@@ -5,6 +5,7 @@ const { validateSession, destroyCorruptedSession, getSessionDiagnostics } = requ
 
 /**
  * Helper to get user ID from request (JWT or session)
+ * Exported for use in route handlers
  */
 function getUserId(req) {
   return req.user?.id || req.session?.userId;
@@ -12,10 +13,109 @@ function getUserId(req) {
 
 /**
  * Helper to get user role from request (JWT or session)
+ * Exported for use in route handlers
  */
 function getUserRole(req) {
   // Check Supabase metadata first, then standard role, then session
   return req.user?.user_metadata?.role || req.user?.role || req.session?.role;
+}
+
+/**
+ * Helper to get user token from request (JWT metadata or session)
+ * Exported for use in route handlers
+ * 
+ * Priority:
+ * 1. JWT user_metadata.userToken
+ * 2. Session userToken
+ * 3. Cached wuzapiToken from account lookup (set by middleware)
+ */
+function getUserToken(req) {
+  return req.user?.user_metadata?.userToken || req.session?.userToken || req.wuzapiToken;
+}
+
+/**
+ * Helper to get WUZAPI token from account table or WUZAPI API
+ * This is an async function that looks up the token from the database
+ * If the token in the database is invalid, it tries to fetch from WUZAPI API
+ * 
+ * @param {string} userId - User ID (Supabase Auth ID)
+ * @param {string} wuzapiId - Optional WUZAPI user ID from JWT metadata
+ * @returns {Promise<string|null>} WUZAPI token or null
+ */
+async function getWuzapiTokenFromAccount(userId, wuzapiId = null) {
+  if (!userId) return null;
+  
+  try {
+    const SupabaseService = require('../services/SupabaseService');
+    
+    // Convert userId to UUID format if needed
+    let uuidUserId = userId;
+    if (userId.length === 32 && !userId.includes('-')) {
+      uuidUserId = `${userId.slice(0, 8)}-${userId.slice(8, 12)}-${userId.slice(12, 16)}-${userId.slice(16, 20)}-${userId.slice(20)}`;
+    }
+    
+    const { data: account, error } = await SupabaseService.adminClient
+      .from('accounts')
+      .select('id, wuzapi_token')
+      .eq('owner_user_id', uuidUserId)
+      .single();
+    
+    if (error || !account) {
+      logger.debug('No account found for user', { userId: userId.substring(0, 8) + '...' });
+      return null;
+    }
+    
+    const storedToken = account.wuzapi_token;
+    
+    // If we have a wuzapiId from JWT metadata, try to get the real token from WUZAPI
+    // This handles the case where the stored token is actually the userId (incorrect)
+    if (wuzapiId) {
+      try {
+        const wuzapiClient = require('../utils/wuzapiClient');
+        const adminToken = process.env.WUZAPI_ADMIN_TOKEN;
+        
+        if (adminToken) {
+          // Get user from WUZAPI by ID
+          const response = await wuzapiClient.getUser(wuzapiId, adminToken);
+          
+          if (response.success && response.data?.data?.token) {
+            const realToken = response.data.data.token;
+            
+            // If the stored token is different from the real token, update the database
+            if (realToken !== storedToken) {
+              logger.info('Updating wuzapi_token in accounts table', {
+                userId: userId.substring(0, 8) + '...',
+                wuzapiId: wuzapiId.substring(0, 8) + '...',
+                oldTokenPrefix: storedToken?.substring(0, 8) + '...',
+                newTokenPrefix: realToken.substring(0, 8) + '...'
+              });
+              
+              // Update the account with the correct token
+              await SupabaseService.adminClient
+                .from('accounts')
+                .update({ wuzapi_token: realToken, updated_at: new Date().toISOString() })
+                .eq('id', account.id);
+              
+              return realToken;
+            }
+          }
+        }
+      } catch (wuzapiError) {
+        logger.warn('Failed to fetch WUZAPI token from API, using stored token', {
+          error: wuzapiError.message,
+          wuzapiId: wuzapiId?.substring(0, 8) + '...'
+        });
+      }
+    }
+    
+    return storedToken;
+  } catch (error) {
+    logger.error('Error fetching WUZAPI token from account', { 
+      error: error.message, 
+      userId: userId?.substring(0, 8) + '...' 
+    });
+    return null;
+  }
 }
 
 /**
@@ -463,13 +563,131 @@ async function requireAdmin(req, res, next) {
  * Middleware que requer role de user (não admin)
  * 
  * Verifica se existe uma sessão ativa E se o role é 'user'.
+ * Suporta tanto JWT (Supabase Auth) quanto sessão tradicional.
  * Também garante que o usuário tenha uma subscription ativa.
  * 
  * FIXED: Now properly validates session data and handles corrupted sessions.
+ * FIXED: Now supports JWT authentication in addition to session-based auth.
  * 
  * Requirements: 1.1, 1.2
  */
 async function requireUser(req, res, next) {
+  const authHeader = req.headers.authorization;
+  
+  // Check for JWT token in Authorization header first
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      await validateSupabaseToken(req, res, async () => {
+        const userId = getUserId(req);
+        const userRole = getUserRole(req);
+        
+        if (!userId) {
+          logger.error('User authentication failed - Invalid JWT', {
+            type: 'user_auth_failure',
+            reason: 'invalid_jwt',
+            path: req.path,
+            method: req.method,
+            ip: req.ip
+          });
+          
+          securityLogger.logUnauthorizedAccess({
+            ip: req.ip,
+            path: req.path,
+            reason: 'Invalid JWT token'
+          });
+          
+          return res.status(401).json({ 
+            error: 'Autenticação necessária',
+            code: 'AUTH_REQUIRED',
+            timestamp: new Date().toISOString()
+          });
+        }
+        
+        // Check if user has user role (not admin)
+        if (userRole !== 'user') {
+          logger.error('User authentication failed - Wrong role (JWT)', {
+            type: 'user_auth_failure',
+            reason: 'wrong_role',
+            userId,
+            role: userRole,
+            path: req.path,
+            method: req.method,
+            ip: req.ip
+          });
+          
+          securityLogger.logUnauthorizedAccess({
+            userId,
+            ip: req.ip,
+            path: req.path,
+            reason: 'User role required'
+          });
+          
+          return res.status(403).json({ 
+            error: 'Acesso de usuário necessário',
+            code: 'FORBIDDEN',
+            timestamp: new Date().toISOString()
+          });
+        }
+        
+        // Ensure user has a subscription (assign default plan if missing)
+        try {
+          const db = req.app.locals.db;
+          if (db) {
+            const SubscriptionEnsurer = require('../services/SubscriptionEnsurer');
+            const subscriptionEnsurer = new SubscriptionEnsurer(db);
+            await subscriptionEnsurer.ensureSubscription(userId);
+          }
+        } catch (error) {
+          logger.warn('Failed to ensure subscription in requireUser middleware (JWT)', {
+            userId,
+            error: error.message
+          });
+        }
+        
+        // Fetch WUZAPI token from account if not in JWT metadata
+        if (!getUserToken(req)) {
+          try {
+            const wuzapiId = req.user?.user_metadata?.wuzapi_id;
+            const wuzapiToken = await getWuzapiTokenFromAccount(userId, wuzapiId);
+            if (wuzapiToken) {
+              req.wuzapiToken = wuzapiToken;
+              logger.debug('WUZAPI token fetched from account', { 
+                userId: userId.substring(0, 8) + '...',
+                hasToken: true 
+              });
+            }
+          } catch (error) {
+            logger.warn('Failed to fetch WUZAPI token from account', {
+              userId: userId.substring(0, 8) + '...',
+              error: error.message
+            });
+          }
+        }
+        
+        if (process.env.NODE_ENV === 'development') {
+          logger.debug('User access granted (JWT)', {
+            type: 'user_access_granted',
+            userId,
+            role: userRole,
+            hasWuzapiToken: !!getUserToken(req),
+            authMethod: 'jwt',
+            path: req.path,
+            method: req.method
+          });
+        }
+        
+        next();
+      });
+      return;
+    } catch (error) {
+      logger.error('JWT validation error in requireUser', {
+        error: error.message,
+        path: req.path
+      });
+      // Fall through to session-based auth
+    }
+  }
+
   // Session-based authentication with proper validation
   const validation = validateSession(req.session);
   
@@ -557,5 +775,9 @@ module.exports = {
   requireAdmin,
   requireAdminToken,
   requireUser,
-  debugSession
+  debugSession,
+  getUserId,
+  getUserRole,
+  getUserToken,
+  getWuzapiTokenFromAccount
 };

@@ -8,7 +8,7 @@
  */
 
 const router = require('express').Router();
-const { requireUser: authenticate } = require('../middleware/auth');
+const { requireUser: authenticate, getUserId } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const StripeService = require('../services/StripeService');
 const SubscriptionService = require('../services/SubscriptionService');
@@ -35,15 +35,16 @@ function toUuidFormat(userId) {
  * Get current subscription details
  */
 router.get('/subscription', authenticate, async (req, res) => {
+  const userId = getUserId(req);
   try {
     const subscriptionService = new SubscriptionService();
-    const subscription = await subscriptionService.getUserSubscription(req.session.userId);
+    const subscription = await subscriptionService.getUserSubscription(userId);
     
     res.json({ success: true, data: subscription });
   } catch (error) {
     logger.error('Failed to get subscription', {
       error: error.message,
-      userId: req.session?.userId,
+      userId,
       endpoint: '/api/user/subscription',
     });
     res.status(500).json({ error: error.message });
@@ -76,7 +77,8 @@ router.post('/subscription/checkout', authenticate, async (req, res) => {
     }
 
     // Get or create Stripe customer
-    const uuidUserId = toUuidFormat(req.session.userId);
+    const userId = getUserId(req);
+    const uuidUserId = toUuidFormat(userId);
     const { data: account } = await SupabaseService.adminClient
       .from('accounts')
       .select('id, stripe_customer_id, name')
@@ -88,9 +90,9 @@ router.post('/subscription/checkout', authenticate, async (req, res) => {
     if (!customerId) {
       // Create Stripe customer
       const customer = await StripeService.createCustomer(
-        `user-${req.session.userId}@wuzapi.local`,
-        account?.name || `User ${req.session.userId}`,
-        { userId: req.session.userId, accountId: account?.id }
+        `user-${userId}@wuzapi.local`,
+        account?.name || `User ${userId}`,
+        { userId, accountId: account?.id }
       );
       customerId = customer.id;
 
@@ -112,14 +114,14 @@ router.post('/subscription/checkout', authenticate, async (req, res) => {
       successUrl: `${baseUrl}/user/account?subscription=success`,
       cancelUrl: `${baseUrl}/user/account?subscription=canceled`,
       metadata: {
-        userId: req.session.userId,
+        userId,
         accountId: account?.id,
         planId,
       },
     });
 
     logger.info('Checkout session created', {
-      userId: req.session?.userId,
+      userId,
       planId,
       sessionId: session.id,
       endpoint: '/api/user/subscription/checkout',
@@ -129,7 +131,7 @@ router.post('/subscription/checkout', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to create checkout session', {
       error: error.message,
-      userId: req.session?.userId,
+      userId: getUserId(req),
       endpoint: '/api/user/subscription/checkout',
     });
     res.status(500).json({ error: error.message });
@@ -162,11 +164,12 @@ router.post('/subscription/change', authenticate, async (req, res) => {
     }
 
     // Get current subscription
+    const userId = getUserId(req);
     const subscriptionService = new SubscriptionService();
-    const currentSub = await subscriptionService.getUserSubscription(req.session.userId);
+    const currentSub = await subscriptionService.getUserSubscription(userId);
 
     // Get or create Stripe customer
-    const uuidUserId = toUuidFormat(req.session.userId);
+    const uuidUserId = toUuidFormat(userId);
     const { data: account } = await SupabaseService.adminClient
       .from('accounts')
       .select('id, stripe_customer_id, name')
@@ -178,9 +181,9 @@ router.post('/subscription/change', authenticate, async (req, res) => {
     if (!customerId) {
       // Create Stripe customer
       const customer = await StripeService.createCustomer(
-        `user-${req.session.userId}@wuzapi.local`,
-        account?.name || `User ${req.session.userId}`,
-        { userId: req.session.userId, accountId: account?.id }
+        `user-${userId}@wuzapi.local`,
+        account?.name || `User ${userId}`,
+        { userId, accountId: account?.id }
       );
       customerId = customer.id;
 
@@ -206,7 +209,7 @@ router.post('/subscription/change', authenticate, async (req, res) => {
         successUrl: `${baseUrl}/user/account?subscription=changed`,
         cancelUrl: `${baseUrl}/user/account?subscription=canceled`,
         metadata: {
-          userId: req.session.userId,
+          userId,
           accountId: account?.id,
           planId,
           previousPlanId: currentSub?.planId,
@@ -215,7 +218,7 @@ router.post('/subscription/change', authenticate, async (req, res) => {
       });
 
       logger.info('Plan change checkout session created', {
-        userId: req.session?.userId,
+        userId,
         planId,
         previousPlanId: currentSub?.planId,
         sessionId: session.id,
@@ -233,7 +236,7 @@ router.post('/subscription/change', authenticate, async (req, res) => {
       successUrl: `${baseUrl}/user/account?subscription=success`,
       cancelUrl: `${baseUrl}/user/account?subscription=canceled`,
       metadata: {
-        userId: req.session.userId,
+        userId,
         accountId: account?.id,
         planId,
         type: 'new_subscription',
@@ -241,7 +244,7 @@ router.post('/subscription/change', authenticate, async (req, res) => {
     });
 
     logger.info('Subscription checkout session created (from change)', {
-      userId: req.session?.userId,
+      userId,
       planId,
       sessionId: session.id,
       endpoint: '/api/user/subscription/change',
@@ -252,7 +255,7 @@ router.post('/subscription/change', authenticate, async (req, res) => {
     logger.error('Failed to change plan', {
       error: error.message,
       stack: error.stack,
-      userId: req.session?.userId,
+      userId: getUserId(req),
       endpoint: '/api/user/subscription/change',
     });
     res.status(500).json({ error: error.message });
@@ -265,8 +268,9 @@ router.post('/subscription/change', authenticate, async (req, res) => {
  */
 router.post('/subscription/cancel', authenticate, async (req, res) => {
   try {
+    const userId = getUserId(req);
     const subscriptionService = new SubscriptionService();
-    const subscription = await subscriptionService.getUserSubscription(req.session.userId);
+    const subscription = await subscriptionService.getUserSubscription(userId);
     
     if (!subscription) {
       return res.status(404).json({ error: 'No active subscription found' });
@@ -278,7 +282,7 @@ router.post('/subscription/cancel', authenticate, async (req, res) => {
     }
 
     // Update local status
-    await subscriptionService.updateSubscriptionStatus(req.session.userId, 'cancelled');
+    await subscriptionService.updateSubscriptionStatus(userId, 'cancelled');
 
     // Update cancel_at_period_end flag
     await SupabaseService.adminClient
@@ -287,7 +291,7 @@ router.post('/subscription/cancel', authenticate, async (req, res) => {
       .eq('id', subscription.id);
 
     logger.info('Subscription canceled', {
-      userId: req.session?.userId,
+      userId,
       subscriptionId: subscription.id,
       endpoint: '/api/user/subscription/cancel',
     });
@@ -296,7 +300,7 @@ router.post('/subscription/cancel', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to cancel subscription', {
       error: error.message,
-      userId: req.session?.userId,
+      userId: getUserId(req),
       endpoint: '/api/user/subscription/cancel',
     });
     res.status(500).json({ error: error.message });
@@ -309,8 +313,9 @@ router.post('/subscription/cancel', authenticate, async (req, res) => {
  */
 router.post('/subscription/reactivate', authenticate, async (req, res) => {
   try {
+    const userId = getUserId(req);
     const subscriptionService = new SubscriptionService();
-    const subscription = await subscriptionService.getUserSubscription(req.session.userId);
+    const subscription = await subscriptionService.getUserSubscription(userId);
     
     if (!subscription) {
       return res.status(404).json({ error: 'No subscription found' });
@@ -322,7 +327,7 @@ router.post('/subscription/reactivate', authenticate, async (req, res) => {
     }
 
     // Update local status
-    await subscriptionService.updateSubscriptionStatus(req.session.userId, 'active');
+    await subscriptionService.updateSubscriptionStatus(userId, 'active');
 
     // Clear cancel_at_period_end flag
     await SupabaseService.adminClient
@@ -331,7 +336,7 @@ router.post('/subscription/reactivate', authenticate, async (req, res) => {
       .eq('id', subscription.id);
 
     logger.info('Subscription reactivated', {
-      userId: req.session?.userId,
+      userId,
       subscriptionId: subscription.id,
       endpoint: '/api/user/subscription/reactivate',
     });
@@ -340,7 +345,7 @@ router.post('/subscription/reactivate', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to reactivate subscription', {
       error: error.message,
-      userId: req.session?.userId,
+      userId: getUserId(req),
       endpoint: '/api/user/subscription/reactivate',
     });
     res.status(500).json({ error: error.message });
@@ -355,7 +360,7 @@ router.post('/subscription/reactivate', authenticate, async (req, res) => {
  */
 router.get('/credits', authenticate, async (req, res) => {
   try {
-    const userId = req.session.userId;
+    const userId = getUserId(req);
     const uuidUserId = toUuidFormat(userId);
     
     // Get account
@@ -428,7 +433,7 @@ router.get('/credits', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to get credit balance', {
       error: error.message,
-      userId: req.session?.userId,
+      userId: getUserId(req),
       endpoint: '/api/user/credits',
     });
     res.status(500).json({ error: error.message });
@@ -462,7 +467,7 @@ router.get('/credits/packages', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to get credit packages', {
       error: error.message,
-      userId: req.session?.userId,
+      userId: getUserId(req),
       endpoint: '/api/user/credits/packages',
     });
     res.status(500).json({ error: error.message });
@@ -476,6 +481,7 @@ router.get('/credits/packages', authenticate, async (req, res) => {
 router.post('/credits/purchase', authenticate, async (req, res) => {
   try {
     const validated = validateCreditPurchase(req.body);
+    const userId = getUserId(req);
     
     // Get package
     const { data: pkg } = await SupabaseService.adminClient
@@ -494,7 +500,7 @@ router.post('/credits/purchase', authenticate, async (req, res) => {
     }
 
     // Get or create customer
-    const uuidUserId = toUuidFormat(req.session.userId);
+    const uuidUserId = toUuidFormat(userId);
     const { data: account } = await SupabaseService.adminClient
       .from('accounts')
       .select('id, stripe_customer_id, name')
@@ -505,9 +511,9 @@ router.post('/credits/purchase', authenticate, async (req, res) => {
 
     if (!customerId) {
       const customer = await StripeService.createCustomer(
-        `user-${req.session.userId}@wuzapi.local`,
-        account?.name || `User ${req.session.userId}`,
-        { userId: req.session.userId, accountId: account?.id }
+        `user-${userId}@wuzapi.local`,
+        account?.name || `User ${userId}`,
+        { userId, accountId: account?.id }
       );
       customerId = customer.id;
 
@@ -528,7 +534,7 @@ router.post('/credits/purchase', authenticate, async (req, res) => {
       successUrl: `${baseUrl}/user/account?credits=success`,
       cancelUrl: `${baseUrl}/user/account?credits=canceled`,
       metadata: {
-        userId: req.session.userId,
+        userId,
         accountId: account?.id,
         packageId: validated.packageId,
         creditAmount: pkg.credit_amount,
@@ -538,7 +544,7 @@ router.post('/credits/purchase', authenticate, async (req, res) => {
     });
 
     logger.info('Credit purchase checkout created', {
-      userId: req.session?.userId,
+      userId,
       packageId: validated.packageId,
       sessionId: session.id,
       endpoint: '/api/user/credits/purchase',
@@ -548,7 +554,7 @@ router.post('/credits/purchase', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to create credit purchase checkout', {
       error: error.message,
-      userId: req.session?.userId,
+      userId: getUserId(req),
       endpoint: '/api/user/credits/purchase',
     });
     
@@ -570,9 +576,10 @@ router.get('/billing/history', authenticate, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = 12;
+    const userId = getUserId(req);
 
     // Get customer ID
-    const uuidUserId = toUuidFormat(req.session.userId);
+    const uuidUserId = toUuidFormat(userId);
     const { data: account } = await SupabaseService.adminClient
       .from('accounts')
       .select('stripe_customer_id')
@@ -600,7 +607,7 @@ router.get('/billing/history', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to get billing history', {
       error: error.message,
-      userId: req.session?.userId,
+      userId: getUserId(req),
       endpoint: '/api/user/billing/history',
     });
     res.status(500).json({ error: error.message });
@@ -614,7 +621,8 @@ router.get('/billing/history', authenticate, async (req, res) => {
 router.post('/billing/portal', authenticate, async (req, res) => {
   try {
     // Get customer ID
-    const uuidUserId = toUuidFormat(req.session.userId);
+    const userId = getUserId(req);
+    const uuidUserId = toUuidFormat(userId);
     const { data: account } = await SupabaseService.adminClient
       .from('accounts')
       .select('stripe_customer_id')
@@ -635,7 +643,7 @@ router.post('/billing/portal', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('Failed to create billing portal session', {
       error: error.message,
-      userId: req.session?.userId,
+      userId: getUserId(req),
       endpoint: '/api/user/billing/portal',
     });
     res.status(500).json({ error: error.message });
