@@ -1,8 +1,10 @@
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class ContactFetcherService {
     constructor(db) {
-        this.db = db; // Database abstraction layer
+        // db parameter kept for backwards compatibility but not used
+        this.db = db;
     }
 
     /**
@@ -17,15 +19,22 @@ class ContactFetcherService {
         let client = null;
 
         try {
-            // 1. Obter detalhes da conexão
-            const connSql = 'SELECT * FROM database_connections WHERE id = ? AND user_token = ?';
-            const { rows } = await this.db.query(connSql, [connectionId, userToken]);
+            // 1. Obter detalhes da conexão usando SupabaseService
+            const { data: connections, error } = await SupabaseService.getMany(
+                'database_connections',
+                { id: connectionId, user_token: userToken },
+                { limit: 1 }
+            );
 
-            if (rows.length === 0) {
+            if (error) {
+                throw error;
+            }
+
+            if (!connections || connections.length === 0) {
                 throw new Error('Conexão de banco de dados não encontrada');
             }
 
-            const dbConfig = rows[0];
+            const dbConfig = connections[0];
 
             // Decodificar senha (assumindo base64 simples por enquanto, ideal seria criptografia)
             // Nota: Em produção real, usar criptografia forte

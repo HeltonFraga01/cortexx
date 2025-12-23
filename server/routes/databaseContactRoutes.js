@@ -24,9 +24,8 @@ router.post('/:id/preview', verifyUserToken, async (req, res) => {
         const { id } = req.params;
         const { query } = req.body;
         const userToken = req.userToken;
-        const db = req.app.locals.db;
 
-        const fetcher = new ContactFetcherService(db);
+        const fetcher = new ContactFetcherService();
         const contacts = await fetcher.fetchContacts(id, userToken, query);
 
         res.json({
@@ -51,9 +50,8 @@ router.post('/:id/fetch', verifyUserToken, async (req, res) => {
         const { id } = req.params;
         const { query } = req.body;
         const userToken = req.userToken;
-        const db = req.app.locals.db;
 
-        const fetcher = new ContactFetcherService(db);
+        const fetcher = new ContactFetcherService();
         const contacts = await fetcher.fetchContacts(id, userToken, query);
 
         res.json({

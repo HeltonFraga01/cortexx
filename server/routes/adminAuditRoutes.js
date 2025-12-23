@@ -18,15 +18,8 @@ const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
-let auditService = null;
-
-function getAuditService(req) {
-  if (!auditService) {
-    const db = req.app.locals.db;
-    if (db) auditService = new AdminAuditService(db);
-  }
-  return auditService;
-}
+// Service initialized at module level (uses SupabaseService internally)
+const auditService = new AdminAuditService();
 
 /**
  * Validate that a user belongs to the specified tenant
@@ -59,7 +52,7 @@ async function isUserInTenant(userId, tenantId) {
  */
 router.get('/', requireAdmin, async (req, res) => {
   try {
-    const service = getAuditService(req);
+    const service = auditService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -123,7 +116,7 @@ router.get('/', requireAdmin, async (req, res) => {
  */
 router.get('/export', requireAdmin, async (req, res) => {
   try {
-    const service = getAuditService(req);
+    const service = auditService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -208,7 +201,7 @@ router.get('/actions', requireAdmin, async (req, res) => {
  */
 router.get('/admin/:adminId', requireAdmin, async (req, res) => {
   try {
-    const service = getAuditService(req);
+    const service = auditService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -267,7 +260,7 @@ router.get('/admin/:adminId', requireAdmin, async (req, res) => {
  */
 router.get('/user/:userId', requireAdmin, async (req, res) => {
   try {
-    const service = getAuditService(req);
+    const service = auditService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }

@@ -19,24 +19,9 @@ const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
-let quotaService = null;
-let auditService = null;
-
-function getQuotaService(req) {
-  if (!quotaService) {
-    const db = req.app.locals.db;
-    if (db) quotaService = new QuotaService(db);
-  }
-  return quotaService;
-}
-
-function getAuditService(req) {
-  if (!auditService) {
-    const db = req.app.locals.db;
-    if (db) auditService = new AdminAuditService(db);
-  }
-  return auditService;
-}
+// Services initialized at module level (use SupabaseService internally)
+const quotaService = new QuotaService();
+const auditService = new AdminAuditService();
 
 /**
  * Validate that a user belongs to the specified tenant
@@ -80,7 +65,7 @@ async function validateUserTenant(userId, tenantId) {
  */
 router.get('/:userId/quotas', requireAdmin, async (req, res) => {
   try {
-    const service = getQuotaService(req);
+    const service = quotaService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -134,8 +119,8 @@ router.get('/:userId/quotas', requireAdmin, async (req, res) => {
  */
 router.put('/:userId/quotas/:quotaType', requireAdmin, async (req, res) => {
   try {
-    const service = getQuotaService(req);
-    const audit = getAuditService(req);
+    const service = quotaService;
+    const audit = auditService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -234,8 +219,8 @@ router.put('/:userId/quotas/:quotaType', requireAdmin, async (req, res) => {
  */
 router.delete('/:userId/quotas/:quotaType/override', requireAdmin, async (req, res) => {
   try {
-    const service = getQuotaService(req);
-    const audit = getAuditService(req);
+    const service = quotaService;
+    const audit = auditService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -311,8 +296,8 @@ router.delete('/:userId/quotas/:quotaType/override', requireAdmin, async (req, r
  */
 router.post('/:userId/quotas/reset', requireAdmin, async (req, res) => {
   try {
-    const service = getQuotaService(req);
-    const audit = getAuditService(req);
+    const service = quotaService;
+    const audit = auditService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -377,7 +362,7 @@ router.post('/:userId/quotas/reset', requireAdmin, async (req, res) => {
  */
 router.get('/:userId/quotas/:quotaType/usage', requireAdmin, async (req, res) => {
   try {
-    const service = getQuotaService(req);
+    const service = quotaService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }

@@ -17,25 +17,15 @@ const InboxService = require('../services/InboxService');
 const AccountService = require('../services/AccountService');
 const CustomRoleService = require('../services/CustomRoleService');
 const MultiUserAuditService = require('../services/MultiUserAuditService');
+const SupabaseService = require('../services/SupabaseService');
 
-// Services will be initialized with db
-let agentService = null;
-let teamService = null;
-let inboxService = null;
-let accountService = null;
-let customRoleService = null;
-let auditService = null;
-
-function initServices(db) {
-  if (!agentService) {
-    agentService = new AgentService(db);
-    teamService = new TeamService(db);
-    inboxService = new InboxService(db);
-    accountService = new AccountService(db);
-    customRoleService = new CustomRoleService(db);
-    auditService = new MultiUserAuditService(db);
-  }
-}
+// Services initialized at module level (no db parameter needed)
+const agentService = new AgentService();
+const teamService = new TeamService();
+const inboxService = new InboxService();
+const accountService = new AccountService();
+const customRoleService = new CustomRoleService();
+const auditService = new MultiUserAuditService();
 
 /**
  * Get or create account for the current session user
@@ -47,9 +37,7 @@ function initServices(db) {
  * To support both, we first try to find account by owner_user_id,
  * then fallback to finding by wuzapi_token if userToken is provided.
  */
-async function getOrCreateAccount(db, userId, userToken) {
-  initServices(db);
-  
+async function getOrCreateAccount(userId, userToken) {
   logger.debug('getOrCreateAccount called', { userId, hasToken: !!userToken });
   
   // First, try to find account by owner_user_id
@@ -88,7 +76,6 @@ async function getOrCreateAccount(db, userId, userToken) {
 }
 
 module.exports = router;
-module.exports.initServices = initServices;
 module.exports.getOrCreateAccount = getOrCreateAccount;
 
 
@@ -100,10 +87,10 @@ module.exports.getOrCreateAccount = getOrCreateAccount;
  */
 router.get('/agents', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     const { status, role, availability, limit, offset } = req.query;
     
@@ -131,10 +118,10 @@ router.get('/agents', requireAuth, async (req, res) => {
  */
 router.get('/agents/:id', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -160,10 +147,10 @@ router.get('/agents/:id', requireAuth, async (req, res) => {
  */
 router.post('/agents', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     const { email, password, name, role, avatarUrl, customRoleId } = req.body;
     
@@ -216,10 +203,10 @@ router.post('/agents', requireAuth, async (req, res) => {
  */
 router.post('/agents/invite', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     // Get the owner agent of the account to use as createdBy
     const agents = await agentService.listAgents(account.id, { role: 'owner' });
@@ -281,10 +268,10 @@ router.post('/agents/invite', requireAuth, async (req, res) => {
  */
 router.get('/agents/invitations/list', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     const { status } = req.query;
     const invitations = await agentService.listInvitations(account.id, { status });
@@ -305,8 +292,8 @@ router.get('/agents/invitations/list', requireAuth, async (req, res) => {
  */
 router.delete('/agents/invitations/:id', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
+    
+    
     
     await agentService.deleteInvitation(req.params.id);
     
@@ -326,10 +313,10 @@ router.delete('/agents/invitations/:id', requireAuth, async (req, res) => {
  */
 router.put('/agents/:id', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -363,10 +350,10 @@ router.put('/agents/:id', requireAuth, async (req, res) => {
  */
 router.put('/agents/:id/role', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -404,10 +391,10 @@ router.put('/agents/:id/role', requireAuth, async (req, res) => {
  */
 router.delete('/agents/:id', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -444,10 +431,10 @@ router.delete('/agents/:id', requireAuth, async (req, res) => {
  */
 router.post('/agents/:id/activate', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -480,10 +467,10 @@ router.post('/agents/:id/activate', requireAuth, async (req, res) => {
  */
 router.get('/teams', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const teams = await teamService.listTeamsWithStats(account.id);
     
     res.json({
@@ -502,10 +489,10 @@ router.get('/teams', requireAuth, async (req, res) => {
  */
 router.get('/teams/:id', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const team = await teamService.getTeamById(req.params.id);
     
     if (!team || team.accountId !== account.id) {
@@ -531,10 +518,10 @@ router.get('/teams/:id', requireAuth, async (req, res) => {
  */
 router.post('/teams', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     const { name, description, allowAutoAssign } = req.body;
     
@@ -570,10 +557,10 @@ router.post('/teams', requireAuth, async (req, res) => {
  */
 router.put('/teams/:id', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const team = await teamService.getTeamById(req.params.id);
     
     if (!team || team.accountId !== account.id) {
@@ -607,10 +594,10 @@ router.put('/teams/:id', requireAuth, async (req, res) => {
  */
 router.delete('/teams/:id', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const team = await teamService.getTeamById(req.params.id);
     
     if (!team || team.accountId !== account.id) {
@@ -640,10 +627,10 @@ router.delete('/teams/:id', requireAuth, async (req, res) => {
  */
 router.get('/teams/:id/members', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const team = await teamService.getTeamById(req.params.id);
     
     if (!team || team.accountId !== account.id) {
@@ -671,10 +658,10 @@ router.get('/teams/:id/members', requireAuth, async (req, res) => {
  */
 router.post('/teams/:id/members', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const team = await teamService.getTeamById(req.params.id);
     
     if (!team || team.accountId !== account.id) {
@@ -717,10 +704,10 @@ router.post('/teams/:id/members', requireAuth, async (req, res) => {
  */
 router.delete('/teams/:id/members/:agentId', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const team = await teamService.getTeamById(req.params.id);
     
     if (!team || team.accountId !== account.id) {
@@ -755,8 +742,8 @@ router.delete('/teams/:id/members/:agentId', requireAuth, async (req, res) => {
  */
 router.get('/inboxes', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
+    
+    
     
     // Determine user ID from JWT or session
     const userId = req.user?.id || req.session?.userId;
@@ -769,7 +756,7 @@ router.get('/inboxes', requireAuth, async (req, res) => {
       });
     }
     
-    const account = await getOrCreateAccount(db, userId, userToken);
+    const account = await getOrCreateAccount(userId, userToken);
     
     logger.debug('Listing inboxes for account', { 
       accountId: account.id, 
@@ -800,10 +787,10 @@ router.get('/inboxes', requireAuth, async (req, res) => {
  */
 router.get('/inboxes/:id', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -836,10 +823,10 @@ router.get('/inboxes/:id', requireAuth, async (req, res) => {
  */
 router.post('/inboxes', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     const { name, description, channelType, phoneNumber, enableAutoAssignment, autoAssignmentConfig, greetingEnabled, greetingMessage, wuzapiConfig } = req.body;
     
@@ -852,7 +839,7 @@ router.post('/inboxes', requireAuth, async (req, res) => {
     
     // Get user subscription to check quota
     const SubscriptionService = require('../services/SubscriptionService');
-    const subscriptionService = new SubscriptionService(db);
+    const subscriptionService = new SubscriptionService();
     const subscription = await subscriptionService.getUserSubscription(req.session.userId);
     
     // Get max inboxes from plan (default to 1 if no plan)
@@ -913,10 +900,10 @@ router.post('/inboxes', requireAuth, async (req, res) => {
  */
 router.put('/inboxes/:id', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -953,10 +940,10 @@ router.put('/inboxes/:id', requireAuth, async (req, res) => {
  */
 router.delete('/inboxes/:id', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -986,10 +973,10 @@ router.delete('/inboxes/:id', requireAuth, async (req, res) => {
  */
 router.get('/inboxes/:id/members', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1017,10 +1004,10 @@ router.get('/inboxes/:id/members', requireAuth, async (req, res) => {
  */
 router.post('/inboxes/:id/members', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1063,10 +1050,10 @@ router.post('/inboxes/:id/members', requireAuth, async (req, res) => {
  */
 router.delete('/inboxes/:id/members/:agentId', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1094,10 +1081,10 @@ router.delete('/inboxes/:id/members/:agentId', requireAuth, async (req, res) => 
  */
 router.get('/inboxes/:id/qrcode', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1175,8 +1162,8 @@ router.get('/inboxes/:id/qrcode', requireAuth, async (req, res) => {
  */
 router.get('/inboxes/:id/status', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
+    
+    
     
     // Support both JWT (req.user.id) and session (req.session.userId) authentication
     const userId = req.user?.id || req.session?.userId;
@@ -1189,7 +1176,7 @@ router.get('/inboxes/:id/status', requireAuth, async (req, res) => {
       });
     }
     
-    const account = await getOrCreateAccount(db, userId, userToken);
+    const account = await getOrCreateAccount(userId, userToken);
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1276,10 +1263,10 @@ router.get('/inboxes/:id/status', requireAuth, async (req, res) => {
  */
 router.get('/roles', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     // Default roles with permissions
     const defaultRoles = [
@@ -1371,10 +1358,10 @@ router.get('/roles', requireAuth, async (req, res) => {
  */
 router.post('/roles', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     const { name, description, permissions } = req.body;
     
@@ -1410,10 +1397,10 @@ router.post('/roles', requireAuth, async (req, res) => {
  */
 router.put('/roles/:id', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     const { name, description, permissions } = req.body;
     
@@ -1439,10 +1426,10 @@ router.put('/roles/:id', requireAuth, async (req, res) => {
  */
 router.delete('/roles/:id', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     await customRoleService.deleteCustomRole(req.params.id, account.id);
     
@@ -1466,10 +1453,10 @@ router.delete('/roles/:id', requireAuth, async (req, res) => {
  */
 router.get('/audit', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     const { agentId, action, resourceType, startDate, endDate, limit, offset } = req.query;
     
@@ -1499,10 +1486,10 @@ router.get('/audit', requireAuth, async (req, res) => {
  */
 router.get('/audit/export', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     const { startDate, endDate } = req.query;
     
@@ -1541,73 +1528,36 @@ router.get('/audit/export', requireAuth, async (req, res) => {
  */
 router.get('/account-debug', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
-    
     const userId = req.session.userId;
     const userToken = req.session.userToken;
     
-    // Tables are assumed to exist in Supabase
-    const existingTables = ['accounts', 'inboxes', 'inbox_members'];
-    
     // Get account by owner_user_id
-    let accountResult = { rows: [] };
-    if (existingTables.includes('accounts')) {
-      accountResult = await db.query(
-        'SELECT * FROM accounts WHERE owner_user_id = ?',
-        [userId]
-      );
-    }
+    const { data: accountData } = await SupabaseService.getMany('accounts', { owner_user_id: userId });
     
     // Get all accounts (for debugging)
-    let allAccountsResult = { rows: [] };
-    if (existingTables.includes('accounts')) {
-      allAccountsResult = await db.query('SELECT id, name, owner_user_id, wuzapi_token FROM accounts LIMIT 10');
-    }
+    const { data: allAccountsData } = await SupabaseService.getMany('accounts', {}, { limit: 10 });
     
     // Get all inboxes (for debugging)
-    let allInboxesResult = { rows: [] };
-    if (existingTables.includes('inboxes')) {
-      allInboxesResult = await db.query('SELECT id, account_id, name, channel_type, wuzapi_token FROM inboxes LIMIT 10');
-    }
+    const { data: allInboxesData } = await SupabaseService.getMany('inboxes', {}, { limit: 10 });
     
     // If account exists, get its inboxes
     let accountInboxes = [];
-    if (accountResult.rows.length > 0 && existingTables.includes('inboxes')) {
-      const account = accountResult.rows[0];
-      const inboxesResult = await db.query(
-        'SELECT * FROM inboxes WHERE account_id = ?',
-        [account.id]
-      );
-      accountInboxes = inboxesResult.rows;
+    if (accountData && accountData.length > 0) {
+      const account = accountData[0];
+      const { data: inboxesData } = await SupabaseService.getMany('inboxes', { account_id: account.id });
+      accountInboxes = inboxesData || [];
     }
     
     // Check if there's an account with wuzapi_token matching userToken
-    let accountByTokenResult = { rows: [] };
-    if (existingTables.includes('accounts')) {
-      accountByTokenResult = await db.query(
-        'SELECT * FROM accounts WHERE wuzapi_token = ?',
-        [userToken]
-      );
-    }
+    const { data: accountByTokenData } = await SupabaseService.getMany('accounts', { wuzapi_token: userToken });
     
     // Check for orphan inboxes (inboxes without valid account)
-    let orphanInboxesResult = { rows: [] };
-    if (existingTables.includes('inboxes') && existingTables.includes('accounts')) {
-      orphanInboxesResult = await db.query(`
-        SELECT i.* FROM inboxes i 
-        LEFT JOIN accounts a ON i.account_id = a.id 
-        WHERE a.id IS NULL
-      `);
-    }
-    
-    // Check migrations table
-    let migrationsResult = { rows: [] };
-    try {
-      migrationsResult = await db.query('SELECT name FROM migrations ORDER BY id DESC LIMIT 20');
-    } catch (e) {
-      // migrations table may not exist
-    }
+    const { data: orphanInboxesData } = await SupabaseService.queryAsAdmin('inboxes', (query) =>
+      query
+        .select('inboxes.*')
+        .is('accounts.id', null)
+        .leftJoin('accounts', 'inboxes.account_id', 'accounts.id')
+    );
     
     res.json({
       success: true,
@@ -1615,14 +1565,23 @@ router.get('/account-debug', requireAuth, async (req, res) => {
         sessionUserId: userId,
         sessionUserToken: userToken ? userToken.substring(0, 10) + '...' : null,
         sessionRole: req.session.role,
-        existingTables,
-        account: accountResult.rows[0] || null,
-        accountByToken: accountByTokenResult.rows[0] || null,
+        account: accountData?.[0] || null,
+        accountByToken: accountByTokenData?.[0] || null,
         accountInboxes,
-        allAccounts: allAccountsResult.rows,
-        allInboxes: allInboxesResult.rows,
-        orphanInboxes: orphanInboxesResult.rows,
-        recentMigrations: migrationsResult.rows.map(r => r.name)
+        allAccounts: (allAccountsData || []).map(a => ({
+          id: a.id,
+          name: a.name,
+          owner_user_id: a.owner_user_id,
+          wuzapi_token: a.wuzapi_token
+        })),
+        allInboxes: (allInboxesData || []).map(i => ({
+          id: i.id,
+          account_id: i.account_id,
+          name: i.name,
+          channel_type: i.channel_type,
+          wuzapi_token: i.wuzapi_token
+        })),
+        orphanInboxes: orphanInboxesData || []
       }
     });
   } catch (error) {
@@ -1637,19 +1596,17 @@ router.get('/account-debug', requireAuth, async (req, res) => {
  */
 router.post('/account-debug/migrate-inboxes', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
-    
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     // Find orphan inboxes (inboxes without valid account)
-    const orphanInboxesResult = await db.query(`
-      SELECT i.* FROM inboxes i 
-      LEFT JOIN accounts a ON i.account_id = a.id 
-      WHERE a.id IS NULL
-    `);
+    // Note: This is a simplified query - in production, use a proper join
+    const { data: allInboxes } = await SupabaseService.getMany('inboxes', {});
+    const { data: allAccounts } = await SupabaseService.getMany('accounts', {});
     
-    if (orphanInboxesResult.rows.length === 0) {
+    const accountIds = new Set((allAccounts || []).map(a => a.id));
+    const orphanInboxes = (allInboxes || []).filter(i => !accountIds.has(i.account_id));
+    
+    if (orphanInboxes.length === 0) {
       return res.json({
         success: true,
         message: 'Nenhuma caixa de entrada órfã encontrada',
@@ -1659,11 +1616,11 @@ router.post('/account-debug/migrate-inboxes', requireAuth, async (req, res) => {
     
     // Migrate orphan inboxes to current account
     const migratedIds = [];
-    for (const inbox of orphanInboxesResult.rows) {
-      await db.query(
-        'UPDATE inboxes SET account_id = ?, updated_at = ? WHERE id = ?',
-        [account.id, new Date().toISOString(), inbox.id]
-      );
+    for (const inbox of orphanInboxes) {
+      await SupabaseService.update('inboxes', inbox.id, {
+        account_id: account.id,
+        updated_at: new Date().toISOString()
+      });
       migratedIds.push(inbox.id);
       logger.info('Migrated orphan inbox to account', { inboxId: inbox.id, accountId: account.id });
     }
@@ -1695,8 +1652,8 @@ router.post('/account-debug/migrate-inboxes', requireAuth, async (req, res) => {
  */
 router.post('/inboxes/default', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
+    
+    
     
     // Determine user ID from JWT or session
     const userId = req.user?.id || req.session?.userId;
@@ -1743,7 +1700,7 @@ router.post('/inboxes/default', requireAuth, async (req, res) => {
     }
     
     // Get or create account for this user
-    const account = await getOrCreateAccount(db, userId, userToken);
+    const account = await getOrCreateAccount(userId, userToken);
     
     // If still no token, check if user has any existing inboxes
     if (!userToken) {
@@ -1840,10 +1797,10 @@ router.post('/inboxes/default', requireAuth, async (req, res) => {
  */
 router.post('/inboxes/:id/connect', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1907,10 +1864,10 @@ router.post('/inboxes/:id/connect', requireAuth, async (req, res) => {
  */
 router.post('/inboxes/:id/disconnect', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1937,10 +1894,10 @@ router.post('/inboxes/:id/disconnect', requireAuth, async (req, res) => {
     });
     
     // Update connection status
-    await db.query(
-      'UPDATE inboxes SET wuzapi_connected = 0, updated_at = ? WHERE id = ?',
-      [new Date().toISOString(), inbox.id]
-    );
+    await SupabaseService.update('inboxes', inbox.id, {
+      wuzapi_connected: false,
+      updated_at: new Date().toISOString()
+    });
     
     logger.info('Inbox WhatsApp session disconnected', { 
       inboxId: req.params.id,
@@ -1963,10 +1920,10 @@ router.post('/inboxes/:id/disconnect', requireAuth, async (req, res) => {
  */
 router.post('/inboxes/:id/logout', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1993,10 +1950,10 @@ router.post('/inboxes/:id/logout', requireAuth, async (req, res) => {
     });
     
     // Update connection status
-    await db.query(
-      'UPDATE inboxes SET wuzapi_connected = 0, updated_at = ? WHERE id = ?',
-      [new Date().toISOString(), inbox.id]
-    );
+    await SupabaseService.update('inboxes', inbox.id, {
+      wuzapi_connected: false,
+      updated_at: new Date().toISOString()
+    });
     
     logger.info('Inbox WhatsApp session logged out', { 
       inboxId: req.params.id,
@@ -2019,10 +1976,10 @@ router.post('/inboxes/:id/logout', requireAuth, async (req, res) => {
  */
 router.get('/account', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const stats = await accountService.getAccountStats(account.id);
     
     res.json({
@@ -2044,16 +2001,13 @@ router.get('/account', requireAuth, async (req, res) => {
  */
 router.get('/subscription', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
-    
     const SubscriptionService = require('../services/SubscriptionService');
-    const subscriptionService = new SubscriptionService(db);
+    const subscriptionService = new SubscriptionService();
     
     const subscription = await subscriptionService.getUserSubscription(req.session.userId);
     
     // Get current usage
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const inboxCount = await inboxService.countInboxes(account.id);
     const agentCount = await agentService.countAgents(account.id);
     const teamCount = await teamService.countTeams(account.id);
@@ -2086,13 +2040,8 @@ router.get('/subscription', requireAuth, async (req, res) => {
 
 const AgentDatabaseAccessService = require('../services/AgentDatabaseAccessService');
 
-let agentDatabaseAccessService = null;
-
-function initAgentDatabaseAccessService(db) {
-  if (!agentDatabaseAccessService) {
-    agentDatabaseAccessService = new AgentDatabaseAccessService(db);
-  }
-}
+// AgentDatabaseAccessService initialized at module level (no db parameter needed)
+const agentDatabaseAccessService = new AgentDatabaseAccessService();
 
 /**
  * GET /api/session/agents/:id/details
@@ -2100,11 +2049,7 @@ function initAgentDatabaseAccessService(db) {
  */
 router.get('/agents/:id/details', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
-    initAgentDatabaseAccessService(db);
-    
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -2148,10 +2093,10 @@ router.get('/agents/:id/details', requireAuth, async (req, res) => {
  */
 router.put('/agents/:id/teams', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -2226,10 +2171,10 @@ router.put('/agents/:id/teams', requireAuth, async (req, res) => {
  */
 router.put('/agents/:id/inboxes', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -2304,11 +2249,11 @@ router.put('/agents/:id/inboxes', requireAuth, async (req, res) => {
  */
 router.put('/agents/:id/database-access', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
-    initAgentDatabaseAccessService(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -2364,10 +2309,10 @@ router.put('/agents/:id/database-access', requireAuth, async (req, res) => {
  */
 router.put('/agents/:id/permissions', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -2445,11 +2390,11 @@ router.put('/agents/:id/permissions', requireAuth, async (req, res) => {
  */
 router.post('/agents/bulk', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
-    initAgentDatabaseAccessService(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    
+    
+    
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     
     const { agentIds, action, data } = req.body;
     
@@ -2580,13 +2525,8 @@ router.post('/agents/bulk', requireAuth, async (req, res) => {
 
 const PermissionService = require('../services/PermissionService');
 
-let permissionService = null;
-
-function initPermissionService(db) {
-  if (!permissionService) {
-    permissionService = new PermissionService(db);
-  }
-}
+// PermissionService initialized at module level (no db parameter needed)
+const permissionService = new PermissionService();
 
 /**
  * GET /api/session/agents/:id/active-sessions
@@ -2594,11 +2534,7 @@ function initPermissionService(db) {
  */
 router.get('/agents/:id/active-sessions', requireAuth, async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
-    initPermissionService(db);
-    
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {

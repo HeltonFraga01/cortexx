@@ -20,20 +20,10 @@ const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
-let subscriptionService = null;
-let planService = null;
-let auditService = null;
-
-function getServices(req) {
-  const db = req.app.locals.db;
-  if (!db) return null;
-  
-  if (!subscriptionService) subscriptionService = new SubscriptionService(db);
-  if (!planService) planService = new PlanService(db);
-  if (!auditService) auditService = new AdminAuditService(db);
-  
-  return { subscriptionService, planService, auditService };
-}
+// Services initialized at module level (use SupabaseService internally)
+const subscriptionService = new SubscriptionService();
+const planService = new PlanService();
+const auditService = new AdminAuditService();
 
 /**
  * Filter userIds to only include users belonging to the specified tenant
@@ -89,7 +79,7 @@ async function filterUsersByTenant(userIds, tenantId) {
  */
 router.post('/assign-plan', requireAdmin, async (req, res) => {
   try {
-    const services = getServices(req);
+    const services = { subscriptionService, planService, auditService };
     if (!services) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -216,7 +206,7 @@ router.post('/assign-plan', requireAdmin, async (req, res) => {
  */
 router.post('/suspend', requireAdmin, async (req, res) => {
   try {
-    const services = getServices(req);
+    const services = { subscriptionService, planService, auditService };
     if (!services) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -333,7 +323,7 @@ router.post('/suspend', requireAdmin, async (req, res) => {
  */
 router.post('/reactivate', requireAdmin, async (req, res) => {
   try {
-    const services = getServices(req);
+    const services = { subscriptionService, planService, auditService };
     if (!services) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -443,7 +433,7 @@ router.post('/reactivate', requireAdmin, async (req, res) => {
  */
 router.post('/notify', requireAdmin, async (req, res) => {
   try {
-    const services = getServices(req);
+    const services = { subscriptionService, planService, auditService };
     if (!services) {
       return res.status(500).json({ error: 'Database not initialized' });
     }

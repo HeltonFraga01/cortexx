@@ -2,7 +2,7 @@
  * User Draft Routes
  * Handles message draft persistence for the messaging system
  * 
- * UPDATED: Now uses inboxContextMiddleware to get wuzapiToken from the active inbox
+ * UPDATED: Now uses SupabaseService directly instead of database.js compatibility layer
  * 
  * Requirements: 7.1, 7.2, 7.3
  */
@@ -11,6 +11,7 @@ const express = require('express');
 const { logger } = require('../utils/logger');
 const { validateSupabaseToken } = require('../middleware/supabaseAuth');
 const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
+const SupabaseService = require('../services/SupabaseService');
 const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
@@ -81,28 +82,27 @@ router.get('/', verifyUserToken, async (req, res) => {
   const { draft_type } = req.query;
   
   try {
-    const db = req.app.locals.db;
-    
-    let sql = `
-      SELECT id, user_id, draft_type, data, created_at, updated_at
-      FROM message_drafts
-      WHERE user_id = ?
-    `;
-    const params = [userId];
+    let query = SupabaseService.adminClient
+      .from('message_drafts')
+      .select('id, user_id, draft_type, data, created_at, updated_at')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false });
     
     if (draft_type) {
-      sql += ' AND draft_type = ?';
-      params.push(draft_type);
+      query = query.eq('draft_type', draft_type);
     }
     
-    sql += ' ORDER BY updated_at DESC';
+    const { data: rows, error } = await query;
     
-    const result = await db.query(sql, params);
-    const drafts = result.rows.map(row => ({
+    if (error) {
+      throw error;
+    }
+    
+    const drafts = (rows || []).map(row => ({
       id: row.id,
       userId: row.user_id,
       draftType: row.draft_type,
-      data: JSON.parse(row.data),
+      data: typeof row.data === 'string' ? JSON.parse(row.data) : row.data,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }));
@@ -135,29 +135,25 @@ router.get('/:id', verifyUserToken, async (req, res) => {
   const { id } = req.params;
   
   try {
-    const db = req.app.locals.db;
+    const { data: row, error } = await SupabaseService.adminClient
+      .from('message_drafts')
+      .select('id, user_id, draft_type, data, created_at, updated_at')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single();
     
-    const sql = `
-      SELECT id, user_id, draft_type, data, created_at, updated_at
-      FROM message_drafts
-      WHERE id = ? AND user_id = ?
-    `;
-    
-    const result = await db.query(sql, [id, userId]);
-    
-    if (!result.rows || result.rows.length === 0) {
+    if (error || !row) {
       return res.status(404).json({
         success: false,
         error: 'Rascunho não encontrado'
       });
     }
     
-    const row = result.rows[0];
     const draft = {
       id: row.id,
       userId: row.user_id,
       draftType: row.draft_type,
-      data: JSON.parse(row.data),
+      data: typeof row.data === 'string' ? JSON.parse(row.data) : row.data,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -198,27 +194,29 @@ router.post('/', verifyUserToken, async (req, res) => {
   }
   
   try {
-    const db = req.app.locals.db;
     const now = new Date().toISOString();
     
     // Check if draft already exists for this user and type
-    const existingSql = `
-      SELECT id FROM message_drafts
-      WHERE user_id = ? AND draft_type = ?
-    `;
-    const existingResult = await db.query(existingSql, [userId, draftType]);
+    const { data: existing } = await SupabaseService.adminClient
+      .from('message_drafts')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('draft_type', draftType)
+      .single();
     
     let draftId;
     
-    if (existingResult.rows && existingResult.rows.length > 0) {
+    if (existing) {
       // Update existing draft
-      draftId = existingResult.rows[0].id;
-      const updateSql = `
-        UPDATE message_drafts
-        SET data = ?, updated_at = ?
-        WHERE id = ?
-      `;
-      await db.query(updateSql, [JSON.stringify(data), now, draftId]);
+      draftId = existing.id;
+      const { error: updateError } = await SupabaseService.adminClient
+        .from('message_drafts')
+        .update({ data: JSON.stringify(data), updated_at: now })
+        .eq('id', draftId);
+      
+      if (updateError) {
+        throw updateError;
+      }
       
       logger.info('Rascunho atualizado:', {
         userId,
@@ -228,11 +226,20 @@ router.post('/', verifyUserToken, async (req, res) => {
     } else {
       // Create new draft
       draftId = uuidv4();
-      const insertSql = `
-        INSERT INTO message_drafts (id, user_id, draft_type, data, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `;
-      await db.query(insertSql, [draftId, userId, draftType, JSON.stringify(data), now, now]);
+      const { error: insertError } = await SupabaseService.adminClient
+        .from('message_drafts')
+        .insert({
+          id: draftId,
+          user_id: userId,
+          draft_type: draftType,
+          data: JSON.stringify(data),
+          created_at: now,
+          updated_at: now
+        });
+      
+      if (insertError) {
+        throw insertError;
+      }
       
       logger.info('Rascunho criado:', {
         userId,
@@ -276,27 +283,30 @@ router.delete('/:id', verifyUserToken, async (req, res) => {
   const { id } = req.params;
   
   try {
-    const db = req.app.locals.db;
-    
     // Verify draft belongs to user before deleting
-    const checkSql = `
-      SELECT id FROM message_drafts
-      WHERE id = ? AND user_id = ?
-    `;
-    const checkResult = await db.query(checkSql, [id, userId]);
+    const { data: existing } = await SupabaseService.adminClient
+      .from('message_drafts')
+      .select('id')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single();
     
-    if (!checkResult.rows || checkResult.rows.length === 0) {
+    if (!existing) {
       return res.status(404).json({
         success: false,
         error: 'Rascunho não encontrado'
       });
     }
     
-    const deleteSql = `
-      DELETE FROM message_drafts
-      WHERE id = ? AND user_id = ?
-    `;
-    await db.query(deleteSql, [id, userId]);
+    const { error: deleteError } = await SupabaseService.adminClient
+      .from('message_drafts')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId);
+    
+    if (deleteError) {
+      throw deleteError;
+    }
     
     logger.info('Rascunho excluído:', {
       userId,
@@ -331,17 +341,20 @@ router.delete('/', verifyUserToken, async (req, res) => {
   const { draft_type } = req.query;
   
   try {
-    const db = req.app.locals.db;
-    
-    let sql = 'DELETE FROM message_drafts WHERE user_id = ?';
-    const params = [userId];
+    let query = SupabaseService.adminClient
+      .from('message_drafts')
+      .delete()
+      .eq('user_id', userId);
     
     if (draft_type) {
-      sql += ' AND draft_type = ?';
-      params.push(draft_type);
+      query = query.eq('draft_type', draft_type);
     }
     
-    await db.query(sql, params);
+    const { error: deleteError } = await query;
+    
+    if (deleteError) {
+      throw deleteError;
+    }
     
     logger.info('Rascunhos excluídos:', {
       userId,

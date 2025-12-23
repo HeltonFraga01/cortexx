@@ -29,8 +29,7 @@ const session = require('express-session');
 const helmet = require('helmet');
 // SQLite removed - using Supabase only
 const SupabaseService = require('./services/SupabaseService');
-// Database compatibility layer for legacy code
-const db = require('./database');
+// Database compatibility layer removed - all code now uses SupabaseService directly
 
 // Importar novos componentes de validação
 const corsHandler = require('./middleware/corsHandler');
@@ -92,6 +91,7 @@ const accountAuditRoutes = require('./routes/accountAuditRoutes');
 const agentAuthRoutes = require('./routes/agentAuthRoutes');
 const sessionAccountRoutes = require('./routes/sessionAccountRoutes');
 const resellerRoutes = require('./routes/resellerRoutes');
+const databaseRoutes = require('./routes/databaseRoutes');
 
 // Superadmin Routes
 const superadminAuthRoutes = require('./routes/superadminAuthRoutes');
@@ -223,10 +223,9 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5 minutos em milissegundos
 
 /**
  * Obtém configuração de branding do cache ou do banco de dados
- * @param {Database} database - Instância do banco de dados
  * @returns {Promise<Object>} Configuração de branding
  */
-async function getCachedBrandingConfig(database) {
+async function getCachedBrandingConfig() {
   const now = Date.now();
 
   // Verificar se cache é válido
@@ -242,7 +241,30 @@ async function getCachedBrandingConfig(database) {
   logger.info('🔄 Cache de branding expirado ou inexistente, buscando do banco');
 
   try {
-    const config = await database.getBrandingConfig();
+    // Use SupabaseService to get branding config
+    const { data, error } = await SupabaseService.queryAsAdmin('branding', (query) => 
+      query.select('*').limit(1).single()
+    );
+
+    if (error && error.code !== 'PGRST116') {
+      throw error;
+    }
+
+    const config = data ? {
+      id: data.id,
+      appName: data.app_name || data.appName || 'WUZAPI',
+      logoUrl: data.logo_url || data.logoUrl || null,
+      primaryColor: data.primary_color || data.primaryColor || null,
+      secondaryColor: data.secondary_color || data.secondaryColor || null,
+      customHomeHtml: data.custom_home_html || data.customHomeHtml || null
+    } : {
+      id: null,
+      appName: 'WUZAPI',
+      logoUrl: null,
+      primaryColor: null,
+      secondaryColor: null,
+      customHomeHtml: null
+    };
 
     // Atualizar cache
     brandingConfigCache = config;
@@ -300,13 +322,8 @@ async function initializeDatabase() {
       throw new Error(`Falha na conexão com Supabase: ${error.message}`);
     }
 
-    // Inicializar o compatibility layer do banco de dados
-    await db.init();
-
     // Tornar o SupabaseService disponível para as rotas
     app.locals.supabase = SupabaseService;
-    // Tornar o db (compatibility layer) disponível para as rotas
-    app.locals.db = db;
 
     logger.info('✅ Conexão com Supabase estabelecida com sucesso');
 
@@ -342,28 +359,39 @@ app.get('/health', async (req, res) => {
     let databaseStats = null;
     let databaseError = null;
 
-    if (db && db.isInitialized) {
-      try {
-        databaseStats = await db.getDatabaseStats();
-        databaseStatus = 'connected';
-
-        // Verificar se consegue fazer uma query simples
-        await db.query('SELECT 1 as test');
-
-      } catch (dbError) {
+    try {
+      // Use SupabaseService health check
+      const { data: isHealthy, error } = await SupabaseService.healthCheck();
+      
+      if (error) {
         databaseStatus = 'error';
         databaseError = {
-          message: dbError.message,
-          code: dbError.code || 'UNKNOWN'
+          message: error.message || 'Health check failed',
+          code: error.code || 'UNKNOWN'
         };
-
-        // Log de erro do banco de dados
-        if (dbError.code) {
-          logger.warn('⚠️ Erro ao verificar status do banco no health check:', dbError.message);
-        }
+      } else if (isHealthy) {
+        databaseStatus = 'connected';
+        // Get basic stats from Supabase
+        databaseStats = {
+          type: 'Supabase',
+          connected: true
+        };
+      } else {
+        databaseStatus = 'error';
+        databaseError = {
+          message: 'Health check returned false',
+          code: 'HEALTH_CHECK_FAILED'
+        };
       }
-    } else {
-      databaseStatus = 'not_initialized';
+    } catch (dbError) {
+      databaseStatus = 'error';
+      databaseError = {
+        message: dbError.message,
+        code: dbError.code || 'UNKNOWN'
+      };
+
+      // Log de erro do banco de dados
+      logger.warn('⚠️ Erro ao verificar status do banco no health check:', dbError.message);
     }
 
     // 3. Verificar conectividade com WUZAPI
@@ -532,6 +560,9 @@ app.use('/api/admin/custom-themes', adminCustomThemesRoutes);
 app.use('/api/admin/automation', adminAutomationRoutes);
 app.use('/api/admin/custom-links', customLinksRoutes); // Rotas admin de custom links
 
+// Database connections routes (admin)
+app.use('/api/database-connections', databaseRoutes);
+
 // New contacts routes (Supabase-based)
 // Mount once - internal routes handle /tags, /groups, /import/wuzapi, etc.
 app.use('/api/user/contacts', userContactsRoutes);
@@ -630,276 +661,6 @@ app.use('/api/session', sessionAccountRoutes);
 
 // Rotas de monitoramento
 app.use('/', monitoringRoutes);
-
-// ==================== DATABASE CONNECTIONS ROUTES ====================
-
-// GET /api/database-connections - Listar todas as conexões
-app.get('/api/database-connections', async (req, res) => {
-  try {
-    const connections = await db.getAllConnections();
-
-    res.json({
-      success: true,
-      data: connections,
-      count: connections.length
-    });
-  } catch (err) {
-    console.error('Erro ao buscar conexões:', err);
-    return res.status(500).json({
-      error: 'Erro interno do servidor',
-      message: err.message
-    });
-  }
-});
-
-// GET /api/database-connections/:id - Buscar conexão por ID
-app.get('/api/database-connections/:id', async (req, res) => {
-  const { id } = req.params;
-
-  try {
-    const connection = await db.getConnectionById(id);
-
-    if (!connection) {
-      return res.status(404).json({
-        error: 'Conexão não encontrada',
-        message: `Conexão com ID ${id} não existe`
-      });
-    }
-
-    res.json({
-      success: true,
-      data: connection
-    });
-  } catch (err) {
-    console.error('Erro ao buscar conexão:', err);
-    return res.status(500).json({
-      error: 'Erro interno do servidor',
-      message: err.message
-    });
-  }
-});
-
-// POST /api/database-connections - Criar nova conexão
-app.post('/api/database-connections', async (req, res) => {
-  const connectionData = req.body;
-
-  // Validação básica
-  if (!connectionData.name || !connectionData.type || !connectionData.host) {
-    return res.status(400).json({
-      error: 'Dados inválidos',
-      message: 'Nome, tipo e host são obrigatórios'
-    });
-  }
-
-  // Validação específica por tipo
-  if (connectionData.type === 'NOCODB') {
-    // Suportar ambos os formatos: camelCase e snake_case
-    const token = connectionData.nocodbToken || connectionData.nocodb_token || connectionData.password;
-    const projectId = connectionData.nocodbProjectId || connectionData.nocodb_project_id || connectionData.database;
-    const tableId = connectionData.nocodbTableId || connectionData.nocodb_table_id || connectionData.table_name;
-
-    if (!token || !projectId || !tableId) {
-      return res.status(400).json({
-        error: 'Dados inválidos',
-        message: 'Para NocoDB, token, project ID e table ID são obrigatórios'
-      });
-    }
-  } else {
-    if (!connectionData.database || !connectionData.username || !connectionData.password) {
-      return res.status(400).json({
-        error: 'Dados inválidos',
-        message: 'Para bancos relacionais, database, username e password são obrigatórios'
-      });
-    }
-  }
-
-  try {
-    // Garantir que default_view_mode tenha um valor válido se não fornecido
-    if (!connectionData.default_view_mode) {
-      connectionData.default_view_mode = 'list';
-    }
-
-    const result = await db.createConnection(connectionData);
-
-    res.status(201).json({
-      success: true,
-      message: 'Conexão criada com sucesso',
-      data: result
-    });
-  } catch (err) {
-    console.error('Erro ao criar conexão:', err);
-    return res.status(500).json({
-      error: 'Erro interno do servidor',
-      message: err.message
-    });
-  }
-});
-
-// PUT /api/database-connections/:id - Atualizar conexão
-app.put('/api/database-connections/:id', async (req, res) => {
-  const { id } = req.params;
-  const connectionData = req.body;
-
-  // Validação básica
-  if (!connectionData.name || !connectionData.type || !connectionData.host) {
-    return res.status(400).json({
-      error: 'Dados inválidos',
-      message: 'Nome, tipo e host são obrigatórios'
-    });
-  }
-
-  try {
-    // Garantir que default_view_mode tenha um valor válido se não fornecido
-    if (connectionData.default_view_mode && !['list', 'single'].includes(connectionData.default_view_mode)) {
-      connectionData.default_view_mode = 'list';
-    }
-
-    const result = await db.updateConnection(id, connectionData);
-
-    if (result.changes === 0) {
-      return res.status(404).json({
-        error: 'Conexão não encontrada',
-        message: `Conexão com ID ${id} não existe`
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Conexão atualizada com sucesso',
-      data: result
-    });
-  } catch (err) {
-    console.error('Erro ao atualizar conexão:', err);
-    logger.error('❌ Erro ao atualizar conexão:', err.message);
-
-    return res.status(500).json({
-      error: 'Erro interno do servidor',
-      message: err.message
-    });
-  }
-});
-
-// PATCH /api/database-connections/:id/status - Atualizar apenas o status
-app.patch('/api/database-connections/:id/status', async (req, res) => {
-  const { id } = req.params;
-  const { status } = req.body;
-
-  if (!status || !['connected', 'disconnected', 'error', 'testing'].includes(status)) {
-    return res.status(400).json({
-      error: 'Status inválido',
-      message: 'Status deve ser: connected, disconnected, error ou testing'
-    });
-  }
-
-  try {
-    const result = await db.updateConnectionStatus(id, status);
-
-    if (result.changes === 0) {
-      return res.status(404).json({
-        error: 'Conexão não encontrada',
-        message: `Conexão com ID ${id} não existe`
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Status atualizado com sucesso',
-      data: result
-    });
-  } catch (err) {
-    console.error('Erro ao atualizar status:', err);
-    logger.error('❌ Erro ao atualizar status:', err.message);
-
-    return res.status(500).json({
-      error: 'Erro interno do servidor',
-      message: err.message
-    });
-  }
-});
-
-// POST /api/database-connections/:id/test - Testar conexão
-app.post('/api/database-connections/:id/test', async (req, res) => {
-  const { id } = req.params;
-
-  try {
-    const connection = await db.getConnectionById(id);
-
-    if (!connection) {
-      return res.status(404).json({
-        error: 'Conexão não encontrada',
-        message: `Conexão com ID ${id} não existe`
-      });
-    }
-
-    // SQLite connections are no longer supported
-    if (connection.type === 'SQLITE') {
-      return res.status(400).json({
-        success: false,
-        error: 'SQLite connections are no longer supported. Please use Supabase.',
-        data: {
-          status: 'error',
-          type: connection.type,
-          database: connection.database
-        }
-      });
-    }
-
-    // Para outros tipos de banco, retornar que o teste não está implementado ainda
-    res.json({
-      success: true,
-      message: 'Teste de conexão não implementado para este tipo de banco',
-      data: {
-        status: 'unknown',
-        type: connection.type
-      }
-    });
-  } catch (err) {
-    console.error('Erro ao testar conexão:', err);
-    logger.error('❌ Erro ao testar conexão:', err.message);
-
-    // Atualizar status para error
-    try {
-      await db.updateConnectionStatus(id, 'error');
-    } catch (updateErr) {
-      logger.error('❌ Erro ao atualizar status:', updateErr.message);
-    }
-
-    return res.status(500).json({
-      error: 'Erro ao testar conexão',
-      message: err.message
-    });
-  }
-});
-
-// DELETE /api/database-connections/:id - Deletar conexão
-app.delete('/api/database-connections/:id', async (req, res) => {
-  const { id } = req.params;
-
-  try {
-    const result = await db.deleteConnection(id);
-
-    if (result.changes === 0) {
-      return res.status(404).json({
-        error: 'Conexão não encontrada',
-        message: `Conexão com ID ${id} não existe`
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Conexão deletada com sucesso',
-      data: result
-    });
-  } catch (err) {
-    console.error('Erro ao deletar conexão:', err);
-    logger.error('❌ Erro ao deletar conexão:', err.message);
-
-    return res.status(500).json({
-      error: 'Erro interno do servidor',
-      message: err.message
-    });
-  }
-});
 
 // ==================== USER ROUTES ====================
 // verifyUserToken agora é importado de ./middleware/verifyUserToken.js
@@ -1123,283 +884,6 @@ app.get('/api/user/dashboard-stats', verifyUserToken, async (req, res) => {
   }
 });
 
-// GET /api/user/database-connections - Buscar conexões atribuídas ao usuário
-app.get('/api/user/database-connections', verifyUserToken, async (req, res) => {
-  const userToken = req.userToken;
-
-  try {
-    const connections = await db.getUserConnections(userToken);
-
-    res.json({
-      success: true,
-      data: connections,
-      count: connections.length
-    });
-  } catch (err) {
-    console.error('Erro ao buscar conexões do usuário:', err);
-    return res.status(500).json({
-      error: 'Erro interno do servidor',
-      message: err.message
-    });
-  }
-});
-
-// GET /api/user/database-connections/:id/record - Buscar registro único do usuário
-app.get('/api/user/database-connections/:id/record', userRecordRateLimiter, verifyUserToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userToken = req.userToken;
-
-    logger.info('📊 Solicitação de registro único do usuário:', {
-      connectionId: id,
-      userToken: userToken.substring(0, 8) + '...'
-    });
-
-    // Buscar configuração da conexão
-    const connection = await db.getConnectionById(parseInt(id));
-
-    if (!connection) {
-      return res.status(404).json({
-        success: false,
-        error: 'Connection not found',
-        code: 'CONNECTION_NOT_FOUND',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Validar usuário e obter ID
-    let userId;
-    try {
-      userId = await db.validateUserAndGetId(userToken);
-    } catch (error) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid or expired token',
-        code: 'UNAUTHORIZED',
-        message: error.message,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Verificar se o usuário tem acesso a esta conexão
-    if (!db.validateUserConnectionAccess(userId, connection)) {
-      return res.status(403).json({
-        success: false,
-        error: 'Access denied to this connection',
-        code: 'UNAUTHORIZED',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Buscar o registro do usuário usando o campo de vínculo
-    const userLinkField = connection.user_link_field || connection.userLinkField;
-
-    if (!userLinkField) {
-      return res.status(400).json({
-        success: false,
-        error: 'User link field not configured for this connection',
-        code: 'INVALID_CONFIGURATION',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Buscar registro baseado no tipo de banco
-    let record = null;
-
-    try {
-      if (connection.type === 'NOCODB') {
-        record = await db.fetchNocoDBUserRecord(connection, userLinkField, userToken);
-      } else if (connection.type === 'MYSQL' || connection.type === 'POSTGRESQL' || connection.type === 'POSTGRES') {
-        record = await db.fetchSQLUserRecord(connection, userLinkField, userToken);
-      } else {
-        return res.status(400).json({
-          success: false,
-          error: `Database type not supported: ${connection.type}`,
-          code: 'UNSUPPORTED_TYPE',
-          timestamp: new Date().toISOString()
-        });
-      }
-    } catch (error) {
-      logger.error('❌ Erro ao buscar registro do usuário:', {
-        connectionId: id,
-        error: error.message,
-        stack: error.stack
-      });
-
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to fetch user record',
-        message: error.message,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    if (!record) {
-      return res.status(404).json({
-        success: false,
-        error: 'No record found for this user',
-        code: 'RECORD_NOT_FOUND',
-        suggestion: 'Contact administrator to create a record for your account',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    res.json({
-      success: true,
-      data: record,
-      metadata: {
-        connectionId: parseInt(id),
-        connectionName: connection.name,
-        tableName: connection.table_name || connection.nocodb_table_id,
-        userLinkField: userLinkField
-      }
-    });
-
-  } catch (error) {
-    logger.error('❌ Erro ao buscar registro do usuário:', {
-      connectionId: req.params.id,
-      error: error.message,
-      stack: error.stack
-    });
-
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      message: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// GET /api/user/database-connections/:id/data - Buscar dados da tabela para o usuário
-app.get('/api/user/database-connections/:id/data', verifyUserToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userToken = req.userToken;
-
-    logger.info('📊 Solicitação de dados da tabela:', {
-      connectionId: id,
-      userToken: userToken.substring(0, 8) + '...'
-    });
-
-    const data = await db.getUserTableData(userToken, parseInt(id));
-
-    res.json({
-      success: true,
-      data: data,
-      metadata: {
-        totalRecords: data.length,
-        connectionId: parseInt(id),
-        timestamp: new Date().toISOString()
-      }
-    });
-
-  } catch (error) {
-    logger.error('❌ Erro ao buscar dados da tabela:', {
-      connectionId: req.params.id,
-      error: error.message,
-      stack: error.stack
-    });
-
-    // Determinar código de status baseado no tipo de erro
-    let statusCode = 500;
-    let errorType = 'Internal Server Error';
-
-    if (error.message.includes('Connection not found')) {
-      statusCode = 404;
-      errorType = 'Not Found';
-    } else if (error.message.includes('Access denied')) {
-      statusCode = 403;
-      errorType = 'Forbidden';
-    } else if (error.message.includes('Invalid or expired token') ||
-      error.message.includes('Authentication failed')) {
-      statusCode = 401;
-      errorType = 'Unauthorized';
-    }
-
-    res.status(statusCode).json({
-      success: false,
-      error: errorType,
-      message: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// POST /api/user/database-connections/:id/data - Criar registro na tabela do usuário
-app.post('/api/user/database-connections/:id/data', verifyUserToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userToken = req.userToken;
-    const recordData = req.body;
-
-    const result = await db.createUserTableRecord(userToken, id, recordData);
-
-    res.status(201).json({
-      success: true,
-      message: 'Registro criado com sucesso',
-      data: result
-    });
-  } catch (err) {
-    console.error('Erro ao criar registro:', err);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-      code: 500,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// PUT /api/user/database-connections/:id/data/:recordId - Atualizar registro na tabela do usuário
-app.put('/api/user/database-connections/:id/data/:recordId', verifyUserToken, async (req, res) => {
-  try {
-    const { id, recordId } = req.params;
-    const userToken = req.userToken;
-    const recordData = req.body;
-
-    const result = await db.updateUserTableRecord(userToken, id, recordId, recordData);
-
-    res.json({
-      success: true,
-      message: 'Registro atualizado com sucesso',
-      data: result
-    });
-  } catch (err) {
-    console.error('Erro ao atualizar registro:', err);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-      code: 500,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// DELETE /api/user/database-connections/:id/data/:recordId - Deletar registro na tabela do usuário
-app.delete('/api/user/database-connections/:id/data/:recordId', verifyUserToken, async (req, res) => {
-  try {
-    const { id, recordId } = req.params;
-    const userToken = req.userToken;
-
-    const result = await db.deleteUserTableRecord(userToken, id, recordId);
-
-    res.json({
-      success: true,
-      message: 'Registro deletado com sucesso',
-      data: result
-    });
-  } catch (err) {
-    console.error('Erro ao deletar registro:', err);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-      code: 500,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
 // ==================== WEBHOOK ENDPOINTS ====================
 
 // GET /api/webhook - Buscar configuração de webhook do usuário
@@ -1571,28 +1055,24 @@ const fs = require('fs');
 app.get('/', async (req, res, next) => {
   try {
     // 1. Verificar se há HTML customizado no banco de dados
-    if (db && db.isInitialized) {
-      logger.info('🔍 Verificando HTML customizado no banco de dados');
+    logger.info('🔍 Verificando HTML customizado no banco de dados');
 
-      const brandingConfig = await getCachedBrandingConfig(db);
+    const brandingConfig = await getCachedBrandingConfig();
 
-      if (brandingConfig && brandingConfig.customHomeHtml && brandingConfig.customHomeHtml.trim() !== '') {
-        logger.info('✅ HTML customizado encontrado no banco de dados', {
-          html_length: brandingConfig.customHomeHtml.length,
-          html_size_kb: Math.round(brandingConfig.customHomeHtml.length / 1024),
-          app_name: brandingConfig.appName,
-          ip: req.ip,
-          user_agent: req.get('User-Agent')
-        });
+    if (brandingConfig && brandingConfig.customHomeHtml && brandingConfig.customHomeHtml.trim() !== '') {
+      logger.info('✅ HTML customizado encontrado no banco de dados', {
+        html_length: brandingConfig.customHomeHtml.length,
+        html_size_kb: Math.round(brandingConfig.customHomeHtml.length / 1024),
+        app_name: brandingConfig.appName,
+        ip: req.ip,
+        user_agent: req.get('User-Agent')
+      });
 
-        // Retornar HTML customizado exatamente como foi salvo (modo permissivo)
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        return res.send(brandingConfig.customHomeHtml);
-      } else {
-        logger.info('ℹ️ Nenhum HTML customizado configurado no banco de dados');
-      }
+      // Retornar HTML customizado exatamente como foi salvo (modo permissivo)
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(brandingConfig.customHomeHtml);
     } else {
-      logger.warn('⚠️ Banco de dados não inicializado, pulando verificação de HTML customizado');
+      logger.info('ℹ️ Nenhum HTML customizado configurado no banco de dados');
     }
 
     // 2. Fallback: Verificar arquivo landing-custom.html
@@ -1701,14 +1181,14 @@ async function startServer() {
     // Inicializar CampaignScheduler para campanhas agendadas
     logger.info('📅 Inicializando CampaignScheduler...');
     const CampaignScheduler = require('./services/CampaignScheduler');
-    const campaignScheduler = new CampaignScheduler(db);
+    const campaignScheduler = new CampaignScheduler(null); // db parameter deprecated, uses SupabaseService internally
     campaignScheduler.start();
     logger.info('✅ CampaignScheduler iniciado');
 
     // Inicializar StateSynchronizer para sincronização de estado
     logger.info('🔄 Inicializando StateSynchronizer...');
     const StateSynchronizer = require('./services/StateSynchronizer');
-    const stateSynchronizer = new StateSynchronizer(db, campaignScheduler);
+    const stateSynchronizer = new StateSynchronizer(null, campaignScheduler); // db parameter deprecated
     
     // Restaurar campanhas que estavam rodando antes do reinício
     const restoredCampaigns = await stateSynchronizer.restoreRunningCampaigns();
@@ -1726,7 +1206,7 @@ async function startServer() {
     // Inicializar SingleMessageScheduler para mensagens únicas agendadas
     logger.info('📅 Inicializando SingleMessageScheduler...');
     const SingleMessageScheduler = require('./services/SingleMessageScheduler');
-    const singleMessageScheduler = new SingleMessageScheduler(db);
+    const singleMessageScheduler = new SingleMessageScheduler(); // db parameter deprecated, uses SupabaseService
     singleMessageScheduler.start();
     logger.info('✅ SingleMessageScheduler iniciado');
 
@@ -1734,8 +1214,8 @@ async function startServer() {
     logger.info('🗑️ Inicializando LogRotationService...');
     const AuditLogger = require('./services/AuditLogger');
     const LogRotationService = require('./services/LogRotationService');
-    const auditLogger = new AuditLogger(db);
-    const logRotationService = new LogRotationService(db, auditLogger, {
+    const auditLogger = new AuditLogger(null); // db parameter deprecated
+    const logRotationService = new LogRotationService(null, auditLogger, { // db parameter deprecated
       auditRetentionDays: 30,
       deletedCampaignRetentionDays: 90,
       errorRetentionDays: 30,
@@ -1781,7 +1261,7 @@ async function startServer() {
 
     // Initialize WebSocket server
     const { initializeWebSocket, getChatHandler } = require('./websocket');
-    const io = initializeWebSocket(server, db);
+    const io = initializeWebSocket(server, null); // db parameter deprecated, not used
     app.locals.io = io;
     app.locals.chatHandler = getChatHandler();
     logger.info('✅ WebSocket server initialized');
@@ -1874,20 +1354,8 @@ startServer().then(server => {
       // Fechar streams de log
       logger.close();
 
-      // Fechar conexão com banco de dados
-      if (db && typeof db.close === 'function') {
-        db.close().then(() => {
-          logger.info('Conexão com banco de dados encerrada');
-          console.log('✅ Conexão com banco de dados encerrada');
-          logShutdownComplete(0);
-        }).catch(err => {
-          logger.error('Erro ao fechar banco de dados:', err.message);
-          console.error('❌ Erro ao fechar banco de dados:', err.message);
-          logShutdownComplete(1);
-        });
-      } else {
-        logShutdownComplete(0);
-      }
+      // Supabase connections are managed by the client library
+      logShutdownComplete(0);
     });
 
     // Forçar encerramento após 10 segundos

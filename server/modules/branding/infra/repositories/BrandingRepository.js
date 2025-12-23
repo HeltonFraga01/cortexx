@@ -3,14 +3,19 @@
  * 
  * Abstrai a persistência no banco de dados (Supabase).
  * Retorna Entidades de Domínio, não linhas cruas do banco.
+ * 
+ * Migrated to use SupabaseService directly (Task 14.1.7)
  */
 
 const { logger } = require('../../../../utils/logger');
+const SupabaseService = require('../../../../services/SupabaseService');
 const BrandingMapper = require('../mappers/BrandingMapper');
 
 class BrandingRepository {
+  // eslint-disable-next-line no-unused-vars
   constructor(database) {
-    this.db = database;
+    // database parameter kept for backward compatibility but not used
+    // All operations use SupabaseService directly
   }
 
   /**
@@ -19,38 +24,48 @@ class BrandingRepository {
    */
   async findFirst() {
     try {
-      const { rows } = await this.db.query('SELECT * FROM branding_config LIMIT 1');
+      const { data, error } = await SupabaseService.queryAsAdmin('branding_config', (query) =>
+        query.select('*').limit(1)
+      );
       
-      if (rows.length === 0) {
+      if (error) {
+        throw error;
+      }
+      
+      if (!data || data.length === 0) {
         return null;
       }
 
-      return BrandingMapper.toDomain(rows[0]);
+      return BrandingMapper.toDomain(data[0]);
     } catch (error) {
-      logger.error('Erro ao buscar branding:', error.message);
+      logger.error('Erro ao buscar branding:', { error: error.message });
       throw error;
     }
   }
 
   /**
    * Busca configuração por ID
-   * @param {number} id
+   * @param {string} id
    * @returns {Promise<BrandingConfig|null>}
    */
   async findById(id) {
     try {
-      const { rows } = await this.db.query(
-        'SELECT * FROM branding_config WHERE id = ?',
-        [id]
-      );
+      const { data, error } = await SupabaseService.getById('branding_config', id);
       
-      if (rows.length === 0) {
+      if (error) {
+        if (error.code === 'PGRST116' || error.code === 'ROW_NOT_FOUND') {
+          return null;
+        }
+        throw error;
+      }
+      
+      if (!data) {
         return null;
       }
 
-      return BrandingMapper.toDomain(rows[0]);
+      return BrandingMapper.toDomain(data);
     } catch (error) {
-      logger.error('Erro ao buscar branding por ID:', error.message);
+      logger.error('Erro ao buscar branding por ID:', { error: error.message, id });
       throw error;
     }
   }
@@ -64,80 +79,74 @@ class BrandingRepository {
     const dbData = BrandingMapper.toPersistence(data);
     
     try {
-      const { lastID } = await this.db.query(`
-        INSERT INTO branding_config (
-          app_name, logo_url, primary_color, secondary_color, 
-          custom_home_html, support_phone
-        ) VALUES (?, ?, ?, ?, ?, ?)
-      `, [
-        dbData.app_name || 'WUZAPI',
-        dbData.logo_url,
-        dbData.primary_color,
-        dbData.secondary_color,
-        dbData.custom_home_html,
-        dbData.support_phone
-      ]);
+      const insertData = {
+        app_name: dbData.app_name || 'WUZAPI',
+        logo_url: dbData.logo_url || null,
+        primary_color: dbData.primary_color || null,
+        secondary_color: dbData.secondary_color || null,
+        custom_home_html: dbData.custom_home_html || null,
+        support_phone: dbData.support_phone || null
+      };
 
-      return this.findById(lastID);
+      const { data: created, error } = await SupabaseService.insert('branding_config', insertData);
+
+      if (error) {
+        throw error;
+      }
+
+      return BrandingMapper.toDomain(created);
     } catch (error) {
-      logger.error('Erro ao criar branding:', error.message);
+      logger.error('Erro ao criar branding:', { error: error.message });
       throw error;
     }
   }
 
   /**
    * Atualiza configuração de branding
-   * @param {number} id
+   * @param {string} id
    * @param {Partial<BrandingConfig>} data
    * @returns {Promise<BrandingConfig>}
    */
   async update(id, data) {
     const dbData = BrandingMapper.toPersistence(data);
-    const updates = [];
-    const values = [];
+    const updates = {};
 
-    // Construir query dinâmica apenas com campos fornecidos
+    // Construir objeto de updates apenas com campos fornecidos
     if (dbData.app_name !== undefined) {
-      updates.push('app_name = ?');
-      values.push(dbData.app_name);
+      updates.app_name = dbData.app_name;
     }
     if (dbData.logo_url !== undefined) {
-      updates.push('logo_url = ?');
-      values.push(dbData.logo_url);
+      updates.logo_url = dbData.logo_url;
     }
     if (dbData.primary_color !== undefined) {
-      updates.push('primary_color = ?');
-      values.push(dbData.primary_color);
+      updates.primary_color = dbData.primary_color;
     }
     if (dbData.secondary_color !== undefined) {
-      updates.push('secondary_color = ?');
-      values.push(dbData.secondary_color);
+      updates.secondary_color = dbData.secondary_color;
     }
     if (dbData.custom_home_html !== undefined) {
-      updates.push('custom_home_html = ?');
-      values.push(dbData.custom_home_html);
+      updates.custom_home_html = dbData.custom_home_html;
     }
     if (dbData.support_phone !== undefined) {
-      updates.push('support_phone = ?');
-      values.push(dbData.support_phone);
+      updates.support_phone = dbData.support_phone;
     }
 
-    if (updates.length === 0) {
+    if (Object.keys(updates).length === 0) {
       return this.findById(id);
     }
 
-    updates.push('updated_at = CURRENT_TIMESTAMP');
-    values.push(id);
+    updates.updated_at = new Date().toISOString();
 
     try {
-      await this.db.query(
-        `UPDATE branding_config SET ${updates.join(', ')} WHERE id = ?`,
-        values
-      );
+      const { data: updated, error } = await SupabaseService.update('branding_config', id, updates);
 
-      return this.findById(id);
+      if (error) {
+        throw error;
+      }
+
+      return BrandingMapper.toDomain(updated);
     } catch (error) {
-      logger.error('Erro ao atualizar branding:', error.message);
+      logger.error('Erro ao atualizar branding:', { error: error.message, id });
       throw error;
     }
   }

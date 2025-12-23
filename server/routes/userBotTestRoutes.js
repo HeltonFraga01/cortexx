@@ -15,9 +15,17 @@ const { logger } = require('../utils/logger');
 const TestConversationService = require('../services/TestConversationService');
 const BotService = require('../services/BotService');
 const QuotaService = require('../services/QuotaService');
+const AutomationService = require('../services/AutomationService');
+const SupabaseService = require('../services/SupabaseService');
 const { validateSupabaseToken } = require('../middleware/supabaseAuth');
 const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
 const { resolveUserId } = require('../middleware/quotaEnforcement');
+
+// Initialize services at module level (they use SupabaseService internally)
+const testConversationService = new TestConversationService();
+const botService = new BotService();
+const quotaService = new QuotaService();
+const automationService = new AutomationService();
 
 // Webhook timeout in milliseconds
 const WEBHOOK_TIMEOUT = 30000;
@@ -96,30 +104,20 @@ function getBotUserId(req) {
 router.post('/:botId/test/start', verifyUserToken, async (req, res) => {
   try {
     const { botId } = req.params;
-    const db = req.app.locals.db;
     const userId = getBotUserId(req);
-    
-    const botService = new BotService(db);
-    const quotaService = new QuotaService(db);
-    const testConversationService = new TestConversationService(db);
 
     // Get bot info (user's own bot or admin-assigned)
     let bot = await botService.getBotById(parseInt(botId, 10), userId);
     
     // If not found as user's bot, check if it's an admin-assigned bot template
     if (!bot) {
-      const AutomationService = require('../services/AutomationService');
-      const automationService = new AutomationService(db);
+      // Get user's inboxes using SupabaseService
+      const { data: inboxes, error: inboxError } = await SupabaseService.adminClient
+        .from('inboxes')
+        .select('id')
+        .eq('accounts.owner_user_id', userId);
       
-      // Get user's inboxes
-      const { rows: inboxes } = await db.query(
-        `SELECT i.id FROM inboxes i
-         JOIN accounts a ON i.account_id = a.id
-         WHERE a.owner_user_id = ?`,
-        [userId]
-      );
-      
-      if (inboxes.length > 0) {
+      if (!inboxError && inboxes && inboxes.length > 0) {
         const inboxIds = inboxes.map(i => i.id);
         const assignedBots = await automationService.getBotTemplatesForInboxes(inboxIds);
         bot = assignedBots.find(b => b.id === parseInt(botId, 10));
@@ -218,7 +216,6 @@ router.post('/:botId/test/message', verifyUserToken, async (req, res) => {
   try {
     const { botId } = req.params;
     const { conversationId, message } = req.body;
-    const db = req.app.locals.db;
     const userId = getBotUserId(req);
 
     if (!conversationId || !message) {
@@ -227,10 +224,6 @@ router.post('/:botId/test/message', verifyUserToken, async (req, res) => {
         error: 'conversationId and message are required'
       });
     }
-
-    const botService = new BotService(db);
-    const quotaService = new QuotaService(db);
-    const testConversationService = new TestConversationService(db);
 
     // Verify test conversation belongs to user
     const conversation = await testConversationService.getTestConversation(
@@ -249,18 +242,13 @@ router.post('/:botId/test/message', verifyUserToken, async (req, res) => {
     let bot = await botService.getBotById(parseInt(botId, 10), userId);
     
     if (!bot) {
-      // Check admin-assigned bots
-      const AutomationService = require('../services/AutomationService');
-      const automationService = new AutomationService(db);
+      // Check admin-assigned bots using SupabaseService
+      const { data: inboxes, error: inboxError } = await SupabaseService.adminClient
+        .from('inboxes')
+        .select('id')
+        .eq('accounts.owner_user_id', userId);
       
-      const { rows: inboxes } = await db.query(
-        `SELECT i.id FROM inboxes i
-         JOIN accounts a ON i.account_id = a.id
-         WHERE a.owner_user_id = ?`,
-        [userId]
-      );
-      
-      if (inboxes.length > 0) {
+      if (!inboxError && inboxes && inboxes.length > 0) {
         const inboxIds = inboxes.map(i => i.id);
         const assignedBots = await automationService.getBotTemplatesForInboxes(inboxIds);
         const foundBot = assignedBots.find(b => b.id === parseInt(botId, 10));
@@ -300,16 +288,14 @@ router.post('/:botId/test/message', verifyUserToken, async (req, res) => {
       'user'
     );
 
-    // Get conversation labels (if any)
+    // Get conversation labels (if any) using SupabaseService
     let labels = [];
     try {
-      const labelsResult = await db.query(`
-        SELECT l.id, l.name, l.color 
-        FROM labels l
-        JOIN conversation_labels cl ON l.id = cl.label_id
-        WHERE cl.conversation_id = ?
-      `, [conversationId]);
-      labels = labelsResult.rows || [];
+      const { data: labelsData } = await SupabaseService.adminClient
+        .from('labels')
+        .select('id, name, color, conversation_labels!inner(conversation_id)')
+        .eq('conversation_labels.conversation_id', conversationId);
+      labels = labelsData || [];
     } catch (e) {
       // Labels table might not exist
     }
@@ -563,7 +549,6 @@ router.post('/:botId/test/message', verifyUserToken, async (req, res) => {
 router.post('/:botId/test/end', verifyUserToken, async (req, res) => {
   try {
     const { conversationId } = req.body;
-    const db = req.app.locals.db;
     const userId = getBotUserId(req);
 
     if (!conversationId) {
@@ -572,8 +557,6 @@ router.post('/:botId/test/end', verifyUserToken, async (req, res) => {
         error: 'conversationId is required'
       });
     }
-
-    const testConversationService = new TestConversationService(db);
 
     // Verify ownership
     const conversation = await testConversationService.getTestConversation(
@@ -618,7 +601,6 @@ router.post('/:botId/test/end', verifyUserToken, async (req, res) => {
 router.delete('/:botId/test/history', verifyUserToken, async (req, res) => {
   try {
     const { conversationId } = req.body;
-    const db = req.app.locals.db;
     const userId = getBotUserId(req);
 
     if (!conversationId) {
@@ -627,8 +609,6 @@ router.delete('/:botId/test/history', verifyUserToken, async (req, res) => {
         error: 'conversationId is required'
       });
     }
-
-    const testConversationService = new TestConversationService(db);
 
     // Verify ownership
     const conversation = await testConversationService.getTestConversation(
@@ -671,7 +651,6 @@ router.delete('/:botId/test/history', verifyUserToken, async (req, res) => {
 router.get('/:botId/test/messages', verifyUserToken, async (req, res) => {
   try {
     const { conversationId } = req.query;
-    const db = req.app.locals.db;
     const userId = getBotUserId(req);
 
     if (!conversationId) {
@@ -680,8 +659,6 @@ router.get('/:botId/test/messages', verifyUserToken, async (req, res) => {
         error: 'conversationId query parameter is required'
       });
     }
-
-    const testConversationService = new TestConversationService(db);
 
     // Verify ownership
     const conversation = await testConversationService.getTestConversation(

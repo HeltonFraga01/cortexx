@@ -10,13 +10,14 @@
 const { logger } = require('../utils/logger');
 const axios = require('axios');
 const { validatePhoneWithAPI } = require('./PhoneValidationService');
+const SupabaseService = require('./SupabaseService');
 
 class SingleMessageScheduler {
   /**
-   * @param {Object} db - Instância do banco de dados
+   * @param {Object} db - Instância do banco de dados (deprecated, kept for backwards compatibility)
    */
-  constructor(db) {
-    this.db = db;
+  constructor(db = null) {
+    // db parameter kept for backwards compatibility but not used
     this.checkInterval = 30000; // 30 segundos
     this.intervalId = null;
     this.isRunning = false;
@@ -75,19 +76,22 @@ class SingleMessageScheduler {
       logger.debug('Verificando mensagens agendadas');
 
       // Buscar mensagens agendadas para agora ou antes
-      // Converter para ISO UTC para comparação correta no PostgreSQL
       const now = new Date().toISOString();
-      const sql = `
-        SELECT * FROM scheduled_single_messages 
-        WHERE status = 'pending' 
-        AND datetime(scheduled_at) <= datetime(?)
-        ORDER BY scheduled_at ASC
-        LIMIT 50
-      `;
+      
+      const { data: rows, error } = await SupabaseService.queryAsAdmin('scheduled_single_messages', (query) =>
+        query.select('*')
+          .eq('status', 'pending')
+          .lte('scheduled_at', now)
+          .order('scheduled_at', { ascending: true })
+          .limit(50)
+      );
 
-      const { rows } = await this.db.query(sql, [now]);
+      if (error) {
+        logger.error('Erro ao buscar mensagens agendadas:', error.message);
+        return;
+      }
 
-      if (rows.length === 0) {
+      if (!rows || rows.length === 0) {
         logger.debug('Nenhuma mensagem agendada para enviar');
         return;
       }
@@ -237,13 +241,15 @@ class SingleMessageScheduler {
         status: response.status
       };
       
-      await this.db.logSentMessage(
-        message.user_token,
-        message.recipient,
-        message.message_content,
-        message.message_type,
-        wuzapiResponse
-      );
+      // Log sent message to sent_messages table
+      await SupabaseService.insert('sent_messages', {
+        user_token: message.user_token,
+        recipient: message.recipient,
+        message_content: message.message_content,
+        message_type: message.message_type,
+        wuzapi_response: wuzapiResponse,
+        sent_at: new Date().toISOString()
+      });
 
       logger.info('Mensagem agendada enviada com sucesso', {
         messageId: message.id,
@@ -301,15 +307,18 @@ class SingleMessageScheduler {
    */
   async markAsSent(messageId) {
     try {
-      const sql = `
-        UPDATE scheduled_single_messages 
-        SET status = 'sent', 
-            sent_at = CURRENT_TIMESTAMP,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `;
+      const { error } = await SupabaseService.queryAsAdmin('scheduled_single_messages', (query) =>
+        query.update({
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }).eq('id', messageId)
+      );
 
-      await this.db.query(sql, [messageId]);
+      if (error) {
+        logger.error('Erro ao marcar mensagem como enviada:', error.message);
+        return;
+      }
 
       logger.info('Mensagem marcada como enviada', { messageId });
 
@@ -323,15 +332,18 @@ class SingleMessageScheduler {
    */
   async failMessage(messageId, errorMessage) {
     try {
-      const sql = `
-        UPDATE scheduled_single_messages 
-        SET status = 'failed', 
-            error_message = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `;
+      const { error } = await SupabaseService.queryAsAdmin('scheduled_single_messages', (query) =>
+        query.update({
+          status: 'failed',
+          error_message: errorMessage,
+          updated_at: new Date().toISOString()
+        }).eq('id', messageId)
+      );
 
-      await this.db.query(sql, [errorMessage, messageId]);
+      if (error) {
+        logger.error('Erro ao marcar mensagem como falha:', error.message);
+        return;
+      }
 
       logger.info('Mensagem marcada como falha', {
         messageId,

@@ -17,17 +17,7 @@ const AdminAuditService = require('../services/AdminAuditService');
 const router = express.Router();
 
 // Services initialized lazily
-let auditService = null;
-
-function getAuditService(req) {
-  if (!auditService) {
-    const db = req.app.locals.db;
-    if (db) {
-      auditService = new AdminAuditService(db);
-    }
-  }
-  return auditService;
-}
+const auditService = new AdminAuditService();
 
 /**
  * Validate tenant context is present
@@ -85,7 +75,7 @@ router.post('/', requireAdmin, async (req, res) => {
       return res.status(403).json({ error: 'Tenant context required' });
     }
 
-    const audit = getAuditService(req);
+    const audit = auditService;
 
     const { name, description, priceCents, billingCycle, status, isDefault, trialDays, quotas, features } = req.body;
 
@@ -192,7 +182,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
       return res.status(403).json({ error: 'Tenant context required' });
     }
 
-    const audit = getAuditService(req);
+    const audit = auditService;
     const planId = req.params.id;
     
     const existingPlan = await TenantPlanService.getPlanById(planId, tenantId);
@@ -271,7 +261,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
       return res.status(403).json({ error: 'Tenant context required' });
     }
 
-    const audit = getAuditService(req);
+    const audit = auditService;
     const planId = req.params.id;
     const { migrateToPlanId } = req.body;
 

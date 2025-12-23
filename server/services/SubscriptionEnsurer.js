@@ -5,6 +5,7 @@
  * and migration of existing users.
  * 
  * UPDATED: Now uses tenant_plans instead of global plans table
+ * Migrated to use SupabaseService directly (Task 14.1)
  * 
  * Requirements: 1.1, 1.2, 1.3, 4.1, 4.2, 4.3, 4.4
  */
@@ -14,9 +15,11 @@ const SubscriptionService = require('./SubscriptionService');
 const SupabaseService = require('./SupabaseService');
 
 class SubscriptionEnsurer {
+  // eslint-disable-next-line no-unused-vars
   constructor(db) {
-    this.db = db;
-    this.subscriptionService = new SubscriptionService(db);
+    // db parameter kept for backward compatibility but not used
+    // All operations use SupabaseService directly
+    this.subscriptionService = new SubscriptionService();
   }
 
   /**

@@ -3,6 +3,7 @@
  * Handles campaign report operations with filtering and export
  * 
  * UPDATED: Now uses inboxContextMiddleware to get wuzapiToken from the active inbox
+ * Migrated to use SupabaseService directly
  * 
  * Requirements: 3.1, 3.2, 3.3, 3.4
  */
@@ -12,6 +13,7 @@ const { logger } = require('../utils/logger');
 const { validateSupabaseToken } = require('../middleware/supabaseAuth');
 const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
 const { featureMiddleware } = require('../middleware/featureEnforcement');
+const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
@@ -83,7 +85,6 @@ router.use(featureMiddleware.advancedReports);
 router.get('/', async (req, res) => {
   try {
     const userToken = req.userToken;
-    const db = req.app.locals.db;
 
     // Parse pagination params
     const page = Math.max(1, parseInt(req.query.page) || 1);
@@ -93,57 +94,47 @@ router.get('/', async (req, res) => {
     // Parse filter params
     const { startDate, endDate, status, type, instance } = req.query;
 
-    // Build WHERE clause
-    let whereClause = 'WHERE user_token = ?';
-    const params = [userToken];
+    // Build query with filters
+    const { data: rows, count: total, error } = await SupabaseService.queryAsAdmin(
+      'bulk_campaigns',
+      (query) => {
+        let q = query
+          .select('id, name, instance, status, message_type, total_contacts, sent_count, failed_count, created_at, started_at, completed_at', { count: 'exact' })
+          .eq('user_token', userToken);
 
-    if (startDate) {
-      whereClause += ' AND created_at >= ?';
-      params.push(startDate);
+        if (startDate) {
+          q = q.gte('created_at', startDate);
+        }
+
+        if (endDate) {
+          q = q.lte('created_at', endDate);
+        }
+
+        if (status) {
+          const statuses = status.split(',').map(s => s.trim());
+          q = q.in('status', statuses);
+        }
+
+        if (type) {
+          q = q.eq('message_type', type);
+        }
+
+        if (instance) {
+          q = q.eq('instance', instance);
+        }
+
+        return q
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1);
+      }
+    );
+
+    if (error) {
+      throw error;
     }
-
-    if (endDate) {
-      whereClause += ' AND created_at <= ?';
-      params.push(endDate);
-    }
-
-    if (status) {
-      const statuses = status.split(',').map(s => s.trim());
-      whereClause += ` AND status IN (${statuses.map(() => '?').join(',')})`;
-      params.push(...statuses);
-    }
-
-    if (type) {
-      whereClause += ' AND message_type = ?';
-      params.push(type);
-    }
-
-    if (instance) {
-      whereClause += ' AND instance = ?';
-      params.push(instance);
-    }
-
-    // Get total count
-    const countSql = `SELECT COUNT(*) as total FROM bulk_campaigns ${whereClause}`;
-    const countResult = await db.query(countSql, params);
-    const total = countResult.rows[0]?.total || 0;
-
-    // Get paginated reports
-    const sql = `
-      SELECT 
-        id, name, instance, status, message_type,
-        total_contacts, sent_count, failed_count,
-        created_at, started_at, completed_at
-      FROM bulk_campaigns 
-      ${whereClause}
-      ORDER BY created_at DESC
-      LIMIT ? OFFSET ?
-    `;
-
-    const { rows } = await db.query(sql, [...params, limit, offset]);
 
     // Calculate delivery rate for each campaign
-    const reports = rows.map(row => ({
+    const reports = (rows || []).map(row => ({
       id: row.id,
       name: row.name,
       instance: row.instance,
@@ -158,7 +149,7 @@ router.get('/', async (req, res) => {
       completedAt: row.completed_at
     }));
 
-    const totalPages = Math.ceil(total / limit);
+    const totalPages = Math.ceil((total || 0) / limit);
 
     res.json({
       success: true,
@@ -166,7 +157,7 @@ router.get('/', async (req, res) => {
       pagination: {
         page,
         limit,
-        total,
+        total: total || 0,
         totalPages,
         hasMore: page < totalPages
       }
@@ -191,40 +182,44 @@ router.get('/:campaignId', async (req, res) => {
   try {
     const userToken = req.userToken;
     const { campaignId } = req.params;
-    const db = req.app.locals.db;
 
     // Get campaign data
-    const campaignSql = `
-      SELECT 
-        id, name, instance, status, message_type,
-        total_contacts, sent_count, failed_count,
-        created_at, started_at, completed_at
-      FROM bulk_campaigns 
-      WHERE id = ? AND user_token = ?
-    `;
-    const campaignResult = await db.query(campaignSql, [campaignId, userToken]);
+    const { data: campaignRows, error: campaignError } = await SupabaseService.queryAsAdmin(
+      'bulk_campaigns',
+      (query) => query
+        .select('id, name, instance, status, message_type, total_contacts, sent_count, failed_count, created_at, started_at, completed_at')
+        .eq('id', campaignId)
+        .eq('user_token', userToken)
+    );
 
-    if (!campaignResult.rows || campaignResult.rows.length === 0) {
+    if (campaignError) {
+      throw campaignError;
+    }
+
+    if (!campaignRows || campaignRows.length === 0) {
       return res.status(404).json({
         success: false,
         error: 'Campanha não encontrada'
       });
     }
 
-    const campaign = campaignResult.rows[0];
+    const campaign = campaignRows[0];
 
     // Get contact results
-    const contactsSql = `
-      SELECT 
-        phone, name, status, error_type, error_message, sent_at
-      FROM campaign_contacts 
-      WHERE campaign_id = ?
-      ORDER BY sent_at DESC
-    `;
-    const contactsResult = await db.query(contactsSql, [campaignId]);
+    const { data: contactsRows, error: contactsError } = await SupabaseService.queryAsAdmin(
+      'campaign_contacts',
+      (query) => query
+        .select('phone, name, status, error_type, error_message, sent_at')
+        .eq('campaign_id', campaignId)
+        .order('sent_at', { ascending: false })
+    );
+
+    if (contactsError) {
+      throw contactsError;
+    }
 
     // Calculate metrics
-    const contacts = contactsResult.rows.map(c => ({
+    const contacts = (contactsRows || []).map(c => ({
       phone: c.phone,
       name: c.name,
       status: c.status,
@@ -316,35 +311,46 @@ router.get('/:campaignId/export', async (req, res) => {
     const userToken = req.userToken;
     const { campaignId } = req.params;
     const format = req.query.format || 'csv';
-    const db = req.app.locals.db;
 
     // Verify campaign ownership
-    const checkSql = 'SELECT id, name FROM bulk_campaigns WHERE id = ? AND user_token = ?';
-    const checkResult = await db.query(checkSql, [campaignId, userToken]);
+    const { data: checkRows, error: checkError } = await SupabaseService.queryAsAdmin(
+      'bulk_campaigns',
+      (query) => query
+        .select('id, name')
+        .eq('id', campaignId)
+        .eq('user_token', userToken)
+    );
 
-    if (!checkResult.rows || checkResult.rows.length === 0) {
+    if (checkError) {
+      throw checkError;
+    }
+
+    if (!checkRows || checkRows.length === 0) {
       return res.status(404).json({
         success: false,
         error: 'Campanha não encontrada'
       });
     }
 
-    const campaignName = checkResult.rows[0].name;
+    const campaignName = checkRows[0].name;
 
     // Get contact results
-    const contactsSql = `
-      SELECT 
-        phone, name, status, error_type, error_message, sent_at
-      FROM campaign_contacts 
-      WHERE campaign_id = ?
-      ORDER BY sent_at DESC
-    `;
-    const contactsResult = await db.query(contactsSql, [campaignId]);
+    const { data: contactsRows, error: contactsError } = await SupabaseService.queryAsAdmin(
+      'campaign_contacts',
+      (query) => query
+        .select('phone, name, status, error_type, error_message, sent_at')
+        .eq('campaign_id', campaignId)
+        .order('sent_at', { ascending: false })
+    );
+
+    if (contactsError) {
+      throw contactsError;
+    }
 
     if (format === 'csv') {
       // Generate CSV
       const headers = ['Telefone', 'Nome', 'Status', 'Tipo de Erro', 'Mensagem de Erro', 'Enviado em'];
-      const rows = contactsResult.rows.map(c => [
+      const rows = (contactsRows || []).map(c => [
         c.phone || '',
         c.name || '',
         c.status || '',

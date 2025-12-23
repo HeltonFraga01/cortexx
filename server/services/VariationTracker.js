@@ -11,20 +11,17 @@
  */
 
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class VariationTracker {
-  constructor(database = null) {
-    // Injeção de dependência para facilitar testes
-    this.db = database;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   /**
-   * Inicializa o tracker com instância do banco
-   * 
-   * @param {Object} database - Instância do database
+   * Inicializa o tracker (mantido para compatibilidade)
    */
-  initialize(database) {
-    this.db = database;
+  initialize() {
     logger.info('VariationTracker inicializado');
   }
 
@@ -38,10 +35,6 @@ class VariationTracker {
     const startTime = Date.now();
     
     try {
-      if (!this.db) {
-        throw new Error('Database não inicializado');
-      }
-
       // Validar dados obrigatórios
       this._validateLogData(data);
 
@@ -58,26 +51,24 @@ class VariationTracker {
       const selectionsJson = JSON.stringify(selections);
 
       // Inserir no banco
-      const sql = `
-        INSERT INTO message_variations (
-          campaign_id, message_id, template, selected_variations,
-          recipient, user_id, sent_at
-        ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `;
+      const { data: result, error } = await SupabaseService.queryAsAdmin('message_variations', (query) =>
+        query.insert({
+          campaign_id: campaignId,
+          message_id: messageId,
+          template,
+          selected_variations: selectionsJson,
+          recipient,
+          user_id: userId,
+          sent_at: new Date().toISOString()
+        }).select('id').single()
+      );
 
-      const result = await this.db.query(sql, [
-        campaignId,
-        messageId,
-        template,
-        selectionsJson,
-        recipient,
-        userId
-      ]);
+      if (error) throw error;
 
       const duration = Date.now() - startTime;
 
       logger.info('Variação registrada', {
-        id: result.lastID,
+        id: result?.id,
         campaignId,
         recipient,
         duration
@@ -85,7 +76,7 @@ class VariationTracker {
 
       return {
         success: true,
-        id: result.lastID,
+        id: result?.id,
         duration
       };
 
@@ -105,49 +96,38 @@ class VariationTracker {
     const startTime = Date.now();
     
     try {
-      if (!this.db) {
-        throw new Error('Database não inicializado');
-      }
-
       if (!Array.isArray(variations) || variations.length === 0) {
         throw new Error('Variations deve ser um array não vazio');
       }
 
       // Preparar valores para inserção em lote
-      const values = variations.map(v => [
-        v.campaignId || null,
-        v.messageId || null,
-        v.template,
-        JSON.stringify(v.selections),
-        v.recipient || null,
-        v.userId || null
-      ]);
+      const records = variations.map(v => ({
+        campaign_id: v.campaignId || null,
+        message_id: v.messageId || null,
+        template: v.template,
+        selected_variations: JSON.stringify(v.selections),
+        recipient: v.recipient || null,
+        user_id: v.userId || null,
+        sent_at: new Date().toISOString()
+      }));
 
-      // Inserir em lote usando transação
-      let insertedCount = 0;
-      
-      for (const value of values) {
-        const sql = `
-          INSERT INTO message_variations (
-            campaign_id, message_id, template, selected_variations,
-            recipient, user_id, sent_at
-          ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        `;
-        
-        await this.db.query(sql, value);
-        insertedCount++;
-      }
+      // Inserir em lote
+      const { error } = await SupabaseService.queryAsAdmin('message_variations', (query) =>
+        query.insert(records)
+      );
+
+      if (error) throw error;
 
       const duration = Date.now() - startTime;
 
       logger.info('Variações registradas em lote', {
-        count: insertedCount,
+        count: records.length,
         duration
       });
 
       return {
         success: true,
-        count: insertedCount,
+        count: records.length,
         duration
       };
 
@@ -167,28 +147,20 @@ class VariationTracker {
     const startTime = Date.now();
     
     try {
-      if (!this.db) {
-        throw new Error('Database não inicializado');
-      }
-
       if (!campaignId) {
         throw new Error('campaignId é obrigatório');
       }
 
       // Buscar todas as variações da campanha
-      const sql = `
-        SELECT 
-          id, template, selected_variations, recipient,
-          sent_at, delivered, read
-        FROM message_variations
-        WHERE campaign_id = ?
-        ORDER BY sent_at DESC
-      `;
+      const { data: variations, error } = await SupabaseService.queryAsAdmin('message_variations', (query) =>
+        query.select('id, template, selected_variations, recipient, sent_at, delivered, read')
+          .eq('campaign_id', campaignId)
+          .order('sent_at', { ascending: false })
+      );
 
-      const result = await this.db.query(sql, [campaignId]);
-      const variations = result.rows;
+      if (error) throw error;
 
-      if (variations.length === 0) {
+      if (!variations || variations.length === 0) {
         return {
           campaignId,
           totalMessages: 0,
@@ -242,42 +214,45 @@ class VariationTracker {
    */
   async getUserStats(userId, options = {}) {
     try {
-      if (!this.db) {
-        throw new Error('Database não inicializado');
-      }
-
       const { startDate = null, endDate = null, limit = 100 } = options;
 
-      let sql = `
-        SELECT 
-          campaign_id, COUNT(*) as count,
-          MIN(sent_at) as first_sent,
-          MAX(sent_at) as last_sent
-        FROM message_variations
-        WHERE user_id = ?
-      `;
-
-      const params = [userId];
+      let query = SupabaseService.adminClient
+        .from('message_variations')
+        .select('campaign_id')
+        .eq('user_id', userId);
 
       if (startDate) {
-        sql += ` AND sent_at >= ?`;
-        params.push(startDate);
+        query = query.gte('sent_at', startDate);
       }
 
       if (endDate) {
-        sql += ` AND sent_at <= ?`;
-        params.push(endDate);
+        query = query.lte('sent_at', endDate);
       }
 
-      sql += ` GROUP BY campaign_id ORDER BY last_sent DESC LIMIT ?`;
-      params.push(limit);
+      const { data, error } = await query;
 
-      const result = await this.db.query(sql, params);
+      if (error) throw error;
+
+      // Agrupar por campaign_id manualmente
+      const campaignStats = {};
+      (data || []).forEach(row => {
+        if (!campaignStats[row.campaign_id]) {
+          campaignStats[row.campaign_id] = { count: 0 };
+        }
+        campaignStats[row.campaign_id].count++;
+      });
+
+      const campaigns = Object.entries(campaignStats)
+        .map(([campaign_id, stats]) => ({
+          campaign_id,
+          count: stats.count
+        }))
+        .slice(0, limit);
 
       return {
         userId,
-        campaigns: result.rows,
-        totalCampaigns: result.rows.length
+        campaigns,
+        totalCampaigns: campaigns.length
       };
 
     } catch (error) {
@@ -295,31 +270,23 @@ class VariationTracker {
    */
   async exportData(campaignId, format = 'json') {
     try {
-      if (!this.db) {
-        throw new Error('Database não inicializado');
-      }
-
       if (!['json', 'csv'].includes(format)) {
         throw new Error('Formato deve ser json ou csv');
       }
 
       // Buscar dados
-      const sql = `
-        SELECT 
-          id, campaign_id, message_id, template, selected_variations,
-          recipient, sent_at, delivered, read
-        FROM message_variations
-        WHERE campaign_id = ?
-        ORDER BY sent_at ASC
-      `;
+      const { data, error } = await SupabaseService.queryAsAdmin('message_variations', (query) =>
+        query.select('id, campaign_id, message_id, template, selected_variations, recipient, sent_at, delivered, read')
+          .eq('campaign_id', campaignId)
+          .order('sent_at', { ascending: true })
+      );
 
-      const result = await this.db.query(sql, [campaignId]);
-      const data = result.rows;
+      if (error) throw error;
 
       if (format === 'json') {
-        return this._exportAsJson(data);
+        return this._exportAsJson(data || []);
       } else {
-        return this._exportAsCsv(data);
+        return this._exportAsCsv(data || []);
       }
 
     } catch (error) {
@@ -337,34 +304,27 @@ class VariationTracker {
    */
   async updateDeliveryStatus(variationId, status) {
     try {
-      if (!this.db) {
-        throw new Error('Database não inicializado');
-      }
-
       const { delivered = null, read = null } = status;
 
-      let sql = 'UPDATE message_variations SET ';
-      const updates = [];
-      const params = [];
+      const updateData = {};
 
       if (delivered !== null) {
-        updates.push('delivered = ?');
-        params.push(delivered ? 1 : 0);
+        updateData.delivered = delivered ? true : false;
       }
 
       if (read !== null) {
-        updates.push('read = ?');
-        params.push(read ? 1 : 0);
+        updateData.read = read ? true : false;
       }
 
-      if (updates.length === 0) {
+      if (Object.keys(updateData).length === 0) {
         throw new Error('Nenhum status fornecido');
       }
 
-      sql += updates.join(', ') + ' WHERE id = ?';
-      params.push(variationId);
+      const { error } = await SupabaseService.queryAsAdmin('message_variations', (query) =>
+        query.update(updateData).eq('id', variationId)
+      );
 
-      await this.db.query(sql, params);
+      if (error) throw error;
 
       logger.info('Status de entrega atualizado', { variationId, status });
 

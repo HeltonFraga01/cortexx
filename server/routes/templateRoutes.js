@@ -3,10 +3,12 @@
  * Handles campaign template operations with pagination support
  * 
  * Requirements: 1.1, 1.2, 1.3, 1.4
+ * Migrated to use SupabaseService directly
  */
 
 const express = require('express');
 const { logger } = require('../utils/logger');
+const SupabaseService = require('../services/SupabaseService');
 const router = express.Router();
 
 // Middleware para verificar token do usuário
@@ -43,7 +45,6 @@ const verifyUserToken = async (req, res, next) => {
 router.get('/', verifyUserToken, async (req, res) => {
   try {
     const userToken = req.userToken;
-    const db = req.app.locals.db;
     
     // Parse pagination params
     const page = Math.max(1, parseInt(req.query.page) || 1);
@@ -51,35 +52,40 @@ router.get('/', verifyUserToken, async (req, res) => {
     const offset = (page - 1) * limit;
 
     // Get total count
-    const countSql = `
-      SELECT COUNT(*) as total 
-      FROM campaign_templates 
-      WHERE user_token = ?
-    `;
-    const countResult = await db.query(countSql, [userToken]);
-    const total = countResult.rows[0]?.total || 0;
+    const { count: total, error: countError } = await SupabaseService.count(
+      'campaign_templates',
+      { user_token: userToken }
+    );
+
+    if (countError) {
+      throw countError;
+    }
 
     // Get paginated templates
-    const sql = `
-      SELECT id, name, description, config, created_at, updated_at
-      FROM campaign_templates 
-      WHERE user_token = ? 
-      ORDER BY created_at DESC
-      LIMIT ? OFFSET ?
-    `;
-    const { rows } = await db.query(sql, [userToken, limit, offset]);
+    const { data: rows, error: queryError } = await SupabaseService.queryAsAdmin(
+      'campaign_templates',
+      (query) => query
+        .select('id, name, description, config, created_at, updated_at')
+        .eq('user_token', userToken)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1)
+    );
+
+    if (queryError) {
+      throw queryError;
+    }
 
     // Parse config JSON
-    const templates = rows.map(t => ({
+    const templates = (rows || []).map(t => ({
       id: t.id,
       name: t.name,
       description: t.description,
-      config: JSON.parse(t.config || '{}'),
+      config: typeof t.config === 'string' ? JSON.parse(t.config || '{}') : (t.config || {}),
       createdAt: t.created_at,
       updatedAt: t.updated_at
     }));
 
-    const totalPages = Math.ceil(total / limit);
+    const totalPages = Math.ceil((total || 0) / limit);
 
     res.json({
       success: true,
@@ -87,7 +93,7 @@ router.get('/', verifyUserToken, async (req, res) => {
       pagination: {
         page,
         limit,
-        total,
+        total: total || 0,
         totalPages,
         hasMore: page < totalPages
       }
@@ -112,16 +118,20 @@ router.get('/:id', verifyUserToken, async (req, res) => {
   try {
     const userToken = req.userToken;
     const { id } = req.params;
-    const db = req.app.locals.db;
 
-    const sql = `
-      SELECT id, name, description, config, created_at, updated_at
-      FROM campaign_templates 
-      WHERE id = ? AND user_token = ?
-    `;
-    const { rows } = await db.query(sql, [id, userToken]);
+    const { data: rows, error } = await SupabaseService.queryAsAdmin(
+      'campaign_templates',
+      (query) => query
+        .select('id, name, description, config, created_at, updated_at')
+        .eq('id', id)
+        .eq('user_token', userToken)
+    );
 
-    if (rows.length === 0) {
+    if (error) {
+      throw error;
+    }
+
+    if (!rows || rows.length === 0) {
       return res.status(404).json({
         success: false,
         error: 'Template não encontrado'
@@ -133,7 +143,7 @@ router.get('/:id', verifyUserToken, async (req, res) => {
       id: t.id,
       name: t.name,
       description: t.description,
-      config: JSON.parse(t.config || '{}'),
+      config: typeof t.config === 'string' ? JSON.parse(t.config || '{}') : (t.config || {}),
       createdAt: t.created_at,
       updatedAt: t.updated_at
     };
@@ -172,24 +182,25 @@ router.post('/', verifyUserToken, async (req, res) => {
       });
     }
 
-    const db = req.app.locals.db;
     const id = `tpl-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const now = new Date().toISOString();
 
-    const sql = `
-      INSERT INTO campaign_templates (id, name, description, user_token, config, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `;
+    const { data, error } = await SupabaseService.queryAsAdmin(
+      'campaign_templates',
+      (query) => query.insert({
+        id,
+        name,
+        description: description || null,
+        user_token: userToken,
+        config: config || {},
+        created_at: now,
+        updated_at: now
+      }).select()
+    );
 
-    await db.query(sql, [
-      id,
-      name,
-      description || null,
-      userToken,
-      JSON.stringify(config || {}),
-      now,
-      now
-    ]);
+    if (error) {
+      throw error;
+    }
 
     logger.info('Template criado:', {
       templateId: id,
@@ -228,37 +239,34 @@ router.put('/:id', verifyUserToken, async (req, res) => {
     const userToken = req.userToken;
     const { id } = req.params;
     const { name, description, config } = req.body;
-    const db = req.app.locals.db;
 
     // Verify ownership
-    const checkSql = 'SELECT id, config FROM campaign_templates WHERE id = ? AND user_token = ?';
-    const { rows } = await db.query(checkSql, [id, userToken]);
+    const { data: existing, error: checkError } = await SupabaseService.queryAsAdmin(
+      'campaign_templates',
+      (query) => query
+        .select('id, config')
+        .eq('id', id)
+        .eq('user_token', userToken)
+    );
 
-    if (rows.length === 0) {
+    if (checkError) {
+      throw checkError;
+    }
+
+    if (!existing || existing.length === 0) {
       return res.status(404).json({
         success: false,
         error: 'Template não encontrado'
       });
     }
 
-    // Build update query dynamically
-    const updates = [];
-    const params = [];
+    // Build update data
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (config !== undefined) updateData.config = config;
 
-    if (name !== undefined) {
-      updates.push('name = ?');
-      params.push(name);
-    }
-    if (description !== undefined) {
-      updates.push('description = ?');
-      params.push(description);
-    }
-    if (config !== undefined) {
-      updates.push('config = ?');
-      params.push(JSON.stringify(config));
-    }
-
-    if (updates.length === 0) {
+    if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         success: false,
         error: 'Nenhum campo para atualizar'
@@ -266,21 +274,31 @@ router.put('/:id', verifyUserToken, async (req, res) => {
     }
 
     const now = new Date().toISOString();
-    updates.push('updated_at = ?');
-    params.push(now);
-    params.push(id);
+    updateData.updated_at = now;
 
-    const updateSql = `UPDATE campaign_templates SET ${updates.join(', ')} WHERE id = ?`;
-    await db.query(updateSql, params);
+    const { error: updateError } = await SupabaseService.queryAsAdmin(
+      'campaign_templates',
+      (query) => query
+        .update(updateData)
+        .eq('id', id)
+    );
+
+    if (updateError) {
+      throw updateError;
+    }
 
     // Fetch updated template
-    const fetchSql = `
-      SELECT id, name, description, config, created_at, updated_at
-      FROM campaign_templates 
-      WHERE id = ?
-    `;
-    const result = await db.query(fetchSql, [id]);
-    const t = result.rows[0];
+    const { data: updated, error: fetchError } = await SupabaseService.queryAsAdmin(
+      'campaign_templates',
+      (query) => query
+        .select('id, name, description, config, created_at, updated_at')
+        .eq('id', id)
+        .single()
+    );
+
+    if (fetchError) {
+      throw fetchError;
+    }
 
     logger.info('Template atualizado:', {
       templateId: id
@@ -289,12 +307,12 @@ router.put('/:id', verifyUserToken, async (req, res) => {
     res.json({
       success: true,
       template: {
-        id: t.id,
-        name: t.name,
-        description: t.description,
-        config: JSON.parse(t.config || '{}'),
-        createdAt: t.created_at,
-        updatedAt: t.updated_at
+        id: updated.id,
+        name: updated.name,
+        description: updated.description,
+        config: typeof updated.config === 'string' ? JSON.parse(updated.config || '{}') : (updated.config || {}),
+        createdAt: updated.created_at,
+        updatedAt: updated.updated_at
       }
     });
   } catch (error) {
@@ -318,20 +336,35 @@ router.delete('/:id', verifyUserToken, async (req, res) => {
   try {
     const userToken = req.userToken;
     const { id } = req.params;
-    const db = req.app.locals.db;
 
     // Verify ownership
-    const checkSql = 'SELECT id FROM campaign_templates WHERE id = ? AND user_token = ?';
-    const { rows } = await db.query(checkSql, [id, userToken]);
+    const { data: existing, error: checkError } = await SupabaseService.queryAsAdmin(
+      'campaign_templates',
+      (query) => query
+        .select('id')
+        .eq('id', id)
+        .eq('user_token', userToken)
+    );
 
-    if (rows.length === 0) {
+    if (checkError) {
+      throw checkError;
+    }
+
+    if (!existing || existing.length === 0) {
       return res.status(404).json({
         success: false,
         error: 'Template não encontrado'
       });
     }
 
-    await db.query('DELETE FROM campaign_templates WHERE id = ?', [id]);
+    const { error: deleteError } = await SupabaseService.queryAsAdmin(
+      'campaign_templates',
+      (query) => query.delete().eq('id', id)
+    );
+
+    if (deleteError) {
+      throw deleteError;
+    }
 
     logger.info('Template excluído:', {
       templateId: id

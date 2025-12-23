@@ -3,12 +3,17 @@
  * 
  * Responsabilidade única: traduzir HTTP para domínio e vice-versa.
  * NÃO deve conter lógica de negócio.
+ * 
+ * Migrated to use BrandingService without db parameter (Task 14.1.7)
  */
 
 const { logger } = require('../../../../utils/logger');
 const BrandingService = require('../../core/services/BrandingService');
 const BrandingMapper = require('../../infra/mappers/BrandingMapper');
 const { BrandingValidationError } = require('../../core/errors');
+
+// Module-level service instance (BrandingService now uses SupabaseService internally)
+const brandingService = new BrandingService();
 
 class BrandingController {
   /**
@@ -17,10 +22,7 @@ class BrandingController {
    */
   static async getConfig(req, res) {
     try {
-      const db = req.app.locals.db;
-      const service = new BrandingService(db);
-      
-      const config = await service.getConfig();
+      const config = await brandingService.getConfig();
       const dto = BrandingMapper.toDTO(config);
 
       res.json({
@@ -46,9 +48,6 @@ class BrandingController {
    */
   static async updateConfig(req, res) {
     try {
-      const db = req.app.locals.db;
-      const service = new BrandingService(db);
-      
       const data = {
         appName: req.body.appName,
         logoUrl: req.body.logoUrl,
@@ -58,7 +57,7 @@ class BrandingController {
         supportPhone: req.body.supportPhone
       };
 
-      const config = await service.updateConfig(data);
+      const config = await brandingService.updateConfig(data);
       const dto = BrandingMapper.toDTO(config);
 
       logger.info('Branding atualizado com sucesso', {

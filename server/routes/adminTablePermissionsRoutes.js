@@ -2,6 +2,7 @@ const express = require('express');
 const errorHandler = require('../middleware/errorHandler');
 const { adminLimiter } = require('../middleware/rateLimiter');
 const { logger } = require('../utils/logger');
+const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
@@ -62,14 +63,17 @@ router.post('/',
         });
       }
       
-      const db = req.app.locals.db;
-      
-      // Criar permissão
-      const permission = await db.createTablePermission(user_id, table_name, {
+      // Criar permissão usando SupabaseService
+      const { data: permission, error: permError } = await SupabaseService.insert('table_permissions', {
+        user_id,
+        table_name,
         can_read: can_read || false,
         can_write: can_write || false,
-        can_delete: can_delete || false
+        can_delete: can_delete || false,
+        created_at: new Date().toISOString()
       });
+      
+      if (permError) throw permError;
       
       logger.info('✅ Permissão de tabela criada:', {
         permission_id: permission.id,
@@ -125,21 +129,24 @@ router.get('/',
   async (req, res) => {
     try {
       const { user_id } = req.query;
-      const db = req.app.locals.db;
       
       let permissions;
       
       if (user_id) {
-        // Buscar permissões de um usuário específico
-        permissions = await db.getUserTablePermissions(user_id);
+        // Buscar permissões de um usuário específico usando SupabaseService
+        const { data, error } = await SupabaseService.getMany('table_permissions', { user_id });
+        if (error) throw error;
+        permissions = data || [];
         
         logger.info('✅ Permissões de usuário listadas:', {
           user_id,
           count: permissions.length
         });
       } else {
-        // Buscar todas as permissões
-        permissions = await db.getAllTablePermissions();
+        // Buscar todas as permissões usando SupabaseService
+        const { data, error } = await SupabaseService.getMany('table_permissions', {});
+        if (error) throw error;
+        permissions = data || [];
         
         logger.info('✅ Todas as permissões listadas:', {
           count: permissions.length
@@ -183,10 +190,8 @@ router.get('/:id',
   async (req, res) => {
     try {
       const { id } = req.params;
-      const db = req.app.locals.db;
       
       // Buscar permissão por ID usando o método do SupabaseService
-      const SupabaseService = require('../services/SupabaseService');
       const { data, error } = await SupabaseService.getById('table_permissions', id);
       
       if (error || !data) {
@@ -259,14 +264,16 @@ router.put('/:id',
         });
       }
       
-      const db = req.app.locals.db;
+      const updates = {};
+      if (can_read !== undefined) updates.can_read = can_read;
+      if (can_write !== undefined) updates.can_write = can_write;
+      if (can_delete !== undefined) updates.can_delete = can_delete;
+      updates.updated_at = new Date().toISOString();
       
-      // Atualizar permissão
-      const updated = await db.updateTablePermission(id, {
-        can_read: can_read !== undefined ? can_read : undefined,
-        can_write: can_write !== undefined ? can_write : undefined,
-        can_delete: can_delete !== undefined ? can_delete : undefined
-      });
+      // Atualizar permissão usando SupabaseService
+      const { data: updated, error: updateError } = await SupabaseService.update('table_permissions', id, updates);
+      
+      if (updateError) throw updateError;
       
       if (!updated) {
         logger.warn('⚠️ Permissão não encontrada para atualização:', { id });
@@ -318,21 +325,23 @@ router.delete('/:id',
   async (req, res) => {
     try {
       const { id } = req.params;
-      const db = req.app.locals.db;
       
-      // Deletar permissão
-      const deleted = await db.deleteTablePermission(id);
+      // Deletar permissão usando SupabaseService
+      const { error: deleteError } = await SupabaseService.delete('table_permissions', id);
       
-      if (!deleted) {
-        logger.warn('⚠️ Permissão não encontrada para deleção:', { id });
-        
-        return res.status(404).json({
-          success: false,
-          error: 'Not Found',
-          message: 'Permissão não encontrada',
-          code: 'PERMISSION_NOT_FOUND',
-          timestamp: new Date().toISOString()
-        });
+      if (deleteError) {
+        if (deleteError.message?.includes('not found')) {
+          logger.warn('⚠️ Permissão não encontrada para deleção:', { id });
+          
+          return res.status(404).json({
+            success: false,
+            error: 'Not Found',
+            message: 'Permissão não encontrada',
+            code: 'PERMISSION_NOT_FOUND',
+            timestamp: new Date().toISOString()
+          });
+        }
+        throw deleteError;
       }
       
       logger.info('✅ Permissão deletada:', { id });

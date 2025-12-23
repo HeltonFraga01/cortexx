@@ -9,13 +9,14 @@
  */
 
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class ReportGenerator {
   /**
-   * @param {Object} db - Instância do banco de dados
+   * Constructor - no longer requires db parameter
    */
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // Uses SupabaseService directly
   }
 
   /**
@@ -90,23 +91,31 @@ class ReportGenerator {
    * Busca dados da campanha
    */
   async getCampaignData(campaignId) {
-    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ?';
-    const { rows } = await this.db.query(sql, [campaignId]);
-    return rows[0] || null;
+    const { data, error } = await SupabaseService.getById('bulk_campaigns', campaignId);
+    if (error && error.code !== 'PGRST116') {
+      logger.error('Error fetching campaign data', { campaignId, error: error.message });
+      throw error;
+    }
+    return data;
   }
 
   /**
    * Busca contatos da campanha
    */
   async getCampaignContacts(campaignId) {
-    const sql = `
-      SELECT * FROM campaign_contacts 
-      WHERE campaign_id = ? 
-      ORDER BY processing_order
-    `;
-    const { rows } = await this.db.query(sql, [campaignId]);
+    const { data, error } = await SupabaseService.queryAsAdmin('campaign_contacts', (query) => {
+      return query
+        .select('*')
+        .eq('campaign_id', campaignId)
+        .order('processing_order', { ascending: true });
+    });
     
-    return rows.map(row => ({
+    if (error) {
+      logger.error('Error fetching campaign contacts', { campaignId, error: error.message });
+      throw error;
+    }
+    
+    return (data || []).map(row => ({
       id: row.id,
       phone: row.phone,
       name: row.name,
@@ -181,50 +190,38 @@ class ReportGenerator {
   async saveReport(campaignId, reportData) {
     try {
       // Verificar se já existe relatório
-      const checkSql = 'SELECT * FROM campaign_reports WHERE campaign_id = ?';
-      const { rows } = await this.db.query(checkSql, [campaignId]);
+      const { data: existingReport, error: checkError } = await SupabaseService.queryAsAdmin('campaign_reports', (query) => {
+        return query.select('*').eq('campaign_id', campaignId).single();
+      });
 
-      if (rows.length > 0) {
+      if (existingReport && !checkError) {
         // Atualizar relatório existente
-        const updateSql = `
-          UPDATE campaign_reports 
-          SET total_contacts = ?, sent_count = ?, failed_count = ?, 
-              success_rate = ?, duration_seconds = ?, errors_by_type = ?,
-              generated_at = CURRENT_TIMESTAMP
-          WHERE campaign_id = ?
-        `;
-        
-        await this.db.query(updateSql, [
-          reportData.total_contacts,
-          reportData.sent_count,
-          reportData.failed_count,
-          reportData.success_rate,
-          reportData.duration_seconds,
-          reportData.errors_by_type,
-          campaignId
-        ]);
+        const { data, error } = await SupabaseService.update('campaign_reports', existingReport.id, {
+          total_contacts: reportData.total_contacts,
+          sent_count: reportData.sent_count,
+          failed_count: reportData.failed_count,
+          success_rate: reportData.success_rate,
+          duration_seconds: reportData.duration_seconds,
+          errors_by_type: reportData.errors_by_type,
+          generated_at: new Date().toISOString()
+        });
 
-        return rows[0];
+        if (error) throw error;
+        return data || existingReport;
       } else {
         // Criar novo relatório
-        const insertSql = `
-          INSERT INTO campaign_reports (
-            campaign_id, total_contacts, sent_count, failed_count,
-            success_rate, duration_seconds, errors_by_type
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `;
-        
-        const result = await this.db.query(insertSql, [
-          campaignId,
-          reportData.total_contacts,
-          reportData.sent_count,
-          reportData.failed_count,
-          reportData.success_rate,
-          reportData.duration_seconds,
-          reportData.errors_by_type
-        ]);
+        const { data, error } = await SupabaseService.insert('campaign_reports', {
+          campaign_id: campaignId,
+          total_contacts: reportData.total_contacts,
+          sent_count: reportData.sent_count,
+          failed_count: reportData.failed_count,
+          success_rate: reportData.success_rate,
+          duration_seconds: reportData.duration_seconds,
+          errors_by_type: reportData.errors_by_type
+        });
 
-        return { id: result.lastID, campaign_id: campaignId };
+        if (error) throw error;
+        return data || { campaign_id: campaignId };
       }
 
     } catch (error) {
@@ -495,44 +492,45 @@ class ReportGenerator {
    */
   async listReports(filters = {}) {
     try {
-      let sql = `
-        SELECT 
-          cr.*,
-          c.name as campaign_name,
-          c.instance,
-          c.started_at,
-          c.completed_at
-        FROM campaign_reports cr
-        JOIN bulk_campaigns c ON cr.campaign_id = c.id
-        WHERE 1=1
-      `;
-      
-      const params = [];
+      // Build query with filters
+      const { data, error } = await SupabaseService.queryAsAdmin('campaign_reports', (query) => {
+        let q = query.select(`
+          *,
+          bulk_campaigns!inner (
+            name,
+            instance,
+            started_at,
+            completed_at
+          )
+        `);
 
-      if (filters.instance) {
-        sql += ' AND c.instance = ?';
-        params.push(filters.instance);
+        if (filters.instance) {
+          q = q.eq('bulk_campaigns.instance', filters.instance);
+        }
+
+        if (filters.minSuccessRate !== undefined) {
+          q = q.gte('success_rate', filters.minSuccessRate);
+        }
+
+        q = q.order('generated_at', { ascending: false });
+
+        if (filters.limit) {
+          q = q.limit(filters.limit);
+        }
+
+        return q;
+      });
+
+      if (error) {
+        logger.error('Error listing reports', { error: error.message });
+        throw error;
       }
 
-      if (filters.minSuccessRate !== undefined) {
-        sql += ' AND cr.success_rate >= ?';
-        params.push(filters.minSuccessRate);
-      }
-
-      sql += ' ORDER BY cr.generated_at DESC';
-
-      if (filters.limit) {
-        sql += ' LIMIT ?';
-        params.push(filters.limit);
-      }
-
-      const { rows } = await this.db.query(sql, params);
-
-      return rows.map(row => ({
+      return (data || []).map(row => ({
         id: row.id,
         campaignId: row.campaign_id,
-        campaignName: row.campaign_name,
-        instance: row.instance,
+        campaignName: row.bulk_campaigns?.name,
+        instance: row.bulk_campaigns?.instance,
         stats: {
           total: row.total_contacts,
           sent: row.sent_count,
@@ -540,10 +538,12 @@ class ReportGenerator {
           successRate: row.success_rate
         },
         duration: row.duration_seconds,
-        errorsByType: JSON.parse(row.errors_by_type || '{}'),
+        errorsByType: typeof row.errors_by_type === 'string' 
+          ? JSON.parse(row.errors_by_type || '{}') 
+          : (row.errors_by_type || {}),
         generatedAt: row.generated_at,
-        startedAt: row.started_at,
-        completedAt: row.completed_at
+        startedAt: row.bulk_campaigns?.started_at,
+        completedAt: row.bulk_campaigns?.completed_at
       }));
 
     } catch (error) {

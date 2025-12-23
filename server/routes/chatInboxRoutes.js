@@ -433,13 +433,18 @@ router.get('/avatar/:phone', verifyUserToken, async (req, res) => {
         const avatarUrl = avatarData.URL || avatarData.url
         
         // Update conversation avatar if we have one
-        // Using SupabaseService directly
-        if (req.app?.locals?.db) {
+        const accountId = req.accountId || req.context?.accountId
+        if (accountId) {
           const contactJid = `${cleanPhone}@s.whatsapp.net`
-          await req.app.locals.db.query(
-            'UPDATE conversations SET contact_avatar_url = ? WHERE user_id = ? AND contact_jid = ?',
-            [avatarUrl, req.userToken, contactJid]
-          )
+          try {
+            await supabaseService.queryAsAdmin('conversations', (query) =>
+              query.update({ contact_avatar_url: avatarUrl, updated_at: new Date().toISOString() })
+                .eq('account_id', accountId)
+                .eq('contact_jid', contactJid)
+            )
+          } catch (updateError) {
+            logger.warn('Failed to update conversation avatar', { error: updateError.message })
+          }
         }
         
         res.json({
@@ -572,12 +577,14 @@ router.post('/conversations/:id/fetch-avatar', verifyUserToken, async (req, res)
       const avatarUrl = avatarData?.URL || avatarData?.url
       
       if (avatarUrl) {
-        // Update conversation avatar
-        if (req.app?.locals?.db) {
-          await req.app.locals.db.query(
-            'UPDATE conversations SET contact_avatar_url = ? WHERE id = ?',
-            [avatarUrl, id]
-          )
+        // Update conversation avatar using SupabaseService
+        try {
+          await supabaseService.update('conversations', id, {
+            contact_avatar_url: avatarUrl,
+            updated_at: new Date().toISOString()
+          })
+        } catch (updateError) {
+          logger.warn('Failed to update conversation avatar', { error: updateError.message, conversationId: id })
         }
         
         logger.info('Avatar fetched and saved', { conversationId: id, phone, hasUrl: true })
@@ -686,12 +693,14 @@ router.post('/conversations/:id/refresh-group-name', verifyUserToken, async (req
       const groupName = groupData?.Name
       
       if (groupName) {
-        // Update conversation name
-        if (req.app?.locals?.db) {
-          await req.app.locals.db.query(
-            'UPDATE conversations SET contact_name = ? WHERE id = ?',
-            [groupName, id]
-          )
+        // Update conversation name using SupabaseService
+        try {
+          await supabaseService.update('conversations', id, {
+            contact_name: groupName,
+            updated_at: new Date().toISOString()
+          })
+        } catch (updateError) {
+          logger.warn('Failed to update conversation name', { error: updateError.message, conversationId: id })
         }
         
         logger.info('Group name fetched and saved', { 
@@ -2341,29 +2350,47 @@ router.get('/messages/:messageId/media', verifyUserToken, async (req, res) => {
 router.get('/contacts/:jid/attributes', verifyUserToken, async (req, res) => {
   try {
     const { jid } = req.params
+    const accountId = req.accountId || req.context?.accountId
     
-    // Using SupabaseService directly
-    if (!supabaseService) {
-      return res.status(500).json({ success: false, error: 'Database not available' })
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
     }
 
-    const chatService = new ChatService()
-    const userId = await chatService.getUserIdFromToken(req.userToken)
+    const decodedJid = decodeURIComponent(jid)
     
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Invalid user token' })
-    }
-
-    if (!req.app?.locals?.db) {
-       return res.status(500).json({ success: false, error: 'Database connection not available' })
-    }
-
-    const result = await req.app.locals.db.query(
-      'SELECT id, name, value, created_at, updated_at FROM contact_attributes WHERE user_id = ? AND contact_jid = ? ORDER BY name ASC',
-      [userId, decodeURIComponent(jid)]
+    // Find conversation by contact_jid and account_id
+    const { data: conversations, error: convError } = await supabaseService.queryAsAdmin('conversations', (query) =>
+      query.select('id').eq('account_id', accountId).eq('contact_jid', decodedJid).limit(1)
     )
+    
+    if (convError || !conversations || conversations.length === 0) {
+      // No conversation found - return empty attributes
+      return res.json({ success: true, data: [] })
+    }
+    
+    const conversationId = conversations[0].id
+    
+    // Get attributes for this conversation
+    const { data: attributes, error: attrError } = await supabaseService.queryAsAdmin('contact_attributes', (query) =>
+      query.select('id, attribute_key, attribute_value, created_at, updated_at')
+        .eq('conversation_id', conversationId)
+        .order('attribute_key', { ascending: true })
+    )
+    
+    if (attrError) {
+      throw attrError
+    }
+    
+    // Map to expected format (name/value instead of attribute_key/attribute_value)
+    const mappedAttributes = (attributes || []).map(attr => ({
+      id: attr.id,
+      name: attr.attribute_key,
+      value: attr.attribute_value,
+      created_at: attr.created_at,
+      updated_at: attr.updated_at
+    }))
 
-    res.json({ success: true, data: result.rows || [] })
+    res.json({ success: true, data: mappedAttributes })
   } catch (error) {
     logger.error('Error fetching contact attributes', { error: error.message, jid: req.params.jid })
     res.status(500).json({ success: false, error: error.message })
@@ -2378,6 +2405,7 @@ router.post('/contacts/:jid/attributes', verifyUserToken, async (req, res) => {
   try {
     const { jid } = req.params
     const { name, value } = req.body
+    const accountId = req.accountId || req.context?.accountId
     
     if (!name || !name.trim()) {
       return res.status(400).json({ success: false, error: 'Attribute name is required' })
@@ -2392,48 +2420,52 @@ router.post('/contacts/:jid/attributes', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Attribute value must be 1000 characters or less' })
     }
 
-    // Using SupabaseService directly
-    if (!supabaseService) {
-      return res.status(500).json({ success: false, error: 'Database not available' })
-    }
-
-    const chatService = new ChatService()
-    const userId = await chatService.getUserIdFromToken(req.userToken)
-    
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Invalid user token' })
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
     }
 
     const decodedJid = decodeURIComponent(jid)
     
-    // Check if attribute already exists
-    if (!req.app?.locals?.db) {
-       return res.status(500).json({ success: false, error: 'Database connection not available' })
-    }
-
-    const existing = await req.app.locals.db.query(
-      'SELECT id FROM contact_attributes WHERE user_id = ? AND contact_jid = ? AND name = ?',
-      [userId, decodedJid, name.trim()]
+    // Find conversation by contact_jid and account_id
+    const { data: conversations, error: convError } = await supabaseService.queryAsAdmin('conversations', (query) =>
+      query.select('id').eq('account_id', accountId).eq('contact_jid', decodedJid).limit(1)
     )
     
-    if (existing.rows && existing.rows.length > 0) {
+    if (convError || !conversations || conversations.length === 0) {
+      return res.status(404).json({ success: false, error: 'Conversation not found for this contact' })
+    }
+    
+    const conversationId = conversations[0].id
+    
+    // Check if attribute already exists
+    const { data: existing, error: existError } = await supabaseService.queryAsAdmin('contact_attributes', (query) =>
+      query.select('id').eq('conversation_id', conversationId).eq('attribute_key', name.trim())
+    )
+    
+    if (!existError && existing && existing.length > 0) {
       return res.status(409).json({ success: false, error: 'Attribute with this name already exists' })
     }
 
-    const result = await req.app.locals.db.query(
-      'INSERT INTO contact_attributes (user_id, contact_jid, name, value) VALUES (?, ?, ?, ?)',
-      [userId, decodedJid, name.trim(), value.trim()]
-    )
+    // Insert new attribute
+    const { data: newAttr, error: insertError } = await supabaseService.insert('contact_attributes', {
+      conversation_id: conversationId,
+      attribute_key: name.trim(),
+      attribute_value: value.trim()
+    })
 
-    const newAttribute = {
-      id: result.lastInsertRowid,
-      name: name.trim(),
-      value: value.trim(),
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+    if (insertError) {
+      throw insertError
     }
 
-    logger.info('Contact attribute created', { userId, jid: decodedJid, name: name.trim() })
+    const newAttribute = {
+      id: newAttr.id,
+      name: newAttr.attribute_key,
+      value: newAttr.attribute_value,
+      created_at: newAttr.created_at,
+      updated_at: newAttr.updated_at
+    }
+
+    logger.info('Contact attribute created', { accountId, jid: decodedJid, name: name.trim() })
     res.status(201).json({ success: true, data: newAttribute })
   } catch (error) {
     logger.error('Error creating contact attribute', { error: error.message, jid: req.params.jid })
@@ -2449,6 +2481,7 @@ router.put('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res) =>
   try {
     const { jid, id } = req.params
     const { value } = req.body
+    const accountId = req.accountId || req.context?.accountId
     
     if (!value || !value.trim()) {
       return res.status(400).json({ success: false, error: 'Attribute value is required' })
@@ -2457,48 +2490,51 @@ router.put('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res) =>
       return res.status(400).json({ success: false, error: 'Attribute value must be 1000 characters or less' })
     }
 
-    // Using SupabaseService directly
-    if (!supabaseService) {
-      return res.status(500).json({ success: false, error: 'Database not available' })
-    }
-
-    const chatService = new ChatService()
-    const userId = await chatService.getUserIdFromToken(req.userToken)
-    
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Invalid user token' })
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
     }
 
     const decodedJid = decodeURIComponent(jid)
     
-    // Verify attribute belongs to user
-    if (!req.app?.locals?.db) {
-       return res.status(500).json({ success: false, error: 'Database connection not available' })
-    }
-
-    const existing = await req.app.locals.db.query(
-      'SELECT id, name FROM contact_attributes WHERE id = ? AND user_id = ? AND contact_jid = ?',
-      [id, userId, decodedJid]
+    // Find conversation by contact_jid and account_id
+    const { data: conversations, error: convError } = await supabaseService.queryAsAdmin('conversations', (query) =>
+      query.select('id').eq('account_id', accountId).eq('contact_jid', decodedJid).limit(1)
     )
     
-    if (!existing.rows || existing.rows.length === 0) {
+    if (convError || !conversations || conversations.length === 0) {
+      return res.status(404).json({ success: false, error: 'Conversation not found' })
+    }
+    
+    const conversationId = conversations[0].id
+    
+    // Verify attribute belongs to this conversation
+    const { data: existing, error: existError } = await supabaseService.queryAsAdmin('contact_attributes', (query) =>
+      query.select('id, attribute_key').eq('id', id).eq('conversation_id', conversationId)
+    )
+    
+    if (existError || !existing || existing.length === 0) {
       return res.status(404).json({ success: false, error: 'Attribute not found' })
     }
 
-    await req.app.locals.db.query(
-      'UPDATE contact_attributes SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [value.trim(), id]
-    )
-
-    const updated = {
-      id: id,
-      name: existing.rows[0].name,
-      value: value.trim(),
+    // Update attribute
+    const { data: updated, error: updateError } = await supabaseService.update('contact_attributes', id, {
+      attribute_value: value.trim(),
       updated_at: new Date().toISOString()
+    })
+
+    if (updateError) {
+      throw updateError
     }
 
-    logger.info('Contact attribute updated', { userId, attributeId: id })
-    res.json({ success: true, data: updated })
+    const result = {
+      id: updated.id,
+      name: updated.attribute_key,
+      value: updated.attribute_value,
+      updated_at: updated.updated_at
+    }
+
+    logger.info('Contact attribute updated', { accountId, attributeId: id })
+    res.json({ success: true, data: result })
   } catch (error) {
     logger.error('Error updating contact attribute', { error: error.message, attributeId: req.params.id })
     res.status(500).json({ success: false, error: error.message })
@@ -2512,38 +2548,42 @@ router.put('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res) =>
 router.delete('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res) => {
   try {
     const { jid, id } = req.params
+    const accountId = req.accountId || req.context?.accountId
 
-    // Using SupabaseService directly
-    if (!supabaseService) {
-      return res.status(500).json({ success: false, error: 'Database not available' })
-    }
-
-    const chatService = new ChatService()
-    const userId = await chatService.getUserIdFromToken(req.userToken)
-    
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Invalid user token' })
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
     }
 
     const decodedJid = decodeURIComponent(jid)
     
-    // Verify attribute belongs to user
-    if (!req.app?.locals?.db) {
-       return res.status(500).json({ success: false, error: 'Database connection not available' })
-    }
-
-    const existing = await req.app.locals.db.query(
-      'SELECT id FROM contact_attributes WHERE id = ? AND user_id = ? AND contact_jid = ?',
-      [id, userId, decodedJid]
+    // Find conversation by contact_jid and account_id
+    const { data: conversations, error: convError } = await supabaseService.queryAsAdmin('conversations', (query) =>
+      query.select('id').eq('account_id', accountId).eq('contact_jid', decodedJid).limit(1)
     )
     
-    if (!existing.rows || existing.rows.length === 0) {
+    if (convError || !conversations || conversations.length === 0) {
+      return res.status(404).json({ success: false, error: 'Conversation not found' })
+    }
+    
+    const conversationId = conversations[0].id
+    
+    // Verify attribute belongs to this conversation
+    const { data: existing, error: existError } = await supabaseService.queryAsAdmin('contact_attributes', (query) =>
+      query.select('id').eq('id', id).eq('conversation_id', conversationId)
+    )
+    
+    if (existError || !existing || existing.length === 0) {
       return res.status(404).json({ success: false, error: 'Attribute not found' })
     }
 
-    await req.app.locals.db.query('DELETE FROM contact_attributes WHERE id = ?', [id])
+    // Delete attribute
+    const { error: deleteError } = await supabaseService.delete('contact_attributes', id)
+    
+    if (deleteError) {
+      throw deleteError
+    }
 
-    logger.info('Contact attribute deleted', { userId, attributeId: id })
+    logger.info('Contact attribute deleted', { accountId, attributeId: id })
     res.json({ success: true, message: 'Attribute deleted' })
   } catch (error) {
     logger.error('Error deleting contact attribute', { error: error.message, attributeId: req.params.id })
@@ -2560,29 +2600,38 @@ router.delete('/contacts/:jid/attributes/:id', verifyUserToken, async (req, res)
 router.get('/contacts/:jid/notes', verifyUserToken, async (req, res) => {
   try {
     const { jid } = req.params
+    const accountId = req.accountId || req.context?.accountId
     
-    // Using SupabaseService directly
-    if (!supabaseService) {
-      return res.status(500).json({ success: false, error: 'Database not available' })
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
     }
 
-    const chatService = new ChatService()
-    const userId = await chatService.getUserIdFromToken(req.userToken)
+    const decodedJid = decodeURIComponent(jid)
     
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Invalid user token' })
-    }
-
-    if (!req.app?.locals?.db) {
-       return res.status(500).json({ success: false, error: 'Database connection not available' })
-    }
-
-    const result = await req.app.locals.db.query(
-      'SELECT id, content, created_at FROM contact_notes WHERE user_id = ? AND contact_jid = ? ORDER BY created_at DESC',
-      [userId, decodeURIComponent(jid)]
+    // Find conversation by contact_jid and account_id
+    const { data: conversations, error: convError } = await supabaseService.queryAsAdmin('conversations', (query) =>
+      query.select('id').eq('account_id', accountId).eq('contact_jid', decodedJid).limit(1)
     )
+    
+    if (convError || !conversations || conversations.length === 0) {
+      // No conversation found - return empty notes
+      return res.json({ success: true, data: [] })
+    }
+    
+    const conversationId = conversations[0].id
+    
+    // Get notes for this conversation
+    const { data: notes, error: notesError } = await supabaseService.queryAsAdmin('contact_notes', (query) =>
+      query.select('id, content, agent_id, created_at, updated_at')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: false })
+    )
+    
+    if (notesError) {
+      throw notesError
+    }
 
-    res.json({ success: true, data: result.rows || [] })
+    res.json({ success: true, data: notes || [] })
   } catch (error) {
     logger.error('Error fetching contact notes', { error: error.message, jid: req.params.jid })
     res.status(500).json({ success: false, error: error.message })
@@ -2597,6 +2646,8 @@ router.post('/contacts/:jid/notes', verifyUserToken, async (req, res) => {
   try {
     const { jid } = req.params
     const { content } = req.body
+    const accountId = req.accountId || req.context?.accountId
+    const agentId = req.userId // The user creating the note
     
     if (!content || !content.trim()) {
       return res.status(400).json({ success: false, error: 'Note content is required' })
@@ -2605,36 +2656,35 @@ router.post('/contacts/:jid/notes', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Note content must be 5000 characters or less' })
     }
 
-    // Using SupabaseService directly
-    if (!supabaseService) {
-      return res.status(500).json({ success: false, error: 'Database not available' })
-    }
-
-    const chatService = new ChatService()
-    const userId = await chatService.getUserIdFromToken(req.userToken)
-    
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Invalid user token' })
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
     }
 
     const decodedJid = decodeURIComponent(jid)
-
-    if (!req.app?.locals?.db) {
-       return res.status(500).json({ success: false, error: 'Database connection not available' })
-    }
-
-    const result = await req.app.locals.db.query(
-      'INSERT INTO contact_notes (user_id, contact_jid, content) VALUES (?, ?, ?)',
-      [userId, decodedJid, content.trim()]
+    
+    // Find conversation by contact_jid and account_id
+    const { data: conversations, error: convError } = await supabaseService.queryAsAdmin('conversations', (query) =>
+      query.select('id').eq('account_id', accountId).eq('contact_jid', decodedJid).limit(1)
     )
+    
+    if (convError || !conversations || conversations.length === 0) {
+      return res.status(404).json({ success: false, error: 'Conversation not found for this contact' })
+    }
+    
+    const conversationId = conversations[0].id
 
-    const newNote = {
-      id: result.lastInsertRowid,
-      content: content.trim(),
-      created_at: new Date().toISOString()
+    // Insert new note
+    const { data: newNote, error: insertError } = await supabaseService.insert('contact_notes', {
+      conversation_id: conversationId,
+      agent_id: agentId || null,
+      content: content.trim()
+    })
+
+    if (insertError) {
+      throw insertError
     }
 
-    logger.info('Contact note created', { userId, jid: decodedJid })
+    logger.info('Contact note created', { accountId, jid: decodedJid })
     res.status(201).json({ success: true, data: newNote })
   } catch (error) {
     logger.error('Error creating contact note', { error: error.message, jid: req.params.jid })
@@ -2649,38 +2699,42 @@ router.post('/contacts/:jid/notes', verifyUserToken, async (req, res) => {
 router.delete('/contacts/:jid/notes/:id', verifyUserToken, async (req, res) => {
   try {
     const { jid, id } = req.params
+    const accountId = req.accountId || req.context?.accountId
 
-    // Using SupabaseService directly
-    if (!supabaseService) {
-      return res.status(500).json({ success: false, error: 'Database not available' })
-    }
-
-    const chatService = new ChatService()
-    const userId = await chatService.getUserIdFromToken(req.userToken)
-    
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Invalid user token' })
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
     }
 
     const decodedJid = decodeURIComponent(jid)
     
-    // Verify note belongs to user
-    if (!req.app?.locals?.db) {
-       return res.status(500).json({ success: false, error: 'Database connection not available' })
-    }
-
-    const existing = await req.app.locals.db.query(
-      'SELECT id FROM contact_notes WHERE id = ? AND user_id = ? AND contact_jid = ?',
-      [id, userId, decodedJid]
+    // Find conversation by contact_jid and account_id
+    const { data: conversations, error: convError } = await supabaseService.queryAsAdmin('conversations', (query) =>
+      query.select('id').eq('account_id', accountId).eq('contact_jid', decodedJid).limit(1)
     )
     
-    if (!existing.rows || existing.rows.length === 0) {
+    if (convError || !conversations || conversations.length === 0) {
+      return res.status(404).json({ success: false, error: 'Conversation not found' })
+    }
+    
+    const conversationId = conversations[0].id
+    
+    // Verify note belongs to this conversation
+    const { data: existing, error: existError } = await supabaseService.queryAsAdmin('contact_notes', (query) =>
+      query.select('id').eq('id', id).eq('conversation_id', conversationId)
+    )
+    
+    if (existError || !existing || existing.length === 0) {
       return res.status(404).json({ success: false, error: 'Note not found' })
     }
 
-    await req.app.locals.db.query('DELETE FROM contact_notes WHERE id = ?', [id])
+    // Delete note
+    const { error: deleteError } = await supabaseService.delete('contact_notes', id)
+    
+    if (deleteError) {
+      throw deleteError
+    }
 
-    logger.info('Contact note deleted', { userId, noteId: id })
+    logger.info('Contact note deleted', { accountId, noteId: id })
     res.json({ success: true, message: 'Note deleted' })
   } catch (error) {
     logger.error('Error deleting contact note', { error: error.message, noteId: req.params.id })
@@ -2697,65 +2751,63 @@ router.delete('/contacts/:jid/notes/:id', verifyUserToken, async (req, res) => {
 router.get('/conversations/:id/info', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
+    const accountId = req.accountId || req.context?.accountId
     
-    // Using SupabaseService directly
-    if (!supabaseService) {
-      return res.status(500).json({ success: false, error: 'Database not available' })
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
     }
 
     const chatService = new ChatService()
-    const conversation = await chatService.getConversation(req.userToken, id, req.userToken)
+    const conversation = await chatService.getConversationById(id, accountId)
     
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversation not found' })
     }
 
-    // Get message count
-    if (!req.app?.locals?.db) {
-       return res.status(500).json({ success: false, error: 'Database connection not available' })
+    // Get message count using SupabaseService
+    const { count: messageCount, error: countError } = await supabaseService.count('chat_messages', { conversation_id: id })
+    
+    if (countError) {
+      logger.warn('Failed to get message count', { error: countError.message, conversationId: id })
     }
 
-    const messageCountResult = await req.app.locals.db.query(
-      'SELECT COUNT(*) as count FROM chat_messages WHERE conversation_id = ?',
-      [id]
-    )
-    const messageCount = messageCountResult.rows?.[0]?.count || 0
-
     // Get first and last message timestamps
-    const timestampsResult = await req.app.locals.db.query(
-      'SELECT MIN(timestamp) as first_message, MAX(timestamp) as last_message FROM chat_messages WHERE conversation_id = ?',
-      [id]
+    const { data: firstMessage, error: firstError } = await supabaseService.queryAsAdmin('chat_messages', (query) =>
+      query.select('timestamp').eq('conversation_id', id).order('timestamp', { ascending: true }).limit(1)
     )
-    const timestamps = timestampsResult.rows?.[0] || {}
+    
+    const { data: lastMessage, error: lastError } = await supabaseService.queryAsAdmin('chat_messages', (query) =>
+      query.select('timestamp').eq('conversation_id', id).order('timestamp', { ascending: false }).limit(1)
+    )
+    
+    const firstTimestamp = firstMessage?.[0]?.timestamp
+    const lastTimestamp = lastMessage?.[0]?.timestamp
 
     // Calculate duration in minutes
     let durationMinutes = 0
-    if (timestamps.first_message && timestamps.last_message) {
-      const firstDate = new Date(timestamps.first_message)
-      const lastDate = new Date(timestamps.last_message)
+    if (firstTimestamp && lastTimestamp) {
+      const firstDate = new Date(firstTimestamp)
+      const lastDate = new Date(lastTimestamp)
       durationMinutes = Math.round((lastDate - firstDate) / (1000 * 60))
     }
 
     // Get label assignments with timestamps
-    const labelsResult = await req.app.locals.db.query(
-      `SELECT l.id as label_id, l.name as label_name, cl.created_at as assigned_at
-       FROM conversation_labels cl
-       JOIN labels l ON cl.label_id = l.id
-       WHERE cl.conversation_id = ?
-       ORDER BY cl.created_at DESC`,
-      [id]
+    const { data: labelAssignments, error: labelsError } = await supabaseService.queryAsAdmin('conversation_labels', (query) =>
+      query.select('label_id, labels(id, name), created_at')
+        .eq('conversation_id', id)
+        .order('created_at', { ascending: false })
     )
 
     const info = {
-      created_at: conversation.createdAt,
-      last_activity_at: timestamps.last_message || conversation.updatedAt,
-      message_count: messageCount,
+      created_at: conversation.createdAt || conversation.created_at,
+      last_activity_at: lastTimestamp || conversation.updatedAt || conversation.updated_at,
+      message_count: messageCount || 0,
       duration_minutes: durationMinutes,
-      bot_assigned_at: conversation.assignedBotId ? conversation.updatedAt : null,
-      label_assignments: (labelsResult.rows || []).map(row => ({
+      bot_assigned_at: (conversation.assignedBotId || conversation.assigned_bot_id) ? (conversation.updatedAt || conversation.updated_at) : null,
+      label_assignments: (labelAssignments || []).map(row => ({
         label_id: row.label_id,
-        label_name: row.label_name,
-        assigned_at: row.assigned_at
+        label_name: row.labels?.name,
+        assigned_at: row.created_at
       }))
     }
 
@@ -2911,51 +2963,43 @@ router.get('/conversations/:id/participants', verifyUserToken, async (req, res) 
 
 /**
  * GET /api/chat/inbox/macros
- * Get all macros for the user
+ * Get all macros for the account
  */
 router.get('/macros', verifyUserToken, async (req, res) => {
   try {
-    // Using SupabaseService directly
-    if (!supabaseService) {
-      return res.status(500).json({ success: false, error: 'Database not available' })
-    }
-
-    const chatService = new ChatService()
-    const userId = await chatService.getUserIdFromToken(req.userToken)
+    const accountId = req.accountId || req.context?.accountId
     
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Invalid user token' })
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
     }
 
-    if (!req.app?.locals?.db) {
-      return res.status(500).json({ success: false, error: 'Database connection not available' })
-    }
-
-    // Get macros with their actions
-    const macrosResult = await req.app.locals.db.query(
-      'SELECT id, name, description, created_at, updated_at FROM macros WHERE user_id = ? ORDER BY name ASC',
-      [userId]
+    // Get macros for this account - Supabase schema uses account_id and actions as JSONB
+    const { data: macros, error: macrosError } = await supabaseService.queryAsAdmin('macros', (query) =>
+      query.select('id, name, actions, visibility, created_by, created_at, updated_at')
+        .eq('account_id', accountId)
+        .order('name', { ascending: true })
     )
 
-    const macros = []
-    for (const macro of (macrosResult.rows || [])) {
-      const actionsResult = await req.app.locals.db.query(
-        'SELECT id, action_type, params, action_order FROM macro_actions WHERE macro_id = ? ORDER BY action_order ASC',
-        [macro.id]
-      )
-      
-      macros.push({
-        ...macro,
-        actions: (actionsResult.rows || []).map(a => ({
-          id: a.id,
-          type: a.action_type,
-          params: JSON.parse(a.params || '{}'),
-          order: a.action_order
-        }))
-      })
+    if (macrosError) {
+      throw macrosError
     }
 
-    res.json({ success: true, data: macros })
+    // Transform macros to expected format
+    const transformedMacros = (macros || []).map(macro => ({
+      id: macro.id,
+      name: macro.name,
+      description: '', // Not in Supabase schema
+      created_at: macro.created_at,
+      updated_at: macro.updated_at,
+      actions: (macro.actions || []).map((action, index) => ({
+        id: `${macro.id}-${index}`,
+        type: action.action_type || action.type,
+        params: action.params || {},
+        order: index
+      }))
+    }))
+
+    res.json({ success: true, data: transformedMacros })
   } catch (error) {
     logger.error('Error fetching macros', { error: error.message })
     res.status(500).json({ success: false, error: error.message })
@@ -2970,51 +3014,38 @@ router.post('/macros/:id/execute', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
     const { conversationId } = req.body
+    const accountId = req.accountId || req.context?.accountId
     
     if (!conversationId) {
       return res.status(400).json({ success: false, error: 'conversationId is required' })
     }
 
-    // Using SupabaseService directly
-    if (!supabaseService) {
-      return res.status(500).json({ success: false, error: 'Database not available' })
-    }
-
-    const chatService = new ChatService()
-    const userId = await chatService.getUserIdFromToken(req.userToken)
-    
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Invalid user token' })
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
     }
 
     // Get macro
-    if (!req.app?.locals?.db) {
-       return res.status(500).json({ success: false, error: 'Database connection not available' })
-    }
-    const macroResult = await req.app.locals.db.query(
-      'SELECT id, name FROM macros WHERE id = ? AND user_id = ?',
-      [id, userId]
+    const { data: macros, error: macroError } = await supabaseService.queryAsAdmin('macros', (query) =>
+      query.select('id, name, actions').eq('id', id).eq('account_id', accountId)
     )
     
-    if (!macroResult.rows || macroResult.rows.length === 0) {
+    if (macroError || !macros || macros.length === 0) {
       return res.status(404).json({ success: false, error: 'Macro not found' })
     }
 
-    // Get macro actions
-    const actionsResult = await req.app.locals.db.query(
-      'SELECT action_type, params FROM macro_actions WHERE macro_id = ? ORDER BY action_order ASC',
-      [id]
-    )
-
-    const actions = actionsResult.rows || []
+    const macro = macros[0]
+    const actions = macro.actions || []
     const results = []
+
+    const chatService = new ChatService()
 
     // Execute actions sequentially
     for (const action of actions) {
-      const params = JSON.parse(action.params || '{}')
+      const actionType = action.action_type || action.type
+      const params = action.params || {}
       
       try {
-        switch (action.action_type) {
+        switch (actionType) {
           case 'change_status':
             await chatService.updateConversation(req.userToken, conversationId, { status: params.status })
             results.push({ action: 'change_status', success: true })

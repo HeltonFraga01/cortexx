@@ -8,6 +8,7 @@ const { featureMiddleware } = require('../middleware/featureEnforcement');
 const QuotaService = require('../services/QuotaService');
 const { validateSupabaseToken } = require('../middleware/supabaseAuth');
 const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
+const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
@@ -255,29 +256,35 @@ router.post('/send/text', verifyUserToken, quotaMiddleware.messages, async (req,
         });
       }
 
-      const db = req.app.locals.db;
-      if (!db) {
-        return res.status(500).json({
-          success: false,
-          error: 'Database not available',
-          timestamp: new Date().toISOString()
-        });
-      }
-
       try {
-        const messageId = await db.createScheduledSingleMessage(
-          userToken,
-          instance,
-          validatedPhone,
-          recipientName,
-          'text',
-          Body,
-          null,
-          scheduledAt
-        );
+        // Get account_id from context or token
+        const accountId = req.context?.accountId || req.accountId;
+        if (!accountId) {
+          return res.status(400).json({
+            success: false,
+            error: 'Account context required for scheduled messages',
+            timestamp: new Date().toISOString()
+          });
+        }
+
+        const { data: scheduledMessage, error: insertError } = await SupabaseService.insert('scheduled_single_messages', {
+          account_id: accountId,
+          inbox_id: req.inboxId || req.context?.inboxId || null,
+          recipient: validatedPhone,
+          recipient_name: recipientName,
+          message_type: 'text',
+          message_content: Body,
+          media_data: null,
+          scheduled_at: scheduledAt,
+          status: 'pending'
+        });
+
+        if (insertError) {
+          throw insertError;
+        }
 
         logger.info('Mensagem de texto agendada criada', {
-          messageId,
+          messageId: scheduledMessage.id,
           recipient: validatedPhone,
           scheduledAt
         });
@@ -286,7 +293,7 @@ router.post('/send/text', verifyUserToken, quotaMiddleware.messages, async (req,
           success: true,
           message: 'Mensagem agendada com sucesso',
           data: {
-            messageId,
+            messageId: scheduledMessage.id,
             scheduledAt,
             status: 'scheduled'
           }
@@ -344,9 +351,20 @@ router.post('/send/text', verifyUserToken, quotaMiddleware.messages, async (req,
     const result = response.data;
     
     // Registrar mensagem enviada no banco de dados
-    const db = req.app.locals.db;
-    if (db) {
-      await db.logSentMessage(userToken, validatedPhone, finalMessage, 'text', result);
+    try {
+      const accountId = req.context?.accountId || req.accountId;
+      if (accountId) {
+        await SupabaseService.insert('sent_messages', {
+          account_id: accountId,
+          phone: validatedPhone,
+          message: finalMessage,
+          message_type: 'text',
+          status: 'sent',
+          wuzapi_response: result
+        });
+      }
+    } catch (logError) {
+      logger.warn('Falha ao registrar mensagem enviada', { error: logError.message });
     }
     
     // Increment quota usage after successful send
@@ -518,29 +536,35 @@ router.post('/send/image', verifyUserToken, quotaMiddleware.messages, async (req
         });
       }
 
-      const db = req.app.locals.db;
-      if (!db) {
-        return res.status(500).json({
-          success: false,
-          error: 'Database not available',
-          timestamp: new Date().toISOString()
-        });
-      }
-
       try {
-        const messageId = await db.createScheduledSingleMessage(
-          userToken,
-          instance,
-          validatedPhone,
-          recipientName,
-          'media',
-          Caption || '[Imagem]',
-          { url: Image, type: 'image' },
-          scheduledAt
-        );
+        // Get account_id from context or token
+        const accountId = req.context?.accountId || req.accountId;
+        if (!accountId) {
+          return res.status(400).json({
+            success: false,
+            error: 'Account context required for scheduled messages',
+            timestamp: new Date().toISOString()
+          });
+        }
+
+        const { data: scheduledMessage, error: insertError } = await SupabaseService.insert('scheduled_single_messages', {
+          account_id: accountId,
+          inbox_id: req.inboxId || req.context?.inboxId || null,
+          recipient: validatedPhone,
+          recipient_name: recipientName,
+          message_type: 'media',
+          message_content: Caption || '[Imagem]',
+          media_data: { url: Image, type: 'image' },
+          scheduled_at: scheduledAt,
+          status: 'pending'
+        });
+
+        if (insertError) {
+          throw insertError;
+        }
 
         logger.info('Mensagem de imagem agendada criada', {
-          messageId,
+          messageId: scheduledMessage.id,
           recipient: validatedPhone,
           scheduledAt
         });
@@ -549,7 +573,7 @@ router.post('/send/image', verifyUserToken, quotaMiddleware.messages, async (req
           success: true,
           message: 'Mensagem agendada com sucesso',
           data: {
-            messageId,
+            messageId: scheduledMessage.id,
             scheduledAt,
             status: 'scheduled'
           }
@@ -583,9 +607,20 @@ router.post('/send/image', verifyUserToken, quotaMiddleware.messages, async (req
     const result = response.data;
     
     // Registrar mensagem enviada no banco de dados
-    const db = req.app.locals.db;
-    if (db) {
-      await db.logSentMessage(userToken, validatedPhone, Caption || '[Imagem]', 'image', result);
+    try {
+      const accountId = req.context?.accountId || req.accountId;
+      if (accountId) {
+        await SupabaseService.insert('sent_messages', {
+          account_id: accountId,
+          phone: validatedPhone,
+          message: Caption || '[Imagem]',
+          message_type: 'image',
+          status: 'sent',
+          wuzapi_response: result
+        });
+      }
+    } catch (logError) {
+      logger.warn('Falha ao registrar mensagem enviada', { error: logError.message });
     }
     
     // Increment quota usage after successful send
@@ -637,7 +672,6 @@ router.post('/send/image', verifyUserToken, quotaMiddleware.messages, async (req
 // ==================== Assignment Routes (User/Owner) ====================
 
 const ConversationAssignmentService = require('../services/ConversationAssignmentService');
-const db = require('../database');
 
 /**
  * POST /api/chat/conversations/:id/assign
@@ -647,6 +681,7 @@ const db = require('../database');
 router.post('/conversations/:id/assign', verifyUserToken, async (req, res) => {
   try {
     const userId = req.userId;
+    const accountId = req.context?.accountId || req.accountId;
     const { id } = req.params;
     const { agentId } = req.body;
     
@@ -657,29 +692,27 @@ router.post('/conversations/:id/assign', verifyUserToken, async (req, res) => {
       });
     }
     
-    // Verify conversation belongs to user
-    const convResult = await db.query(
-      'SELECT id, inbox_id FROM conversations WHERE id = ? AND user_id = ?',
-      [id, userId]
+    // Verify conversation belongs to user/account
+    const { data: conversations, error: convError } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+      query.select('id, inbox_id').eq('id', id).eq('account_id', accountId)
     );
     
-    if (convResult.rows.length === 0) {
+    if (convError || !conversations || conversations.length === 0) {
       return res.status(404).json({ 
         success: false, 
         error: 'Conversa não encontrada' 
       });
     }
     
-    const conversation = convResult.rows[0];
+    const conversation = conversations[0];
     
     // Verify agent is member of the inbox (if inbox exists)
     if (conversation.inbox_id) {
-      const memberResult = await db.query(
-        'SELECT 1 FROM inbox_members WHERE inbox_id = ? AND agent_id = ?',
-        [conversation.inbox_id, agentId]
+      const { data: members, error: memberError } = await SupabaseService.queryAsAdmin('inbox_members', (query) =>
+        query.select('id').eq('inbox_id', conversation.inbox_id).eq('agent_id', agentId)
       );
       
-      if (memberResult.rows.length === 0) {
+      if (memberError || !members || members.length === 0) {
         return res.status(400).json({ 
           success: false, 
           error: 'Agente não é membro desta caixa de entrada' 
@@ -687,9 +720,15 @@ router.post('/conversations/:id/assign', verifyUserToken, async (req, res) => {
       }
     }
     
-    // Perform manual assignment
-    const assignmentService = new ConversationAssignmentService(db);
-    await assignmentService.manualAssign(parseInt(id, 10), agentId, userId);
+    // Perform manual assignment using SupabaseService
+    const { error: updateError } = await SupabaseService.update('conversations', id, {
+      assigned_agent_id: agentId,
+      updated_at: new Date().toISOString()
+    });
+    
+    if (updateError) {
+      throw updateError;
+    }
     
     logger.info('User manually assigned conversation', { 
       userId, 
@@ -699,7 +738,7 @@ router.post('/conversations/:id/assign', verifyUserToken, async (req, res) => {
     
     res.json({ 
       success: true, 
-      data: { conversationId: parseInt(id, 10), agentId } 
+      data: { conversationId: id, agentId } 
     });
   } catch (error) {
     logger.error('Error manually assigning conversation', { 
@@ -718,30 +757,41 @@ router.post('/conversations/:id/assign', verifyUserToken, async (req, res) => {
 router.get('/conversations/:id/agents', verifyUserToken, async (req, res) => {
   try {
     const userId = req.userId;
+    const accountId = req.context?.accountId || req.accountId;
     const { id } = req.params;
     
-    // Verify conversation belongs to user
-    const convResult = await db.query(
-      'SELECT id, inbox_id FROM conversations WHERE id = ? AND user_id = ?',
-      [id, userId]
+    // Verify conversation belongs to user/account
+    const { data: conversations, error: convError } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+      query.select('id, inbox_id').eq('id', id).eq('account_id', accountId)
     );
     
-    if (convResult.rows.length === 0) {
+    if (convError || !conversations || conversations.length === 0) {
       return res.status(404).json({ 
         success: false, 
         error: 'Conversa não encontrada' 
       });
     }
     
-    const conversation = convResult.rows[0];
+    const conversation = conversations[0];
     
     if (!conversation.inbox_id) {
       return res.json({ success: true, data: [] });
     }
     
     // Get agents in inbox
-    const assignmentService = new ConversationAssignmentService(db);
-    const agents = await assignmentService.getTransferableAgents(conversation.inbox_id);
+    const { data: members, error: membersError } = await SupabaseService.queryAsAdmin('inbox_members', (query) =>
+      query.select('agent_id, agents(id, name, email, avatar_url, status)')
+        .eq('inbox_id', conversation.inbox_id)
+    );
+    
+    if (membersError) {
+      throw membersError;
+    }
+    
+    // Extract agent data from the join
+    const agents = (members || [])
+      .filter(m => m.agents)
+      .map(m => m.agents);
     
     res.json({ success: true, data: agents });
   } catch (error) {

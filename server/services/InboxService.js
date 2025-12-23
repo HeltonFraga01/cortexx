@@ -14,10 +14,10 @@ const wuzapiClient = require('../utils/wuzapiClient');
 const SupabaseService = require('./SupabaseService');
 
 class InboxService {
-  constructor(db, auditService = null) {
-    this.db = db;
+  constructor(auditService = null) {
+    // db parameter removed - uses SupabaseService directly
     this.supabase = SupabaseService;
-    this.auditService = auditService || new MultiUserAuditService(db);
+    this.auditService = auditService || new MultiUserAuditService();
   }
 
   /**

@@ -5,14 +5,17 @@
  * Templates are scoped to the agent and their account.
  * 
  * Requirements: 8.1, 8.2, 8.3, 8.4, 8.5
+ * 
+ * MIGRATED: Now uses SupabaseService directly instead of db parameter
  */
 
 const { v4: uuidv4 } = require('uuid');
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class AgentTemplateService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   /**
@@ -30,25 +33,24 @@ class AgentTemplateService {
     }
 
     const id = uuidv4();
-    const now = new Date().toISOString();
 
-    await this.db.query(`
-      INSERT INTO agent_templates (id, agent_id, account_id, name, content, config, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, agentId, accountId, name, content, JSON.stringify(config), now, now]);
+    const { data: newTemplate, error } = await SupabaseService.insert('agent_templates', {
+      id,
+      agent_id: agentId,
+      account_id: accountId,
+      name,
+      content,
+      config
+    });
+
+    if (error) {
+      logger.error('Failed to create template', { error: error.message, agentId });
+      throw error;
+    }
 
     logger.info('Agent template created', { templateId: id, agentId, accountId });
 
-    return {
-      id,
-      agentId,
-      accountId,
-      name,
-      content,
-      config,
-      createdAt: now,
-      updatedAt: now
-    };
+    return this.formatTemplate(newTemplate);
   }
 
   /**
@@ -58,14 +60,19 @@ class AgentTemplateService {
    * @returns {Promise<array>} List of templates
    */
   async listTemplates(agentId, accountId) {
-    const { rows } = await this.db.query(`
-      SELECT id, agent_id, account_id, name, content, config, created_at, updated_at
-      FROM agent_templates
-      WHERE agent_id = ? AND account_id = ?
-      ORDER BY created_at DESC
-    `, [agentId, accountId]);
+    const { data, error } = await SupabaseService.queryAsAdmin('agent_templates', (query) =>
+      query.select('*')
+        .eq('agent_id', agentId)
+        .eq('account_id', accountId)
+        .order('created_at', { ascending: false })
+    );
 
-    return rows.map(row => this.formatTemplate(row));
+    if (error) {
+      logger.error('Failed to list templates', { error: error.message, agentId });
+      return [];
+    }
+
+    return (data || []).map(row => this.formatTemplate(row));
   }
 
   /**
@@ -75,17 +82,15 @@ class AgentTemplateService {
    * @returns {Promise<object|null>} Template or null
    */
   async getTemplate(agentId, templateId) {
-    const { rows } = await this.db.query(`
-      SELECT id, agent_id, account_id, name, content, config, created_at, updated_at
-      FROM agent_templates
-      WHERE id = ? AND agent_id = ?
-    `, [templateId, agentId]);
+    const { data, error } = await SupabaseService.queryAsAdmin('agent_templates', (query) =>
+      query.select('*').eq('id', templateId).eq('agent_id', agentId).single()
+    );
 
-    if (rows.length === 0) {
+    if (error || !data) {
       return null;
     }
 
-    return this.formatTemplate(rows[0]);
+    return this.formatTemplate(data);
   }
 
   /**
@@ -102,35 +107,24 @@ class AgentTemplateService {
     }
 
     const { name, content, config } = data;
-    const now = new Date().toISOString();
+    const updates = {};
 
-    const updates = [];
-    const values = [];
+    if (name !== undefined) updates.name = name;
+    if (content !== undefined) updates.content = content;
+    if (config !== undefined) updates.config = config;
 
-    if (name !== undefined) {
-      updates.push('name = ?');
-      values.push(name);
-    }
-    if (content !== undefined) {
-      updates.push('content = ?');
-      values.push(content);
-    }
-    if (config !== undefined) {
-      updates.push('config = ?');
-      values.push(JSON.stringify(config));
+    if (Object.keys(updates).length === 0) {
+      return existing;
     }
 
-    updates.push('updated_at = ?');
-    values.push(now);
+    const { error } = await SupabaseService.queryAsAdmin('agent_templates', (query) =>
+      query.update(updates).eq('id', templateId).eq('agent_id', agentId)
+    );
 
-    values.push(templateId);
-    values.push(agentId);
-
-    await this.db.query(`
-      UPDATE agent_templates
-      SET ${updates.join(', ')}
-      WHERE id = ? AND agent_id = ?
-    `, values);
+    if (error) {
+      logger.error('Failed to update template', { error: error.message, templateId });
+      throw error;
+    }
 
     logger.info('Agent template updated', { templateId, agentId });
 
@@ -149,10 +143,14 @@ class AgentTemplateService {
       throw new Error('Template not found');
     }
 
-    await this.db.query(`
-      DELETE FROM agent_templates
-      WHERE id = ? AND agent_id = ?
-    `, [templateId, agentId]);
+    const { error } = await SupabaseService.queryAsAdmin('agent_templates', (query) =>
+      query.delete().eq('id', templateId).eq('agent_id', agentId)
+    );
+
+    if (error) {
+      logger.error('Failed to delete template', { error: error.message, templateId });
+      throw error;
+    }
 
     logger.info('Agent template deleted', { templateId, agentId });
 
@@ -167,7 +165,7 @@ class AgentTemplateService {
   formatTemplate(row) {
     let config = {};
     try {
-      config = row.config ? JSON.parse(row.config) : {};
+      config = row.config ? (typeof row.config === 'string' ? JSON.parse(row.config) : row.config) : {};
     } catch (e) {
       config = {};
     }

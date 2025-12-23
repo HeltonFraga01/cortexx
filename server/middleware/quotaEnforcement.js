@@ -4,6 +4,8 @@
  * Middleware to check and enforce user quotas before operations.
  * Returns 429 with quota info when exceeded.
  * 
+ * Migrated to use module-level service initialization (Task 14.1)
+ * 
  * Requirements: 3.1, 3.2
  */
 
@@ -11,19 +13,14 @@ const { logger } = require('../utils/logger');
 const QuotaService = require('../services/QuotaService');
 const { resolveUserId: resolveUserIdFromRequest, getUserToken } = require('../utils/userIdResolver');
 
-// QuotaService instance - initialized lazily from app.locals.db
-let quotaService = null;
+// Module-level service instance (QuotaService now uses SupabaseService internally)
+const quotaService = new QuotaService();
 
 /**
- * Get or initialize the QuotaService instance
- * @param {Object} req - Express request with app.locals.db
- * @returns {QuotaService|null} QuotaService instance or null if db not available
+ * Get the QuotaService instance
+ * @returns {QuotaService} QuotaService instance
  */
-function getQuotaService(req) {
-  if (!quotaService && req.app?.locals?.db) {
-    quotaService = new QuotaService(req.app.locals.db);
-    logger.debug('QuotaService initialized from app.locals.db');
-  }
+function getQuotaService() {
   return quotaService;
 }
 
@@ -47,13 +44,6 @@ function resolveUserId(req) {
 function enforceQuota(quotaType, amount = 1) {
   return async (req, res, next) => {
     try {
-      // Get QuotaService instance from app.locals.db
-      const service = getQuotaService(req);
-      if (!service) {
-        logger.warn('Quota check skipped - QuotaService not initialized', { quotaType, path: req.path });
-        return next();
-      }
-
       // FIXED: Get user ID from multiple sources based on auth context
       const userId = resolveUserId(req);
       
@@ -72,7 +62,7 @@ function enforceQuota(quotaType, amount = 1) {
       const userToken = getUserToken(req);
       
       // Check quota (pass userToken for resources that need it)
-      const result = await service.checkQuota(userId, quotaType, amount, userToken);
+      const result = await quotaService.checkQuota(userId, quotaType, amount, userToken);
 
       // Log quota check for audit purposes
       logger.info('Quota check performed', {
@@ -143,15 +133,9 @@ function enforceQuota(quotaType, amount = 1) {
  */
 async function incrementQuotaUsage(req, res, next) {
   try {
-    const service = getQuotaService(req);
-    if (!service) {
-      logger.warn('Quota increment skipped - QuotaService not initialized');
-      return;
-    }
-
     if (req.quotaInfo && res.statusCode >= 200 && res.statusCode < 300) {
       const { quotaType, amount, userId } = req.quotaInfo;
-      await service.incrementUsage(userId, quotaType, amount);
+      await quotaService.incrementUsage(userId, quotaType, amount);
       
       logger.debug('Quota usage incremented', { userId, quotaType, amount });
     }
@@ -173,13 +157,6 @@ async function incrementQuotaUsage(req, res, next) {
 function enforceMultipleQuotas(quotas) {
   return async (req, res, next) => {
     try {
-      // Get QuotaService instance from app.locals.db
-      const service = getQuotaService(req);
-      if (!service) {
-        logger.warn('Multiple quota check skipped - QuotaService not initialized');
-        return next();
-      }
-
       // FIXED: Use resolveUserId for consistent user identification
       const userId = resolveUserId(req);
       
@@ -190,7 +167,7 @@ function enforceMultipleQuotas(quotas) {
       const failures = [];
       
       for (const { quotaType, amount = 1 } of quotas) {
-        const result = await service.checkQuota(userId, quotaType, amount);
+        const result = await quotaService.checkQuota(userId, quotaType, amount);
         
         if (!result.allowed) {
           failures.push({

@@ -635,12 +635,9 @@ async function requireUser(req, res, next) {
         
         // Ensure user has a subscription (assign default plan if missing)
         try {
-          const db = req.app.locals.db;
-          if (db) {
-            const SubscriptionEnsurer = require('../services/SubscriptionEnsurer');
-            const subscriptionEnsurer = new SubscriptionEnsurer(db);
-            await subscriptionEnsurer.ensureSubscription(userId);
-          }
+          const SubscriptionEnsurer = require('../services/SubscriptionEnsurer');
+          const subscriptionEnsurer = new SubscriptionEnsurer();
+          await subscriptionEnsurer.ensureSubscription(userId);
         } catch (error) {
           logger.warn('Failed to ensure subscription in requireUser middleware (JWT)', {
             userId,
@@ -754,12 +751,9 @@ async function requireUser(req, res, next) {
   
   // Ensure user has a subscription (assign default plan if missing)
   try {
-    const db = req.app.locals.db;
-    if (db) {
-      const SubscriptionEnsurer = require('../services/SubscriptionEnsurer');
-      const subscriptionEnsurer = new SubscriptionEnsurer(db);
-      await subscriptionEnsurer.ensureSubscription(req.session.userId);
-    }
+    const SubscriptionEnsurer = require('../services/SubscriptionEnsurer');
+    const subscriptionEnsurer = new SubscriptionEnsurer();
+    await subscriptionEnsurer.ensureSubscription(req.session.userId);
   } catch (error) {
     // Log but don't block - subscription check is not critical for auth
     logger.warn('Failed to ensure subscription in requireUser middleware', {

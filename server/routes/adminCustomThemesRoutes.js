@@ -16,24 +16,24 @@ const { featureMiddleware } = require('../middleware/featureEnforcement');
 router.use(requireAdmin);
 router.use(featureMiddleware.pageBuilder);
 
+// Get service instance (initialized with null, uses SupabaseService internally)
+const customThemeService = getCustomThemeService(null);
+
 /**
  * GET /admin/custom-themes
  * List all custom themes
  */
 router.get('/', async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    const service = getCustomThemeService(db);
-    
     const { connection_id, limit, offset } = req.query;
 
-    const themes = await service.list({
+    const themes = await customThemeService.list({
       connectionId: connection_id ? parseInt(connection_id, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : 100,
       offset: offset ? parseInt(offset, 10) : 0,
     });
 
-    const total = await service.count({
+    const total = await customThemeService.count({
       connectionId: connection_id ? parseInt(connection_id, 10) : undefined,
     });
 
@@ -60,11 +60,8 @@ router.get('/', async (req, res) => {
  */
 router.get('/:id', async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    const service = getCustomThemeService(db);
-    
     const { id } = req.params;
-    const theme = await service.getById(parseInt(id, 10));
+    const theme = await customThemeService.getById(parseInt(id, 10));
 
     if (!theme) {
       return res.status(404).json({
@@ -94,9 +91,6 @@ router.get('/:id', async (req, res) => {
  */
 router.post('/', async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    const service = getCustomThemeService(db);
-    
     const { name, description, connectionId, schema, previewImage } = req.body;
 
     // Validate required fields
@@ -114,7 +108,7 @@ router.post('/', async (req, res) => {
       });
     }
 
-    const theme = await service.create({
+    const theme = await customThemeService.create({
       name: name.trim(),
       description: description?.trim() || null,
       connectionId: connectionId || null,
@@ -148,9 +142,6 @@ router.post('/', async (req, res) => {
  */
 router.put('/:id', async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    const service = getCustomThemeService(db);
-    
     const { id } = req.params;
     const { name, description, connectionId, schema, previewImage } = req.body;
 
@@ -170,7 +161,7 @@ router.put('/:id', async (req, res) => {
       });
     }
 
-    const theme = await service.update(parseInt(id, 10), {
+    const theme = await customThemeService.update(parseInt(id, 10), {
       name: name?.trim(),
       description: description !== undefined ? description?.trim() : undefined,
       connectionId,
@@ -212,12 +203,9 @@ router.put('/:id', async (req, res) => {
  */
 router.delete('/:id', async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    const service = getCustomThemeService(db);
-    
     const { id } = req.params;
 
-    await service.delete(parseInt(id, 10));
+    await customThemeService.delete(parseInt(id, 10));
 
     logger.info('Custom theme deleted via API', {
       themeId: id,

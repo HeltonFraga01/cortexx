@@ -15,14 +15,8 @@ const AdminAuditService = require('../services/AdminAuditService');
 
 const router = express.Router();
 
-let auditService = null;
-
-function getAuditService(req) {
-  const db = req.app.locals.db;
-  if (!db) return null;
-  if (!auditService) auditService = new AdminAuditService(db);
-  return auditService;
-}
+// Service initialized at module level (uses SupabaseService internally)
+const auditService = new AdminAuditService();
 
 /**
  * Get tenant ID from request context
@@ -134,7 +128,7 @@ router.put('/:key', requireAdmin, async (req, res) => {
     );
 
     // Log audit
-    const audit = getAuditService(req);
+    const audit = auditService;
     if (audit) {
       await audit.logAction(
         adminId,
@@ -198,7 +192,7 @@ router.put('/', requireAdmin, async (req, res) => {
     );
 
     // Log audit
-    const audit = getAuditService(req);
+    const audit = auditService;
     if (audit) {
       await audit.logAction(
         adminId,
@@ -255,7 +249,7 @@ router.delete('/:key', requireAdmin, async (req, res) => {
     const resetSetting = await TenantSettingsService.resetSetting(tenantId, key);
 
     // Log audit
-    const audit = getAuditService(req);
+    const audit = auditService;
     if (audit) {
       await audit.logAction(
         adminId,

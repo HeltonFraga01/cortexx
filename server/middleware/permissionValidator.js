@@ -1,11 +1,14 @@
 const { logger } = require('../utils/logger');
 const securityLogger = require('../utils/securityLogger');
+const SupabaseService = require('../services/SupabaseService');
 
 /**
  * Middleware para validar permissões de acesso a tabelas
  * 
  * Verifica se o usuário tem permissão para realizar a operação solicitada
  * na tabela especificada.
+ * 
+ * Migrated to use SupabaseService directly (Task 14.1)
  * 
  * @param {string} permission - Tipo de permissão ('read', 'write', 'delete')
  * @returns {Function} Middleware Express
@@ -31,14 +34,23 @@ function validateTablePermission(permission) {
         });
       }
       
-      // Buscar permissões do usuário para a tabela
-      const db = req.app.locals.db;
-      
+      // Buscar permissões do usuário para a tabela usando SupabaseService
       try {
-        const permissions = await db.getUserTablePermissions(userId, tableName);
+        const { data: permissions, error } = await SupabaseService.queryAsAdmin('user_table_permissions', (query) =>
+          query.select('can_read, can_write, can_delete')
+            .eq('user_id', userId)
+            .eq('table_name', tableName)
+            .limit(1)
+        );
+        
+        if (error) {
+          throw error;
+        }
+        
+        const userPermissions = permissions && permissions.length > 0 ? permissions[0] : null;
         
         // Verificar se tem a permissão necessária
-        const hasPermission = checkPermission(permissions, permission);
+        const hasPermission = checkPermission(userPermissions, permission);
         
         if (!hasPermission) {
           securityLogger.logUnauthorizedAccess({
@@ -55,7 +67,7 @@ function validateTablePermission(permission) {
         }
         
         // Permissão concedida
-        req.tablePermissions = permissions;
+        req.tablePermissions = userPermissions;
         next();
         
       } catch (dbError) {

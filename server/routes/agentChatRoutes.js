@@ -16,14 +16,14 @@ const InboxService = require('../services/InboxService');
 const { validatePhoneWithAPI } = require('../services/PhoneValidationService');
 const SupabaseService = require('../services/SupabaseService');
 
-// Services will be initialized with db
+// Services - initialized on first use (no db parameter needed, they use SupabaseService internally)
 let chatService = null;
 let inboxService = null;
 
-function initServices(db) {
+function initServices() {
   if (!chatService) {
-    chatService = new ChatService(db);
-    inboxService = new InboxService(db);
+    chatService = new ChatService();
+    inboxService = new InboxService();
   }
 }
 
@@ -67,7 +67,7 @@ async function getAccountUserToken(db, accountId) {
  * Helper to get WUZAPI token from inbox
  * The inbox's WUZAPI token is needed to send messages via WUZAPI
  */
-async function getInboxWuzapiToken(db, inboxId) {
+async function getInboxWuzapiToken(inboxId) {
   const { data, error } = await SupabaseService.queryAsAdmin('inboxes', (query) =>
     query.select('wuzapi_token').eq('id', inboxId).single()
   );
@@ -88,7 +88,7 @@ async function getInboxWuzapiToken(db, inboxId) {
  */
 router.get('/conversations', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -179,7 +179,7 @@ router.get('/conversations', requireAgentAuth(null), requirePermission('conversa
  */
 router.get('/conversations/search', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -219,7 +219,7 @@ router.get('/conversations/search', requireAgentAuth(null), requirePermission('c
  */
 router.post('/conversations/start', requireAgentAuth(null), requirePermission('conversations:create'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -278,7 +278,7 @@ router.post('/conversations/start', requireAgentAuth(null), requirePermission('c
  */
 router.get('/conversations/:id', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -315,7 +315,7 @@ router.get('/conversations/:id', requireAgentAuth(null), requirePermission('conv
  */
 router.patch('/conversations/:id', requireAgentAuth(null), requirePermission('conversations:manage'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -358,7 +358,7 @@ router.patch('/conversations/:id', requireAgentAuth(null), requirePermission('co
  */
 router.post('/conversations/:id/read', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -397,7 +397,7 @@ router.post('/conversations/:id/read', requireAgentAuth(null), requirePermission
  */
 router.get('/conversations/:id/messages', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -443,9 +443,8 @@ router.get('/conversations/:id/messages', requireAgentAuth(null), requirePermiss
  */
 router.post('/conversations/:id/messages', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
-    const db = req.app.locals.db;
     const agentId = req.agent.id;
     const accountId = req.account.id;
     const { id } = req.params;
@@ -473,7 +472,7 @@ router.post('/conversations/:id/messages', requireAgentAuth(null), requirePermis
     }
     
     // Get inbox's WUZAPI token for sending messages
-    const inboxWuzapiToken = await getInboxWuzapiToken(db, conversation.inboxId);
+    const inboxWuzapiToken = await getInboxWuzapiToken(conversation.inboxId);
     if (!inboxWuzapiToken) {
       return res.status(500).json({ success: false, error: 'Caixa de entrada não configurada para envio de mensagens' });
     }
@@ -675,9 +674,8 @@ router.post('/conversations/:id/messages', requireAgentAuth(null), requirePermis
  */
 router.post('/conversations/:id/fetch-avatar', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
-    const db = req.app.locals.db;
     const agentId = req.agent.id;
     const accountId = req.account.id;
     const { id } = req.params;
@@ -699,7 +697,7 @@ router.post('/conversations/:id/fetch-avatar', requireAgentAuth(null), requirePe
     }
     
     // Get inbox's WUZAPI token
-    const inboxWuzapiToken = await getInboxWuzapiToken(db, conversation.inboxId);
+    const inboxWuzapiToken = await getInboxWuzapiToken(conversation.inboxId);
     if (!inboxWuzapiToken) {
       return res.json({
         success: true,
@@ -795,7 +793,7 @@ router.post('/conversations/:id/fetch-avatar', requireAgentAuth(null), requirePe
  */
 router.get('/labels', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const accountId = req.account.id;
     const userToken = getAccountUserTokenFromRequest(req);
@@ -819,7 +817,7 @@ router.get('/labels', requireAgentAuth(null), requirePermission('conversations:v
  */
 router.post('/conversations/:id/labels', requireAgentAuth(null), requirePermission('conversations:manage'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -857,7 +855,7 @@ router.post('/conversations/:id/labels', requireAgentAuth(null), requirePermissi
  */
 router.delete('/conversations/:id/labels/:labelId', requireAgentAuth(null), requirePermission('conversations:manage'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -896,7 +894,7 @@ router.delete('/conversations/:id/labels/:labelId', requireAgentAuth(null), requ
  */
 router.get('/canned-responses', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const accountId = req.account.id;
     const { search } = req.query;
@@ -923,7 +921,7 @@ router.get('/canned-responses', requireAgentAuth(null), requirePermission('conve
  */
 router.get('/messages/:messageId/media', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const accountId = req.account.id;
     const { messageId } = req.params;
@@ -950,7 +948,7 @@ router.get('/messages/:messageId/media', requireAgentAuth(null), requirePermissi
  */
 router.get('/contacts/:contactJid/attributes', requireAgentAuth(null), requirePermission('contacts:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const accountId = req.account.id;
     const { contactJid } = req.params;
@@ -975,7 +973,7 @@ router.get('/contacts/:contactJid/attributes', requireAgentAuth(null), requirePe
  */
 router.get('/contacts/:contactJid/notes', requireAgentAuth(null), requirePermission('contacts:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const accountId = req.account.id;
     const { contactJid } = req.params;
@@ -1000,7 +998,7 @@ router.get('/contacts/:contactJid/notes', requireAgentAuth(null), requirePermiss
  */
 router.post('/contacts/:contactJid/notes', requireAgentAuth(null), requirePermission('contacts:manage'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const accountId = req.account.id;
     const agentId = req.agent.id;
@@ -1027,7 +1025,7 @@ router.post('/contacts/:contactJid/notes', requireAgentAuth(null), requirePermis
  */
 router.get('/conversations/:id/info', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -1061,13 +1059,9 @@ router.get('/conversations/:id/info', requireAgentAuth(null), requirePermission(
 // ==================== Assignment Routes ====================
 
 const ConversationAssignmentService = require('../services/ConversationAssignmentService');
-let assignmentService = null;
 
-function initAssignmentService(db) {
-  if (!assignmentService) {
-    assignmentService = new ConversationAssignmentService(db);
-  }
-}
+// Initialize assignment service at module level (uses SupabaseService internally)
+const assignmentService = new ConversationAssignmentService();
 
 /**
  * POST /api/agent/chat/conversations/:id/pickup
@@ -1076,8 +1070,7 @@ function initAssignmentService(db) {
  */
 router.post('/conversations/:id/pickup', requireAgentAuth(null), requirePermission('conversations:assign'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    initAssignmentService(req.app.locals.db);
+    initServices();
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -1133,8 +1126,8 @@ router.post('/conversations/:id/pickup', requireAgentAuth(null), requirePermissi
  */
 router.post('/conversations/:id/transfer', requireAgentAuth(null), requirePermission('conversations:assign'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    initAssignmentService(req.app.locals.db);
+    initServices();
+    
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -1173,14 +1166,11 @@ router.post('/conversations/:id/transfer', requireAgentAuth(null), requirePermis
     }
     
     // Check target agent availability (warn but allow)
-    const db = req.app.locals.db;
-    const targetAgentResult = await db.query(
-      'SELECT availability FROM agents WHERE id = ?',
-      [targetAgentId]
+    const { data: targetAgentData, error: agentError } = await SupabaseService.queryAsAdmin('agents', (query) =>
+      query.select('availability').eq('id', targetAgentId).single()
     );
     
-    const targetAgent = targetAgentResult.rows[0];
-    const isOffline = targetAgent?.availability !== 'online';
+    const isOffline = !agentError && targetAgentData?.availability !== 'online';
     
     // Transfer conversation
     await assignmentService.transferConversation(id, targetAgentId, agentId);
@@ -1212,8 +1202,8 @@ router.post('/conversations/:id/transfer', requireAgentAuth(null), requirePermis
  */
 router.post('/conversations/:id/release', requireAgentAuth(null), requirePermission('conversations:assign'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    initAssignmentService(req.app.locals.db);
+    initServices();
+    
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -1253,8 +1243,8 @@ router.post('/conversations/:id/release', requireAgentAuth(null), requirePermiss
  */
 router.get('/conversations/:id/transferable-agents', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    initAssignmentService(req.app.locals.db);
+    initServices();
+    
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -1298,7 +1288,7 @@ router.get('/conversations/:id/transferable-agents', requireAgentAuth(null), req
  */
 router.get('/bots', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const accountId = req.account.id;
     const userToken = getAccountUserTokenFromRequest(req);
@@ -1309,7 +1299,7 @@ router.get('/bots', requireAgentAuth(null), requirePermission('conversations:vie
     
     // Get bots from the account owner
     const BotService = require('../services/BotService');
-    const botService = new BotService(req.app.locals.db);
+    const botService = new BotService();
     const bots = await botService.getBots(userToken);
     
     // Filter to only return active bots and minimal info (no access tokens)
@@ -1337,7 +1327,7 @@ router.get('/bots', requireAgentAuth(null), requirePermission('conversations:vie
  */
 router.post('/conversations/:id/assign-bot', requireAgentAuth(null), requirePermission('conversations:update'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -1363,7 +1353,7 @@ router.post('/conversations/:id/assign-bot', requireAgentAuth(null), requirePerm
     // If assigning a bot, verify it exists and is active
     if (botId !== null && botId !== undefined) {
       const BotService = require('../services/BotService');
-      const botService = new BotService(req.app.locals.db);
+      const botService = new BotService();
       const bot = await botService.getBotById(botId, userToken);
       
       if (!bot) {
@@ -1403,43 +1393,41 @@ router.post('/conversations/:id/assign-bot', requireAgentAuth(null), requirePerm
 
 /**
  * GET /api/agent/chat/macros
- * Get all macros from the account owner
+ * Get all macros from the account
  */
 router.get('/macros', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
-    const db = req.app.locals.db;
     const accountId = req.account.id;
-    const userToken = getAccountUserTokenFromRequest(req);
     
-    if (!userToken) {
-      return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
-    }
-    
-    // Get macros with their actions
-    const macrosResult = await db.query(
-      'SELECT id, name, description, created_at, updated_at FROM macros WHERE user_id = ? ORDER BY name ASC',
-      [userToken]
+    // Get macros for this account - Supabase schema uses account_id and actions as JSONB
+    const { data: macros, error: macrosError } = await SupabaseService.queryAsAdmin('macros', (query) =>
+      query.select('id, name, actions, visibility, created_by, created_at, updated_at')
+        .eq('account_id', accountId)
+        .order('name', { ascending: true })
     );
-    
-    const macros = [];
-    for (const macro of (macrosResult.rows || [])) {
-      const actionsResult = await db.query(
-        'SELECT id, action_type, params, action_order FROM macro_actions WHERE macro_id = ? ORDER BY action_order ASC',
-        [macro.id]
-      );
-      
-      macros.push({
-        ...macro,
-        actions: (actionsResult.rows || []).map(a => ({
-          ...a,
-          params: typeof a.params === 'string' ? JSON.parse(a.params) : a.params
-        }))
-      });
+
+    if (macrosError) {
+      throw macrosError;
     }
+
+    // Transform macros to expected format
+    const transformedMacros = (macros || []).map(macro => ({
+      id: macro.id,
+      name: macro.name,
+      description: '', // Not in Supabase schema
+      created_at: macro.created_at,
+      updated_at: macro.updated_at,
+      actions: (macro.actions || []).map((action, index) => ({
+        id: `${macro.id}-${index}`,
+        action_type: action.action_type || action.type,
+        params: action.params || {},
+        action_order: index
+      }))
+    }));
     
-    res.json({ success: true, data: macros });
+    res.json({ success: true, data: transformedMacros });
   } catch (error) {
     logger.error('Error fetching macros for agent', { error: error.message, agentId: req.agent?.id });
     res.status(500).json({ success: false, error: error.message });
@@ -1452,9 +1440,8 @@ router.get('/macros', requireAgentAuth(null), requirePermission('conversations:v
  */
 router.post('/macros/:id/execute', requireAgentAuth(null), requirePermission('conversations:manage'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
-    const db = req.app.locals.db;
     const agentId = req.agent.id;
     const accountId = req.account.id;
     const { id } = req.params;
@@ -1552,57 +1539,53 @@ router.post('/macros/:id/execute', requireAgentAuth(null), requirePermission('co
  */
 router.get('/contacts/:contactJid/conversations', requireAgentAuth(null), requirePermission('conversations:view'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
-    const db = req.app.locals.db;
     const agentId = req.agent.id;
     const accountId = req.account.id;
     const { contactJid } = req.params;
     const { excludeId } = req.query;
     
     const agentInboxIds = await getAgentInboxIds(agentId);
-    const userToken = getAccountUserTokenFromRequest(req);
     
-    if (!userToken) {
-      return res.status(500).json({ success: false, error: 'Configuração de conta inválida' });
+    // Build query using SupabaseService
+    const decodedJid = decodeURIComponent(contactJid);
+    
+    const { data: conversations, error } = await SupabaseService.queryAsAdmin('conversations', (query) => {
+      let q = query.select('id, status, created_at, last_message_at, last_message_preview, inbox_id')
+        .eq('account_id', accountId)
+        .eq('contact_jid', decodedJid);
+      
+      // Filter by agent's inboxes
+      if (agentInboxIds.length > 0) {
+        q = q.in('inbox_id', agentInboxIds);
+      }
+      
+      if (excludeId) {
+        q = q.neq('id', excludeId);
+      }
+      
+      return q.order('created_at', { ascending: false }).limit(10);
+    });
+    
+    if (error) {
+      throw error;
     }
     
-    // Build query to get previous conversations
-    let sql = `
-      SELECT 
-        c.id, c.status, c.created_at, c.last_message_at,
-        c.last_message_preview,
-        (SELECT COUNT(*) FROM chat_messages WHERE conversation_id = c.id) as message_count
-      FROM conversations c
-      WHERE c.user_id = ? AND c.contact_jid = ?
-    `;
-    const params = [userToken, decodeURIComponent(contactJid)];
-    
-    // Filter by agent's inboxes
-    if (agentInboxIds.length > 0) {
-      sql += ` AND c.inbox_id IN (${agentInboxIds.map(() => '?').join(',')})`;
-      params.push(...agentInboxIds);
-    }
-    
-    if (excludeId) {
-      sql += ' AND c.id != ?';
-      params.push(excludeId);
-    }
-    
-    sql += ' ORDER BY c.created_at DESC LIMIT 10';
-    
-    const result = await db.query(sql, params);
-    
-    const conversations = (result.rows || []).map(conv => ({
-      id: conv.id,
-      status: conv.status,
-      createdAt: conv.created_at,
-      lastMessageAt: conv.last_message_at,
-      lastMessagePreview: conv.last_message_preview,
-      messageCount: conv.message_count || 0
+    // Get message counts for each conversation
+    const conversationsWithCounts = await Promise.all((conversations || []).map(async (conv) => {
+      const { count } = await SupabaseService.count('chat_messages', { conversation_id: conv.id });
+      return {
+        id: conv.id,
+        status: conv.status,
+        createdAt: conv.created_at,
+        lastMessageAt: conv.last_message_at,
+        lastMessagePreview: conv.last_message_preview,
+        messageCount: count || 0
+      };
     }));
     
-    res.json({ success: true, data: conversations });
+    res.json({ success: true, data: conversationsWithCounts });
   } catch (error) {
     logger.error('Error fetching previous conversations for agent', { error: error.message, agentId: req.agent?.id });
     res.status(500).json({ success: false, error: error.message });
@@ -1617,7 +1600,7 @@ router.get('/contacts/:contactJid/conversations', requireAgentAuth(null), requir
  */
 router.post('/contacts/:contactJid/attributes', requireAgentAuth(null), requirePermission('contacts:manage'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const accountId = req.account.id;
     const { contactJid } = req.params;
@@ -1647,7 +1630,7 @@ router.post('/contacts/:contactJid/attributes', requireAgentAuth(null), requireP
  */
 router.put('/contacts/:contactJid/attributes/:attributeId', requireAgentAuth(null), requirePermission('contacts:manage'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const accountId = req.account.id;
     const { contactJid, attributeId } = req.params;
@@ -1677,7 +1660,7 @@ router.put('/contacts/:contactJid/attributes/:attributeId', requireAgentAuth(nul
  */
 router.delete('/contacts/:contactJid/attributes/:attributeId', requireAgentAuth(null), requirePermission('contacts:manage'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const accountId = req.account.id;
     const { contactJid, attributeId } = req.params;
@@ -1702,7 +1685,7 @@ router.delete('/contacts/:contactJid/attributes/:attributeId', requireAgentAuth(
  */
 router.delete('/contacts/:contactJid/notes/:noteId', requireAgentAuth(null), requirePermission('contacts:manage'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const accountId = req.account.id;
     const { contactJid, noteId } = req.params;
@@ -1730,7 +1713,7 @@ router.delete('/contacts/:contactJid/notes/:noteId', requireAgentAuth(null), req
  */
 router.post('/inbox/clear', requireAgentAuth(null), requirePermission('conversations:manage'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    initServices();
     
     const agentId = req.agent.id;
     const accountId = req.account.id;

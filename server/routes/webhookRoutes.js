@@ -267,7 +267,7 @@ router.post('/events', async (req, res) => {
     // Se ainda não tem token, tentar buscar do mapeamento de sessão
     if (!userToken && event.userID) {
       const { getSessionMappingService } = require('../services/SessionMappingService');
-      const sessionMapping = getSessionMappingService(req.app.locals.db);
+      const sessionMapping = getSessionMappingService();
       if (sessionMapping) {
         userToken = await sessionMapping.getTokenFromSessionId(event.userID);
         if (userToken) {
@@ -369,11 +369,10 @@ router.post('/events', async (req, res) => {
     });
     
     // Processar evento em background para o chat inbox
-    if (userToken && req.app.locals.db) {
+    if (userToken) {
       try {
-        const db = req.app.locals.db;
         const chatHandler = req.app.locals.chatHandler;
-        const handler = new ChatMessageHandler(db, chatHandler);
+        const handler = new ChatMessageHandler(chatHandler);
         
         // Mapear evento WUZAPI para formato do chatMessageHandler
         const chatEvent = {
@@ -400,7 +399,6 @@ router.post('/events', async (req, res) => {
     } else {
       logger.warn('Webhook event não processado para chat', {
         hasUserToken: !!userToken,
-        hasDb: !!req.app.locals.db,
         eventType: eventType
       });
     }

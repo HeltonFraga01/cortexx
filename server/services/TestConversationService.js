@@ -6,13 +6,16 @@
  * and message history management.
  * 
  * Requirements: 1.3, 1.4, 1.5, 6.1, 6.2, 6.3, 6.4
+ * 
+ * MIGRATED: Now uses SupabaseService directly instead of db parameter
  */
 
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class TestConversationService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   /**
@@ -43,37 +46,28 @@ class TestConversationService {
     try {
       const simulatedJid = this.generateSimulatedJid(userId);
       
-      const sql = `
-        INSERT INTO conversations (
-          user_id, 
-          contact_jid, 
-          contact_name, 
-          assigned_bot_id, 
-          is_test, 
-          status,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, 1, 'open', datetime('now'), datetime('now'))
-      `;
-      
-      const result = await this.db.query(sql, [
-        userId,
-        simulatedJid,
-        `🧪 Teste: ${botName}`,
-        botId
-      ]);
+      const { data, error } = await SupabaseService.insert('conversations', {
+        user_id: userId,
+        contact_jid: simulatedJid,
+        contact_name: `🧪 Teste: ${botName}`,
+        assigned_bot_id: botId,
+        is_test: true,
+        status: 'open'
+      });
 
-      const conversationId = result.lastInsertRowid || result.lastID;
+      if (error) {
+        throw error;
+      }
 
       logger.info('Test conversation created', {
-        conversationId,
+        conversationId: data.id,
         userId,
         botId,
         simulatedJid
       });
 
       return {
-        id: conversationId,
+        id: data.id,
         userId,
         contactJid: simulatedJid,
         contactName: `🧪 Teste: ${botName}`,
@@ -101,13 +95,13 @@ class TestConversationService {
    */
   async archiveTestConversation(conversationId) {
     try {
-      const sql = `
-        UPDATE conversations 
-        SET status = 'archived', updated_at = datetime('now')
-        WHERE id = ? AND is_test = 1
-      `;
-      
-      await this.db.query(sql, [conversationId]);
+      const { error } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.update({ status: 'archived' }).eq('id', conversationId).eq('is_test', true)
+      );
+
+      if (error) {
+        throw error;
+      }
 
       logger.info('Test conversation archived', { conversationId });
     } catch (error) {
@@ -128,13 +122,15 @@ class TestConversationService {
    */
   async getTestConversation(conversationId, userId) {
     try {
-      const sql = `
-        SELECT * FROM conversations 
-        WHERE id = ? AND user_id = ? AND is_test = 1
-      `;
+      const { data, error } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.select('*').eq('id', conversationId).eq('user_id', userId).eq('is_test', true).single()
+      );
       
-      const { rows } = await this.db.query(sql, [conversationId, userId]);
-      return rows[0] || null;
+      if (error || !data) {
+        return null;
+      }
+      
+      return data;
     } catch (error) {
       logger.error('Failed to get test conversation', {
         error: error.message,
@@ -156,28 +152,23 @@ class TestConversationService {
    */
   async getTestMessages(conversationId, limit = 10) {
     try {
-      const sql = `
-        SELECT 
-          id,
-          message_id,
-          content as text,
-          sender_type,
-          created_at as timestamp,
-          CASE WHEN sender_type = 'user' THEN 1 ELSE 0 END as fromMe
-        FROM chat_messages 
-        WHERE conversation_id = ?
-        ORDER BY created_at DESC
-        LIMIT ?
-      `;
+      const { data, error } = await SupabaseService.queryAsAdmin('chat_messages', (query) =>
+        query.select('id, message_id, content, sender_type, created_at')
+          .eq('conversation_id', conversationId)
+          .order('created_at', { ascending: false })
+          .limit(limit)
+      );
       
-      const { rows } = await this.db.query(sql, [conversationId, limit]);
+      if (error) {
+        throw error;
+      }
       
       // Return in chronological order (oldest first)
-      return rows.reverse().map(row => ({
+      return (data || []).reverse().map(row => ({
         id: row.message_id || row.id.toString(),
-        text: row.text,
-        timestamp: new Date(row.timestamp).getTime(),
-        fromMe: row.fromMe === 1
+        text: row.content,
+        timestamp: new Date(row.created_at).getTime(),
+        fromMe: row.sender_type === 'user'
       }));
     } catch (error) {
       logger.error('Failed to get test messages', {
@@ -198,12 +189,13 @@ class TestConversationService {
    */
   async clearTestHistory(conversationId) {
     try {
-      const sql = `
-        DELETE FROM chat_messages 
-        WHERE conversation_id = ?
-      `;
-      
-      await this.db.query(sql, [conversationId]);
+      const { error } = await SupabaseService.queryAsAdmin('chat_messages', (query) =>
+        query.delete().eq('conversation_id', conversationId)
+      );
+
+      if (error) {
+        throw error;
+      }
 
       logger.info('Test conversation history cleared', { conversationId });
     } catch (error) {
@@ -233,37 +225,28 @@ class TestConversationService {
       // bot = incoming (bot responding to user)
       const direction = senderType === 'user' ? 'outgoing' : 'incoming';
       
-      const sql = `
-        INSERT INTO chat_messages (
-          conversation_id,
-          message_id,
-          direction,
-          message_type,
-          content,
-          sender_type,
-          status,
-          timestamp,
-          created_at
-        ) VALUES (?, ?, ?, 'text', ?, ?, 'delivered', ?, datetime('now'))
-      `;
-      
-      await this.db.query(sql, [
-        conversationId,
-        messageId,
+      const { error: msgError } = await SupabaseService.insert('chat_messages', {
+        conversation_id: conversationId,
+        message_id: messageId,
         direction,
-        text,
-        senderType,
+        message_type: 'text',
+        content: text,
+        sender_type: senderType,
+        status: 'delivered',
         timestamp
-      ]);
+      });
+
+      if (msgError) {
+        throw msgError;
+      }
 
       // Update conversation last_message_at
-      await this.db.query(`
-        UPDATE conversations 
-        SET last_message_at = datetime('now'),
-            last_message_preview = ?,
-            updated_at = datetime('now')
-        WHERE id = ?
-      `, [text.substring(0, 100), conversationId]);
+      await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.update({ 
+          last_message_at: timestamp,
+          last_message_preview: text.substring(0, 100)
+        }).eq('id', conversationId)
+      );
 
       return {
         id: messageId,
@@ -290,15 +273,13 @@ class TestConversationService {
   async deleteTestConversation(conversationId) {
     try {
       // Delete messages first
-      await this.db.query(
-        'DELETE FROM chat_messages WHERE conversation_id = ?',
-        [conversationId]
+      await SupabaseService.queryAsAdmin('chat_messages', (query) =>
+        query.delete().eq('conversation_id', conversationId)
       );
       
       // Delete conversation
-      await this.db.query(
-        'DELETE FROM conversations WHERE id = ? AND is_test = 1',
-        [conversationId]
+      await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.delete().eq('id', conversationId).eq('is_test', true)
       );
 
       logger.info('Test conversation deleted', { conversationId });

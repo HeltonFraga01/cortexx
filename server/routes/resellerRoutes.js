@@ -454,9 +454,8 @@ router.get('/customers/usage', requireAuth, async (req, res) => {
     // Get all accounts in this tenant
     const accounts = await TenantService.listAccounts(tenant.id); // This fetches user_subscriptions too
     
-    // Initialize QuotaService
-    const db = req.app.locals.db;
-    const quotaService = new QuotaService(db);
+    // Initialize QuotaService (uses SupabaseService internally)
+    const quotaService = new QuotaService();
     
     // Enrich with usage data
     const report = [];

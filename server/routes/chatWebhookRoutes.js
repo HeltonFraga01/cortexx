@@ -4,6 +4,7 @@
  * Receives webhook events from WUZAPI for chat functionality
  * 
  * Requirements: 11.1, 11.2, 11.3
+ * Migrated to use SupabaseService directly
  */
 
 const express = require('express')
@@ -11,18 +12,17 @@ const router = express.Router()
 const { logger } = require('../utils/logger')
 const ChatMessageHandler = require('../webhooks/chatMessageHandler')
 
-// Cache handler instance per request
+// Cache handler instance
 let handlerInstance = null
 
 /**
  * Get or create ChatMessageHandler instance
  */
 function getHandler(req) {
-  const db = req.app.locals.db
   const chatHandler = req.app.locals.chatHandler
   
-  if (!handlerInstance || handlerInstance.db !== db) {
-    handlerInstance = new ChatMessageHandler(db, chatHandler)
+  if (!handlerInstance) {
+    handlerInstance = new ChatMessageHandler(chatHandler)
   } else if (handlerInstance.chatHandler !== chatHandler) {
     handlerInstance.setChatHandler(chatHandler)
   }
@@ -52,14 +52,6 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ 
         success: false, 
         error: 'Event type required' 
-      })
-    }
-
-    const db = req.app.locals.db
-    if (!db) {
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Database not available' 
       })
     }
 
@@ -96,14 +88,6 @@ router.post('/batch', async (req, res) => {
       return res.status(400).json({ 
         success: false, 
         error: 'Events array required' 
-      })
-    }
-
-    const db = req.app.locals.db
-    if (!db) {
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Database not available' 
       })
     }
 

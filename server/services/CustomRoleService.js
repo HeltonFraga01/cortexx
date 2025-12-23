@@ -2,14 +2,16 @@
  * CustomRoleService - Service for managing custom roles
  * 
  * Handles CRUD operations for custom roles in the multi-user system.
+ * Uses SupabaseService for all database operations.
  */
 
 const { logger } = require('../utils/logger');
 const crypto = require('crypto');
+const SupabaseService = require('./SupabaseService');
 
 class CustomRoleService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   generateId() {
@@ -21,18 +23,26 @@ class CustomRoleService {
       const id = this.generateId();
       const now = new Date().toISOString();
 
-      const sql = `
-        INSERT INTO custom_roles (id, account_id, name, description, permissions, created_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `;
+      const roleData = {
+        id,
+        account_id: accountId,
+        name: data.name,
+        description: data.description || null,
+        permissions: data.permissions || [],
+        created_by: data.createdBy || null,
+        created_at: now,
+        updated_at: now
+      };
 
-      await this.db.query(sql, [
-        id, accountId, data.name, data.description || null,
-        JSON.stringify(data.permissions || []), data.createdBy || null, now, now
-      ]);
+      const { data: result, error } = await SupabaseService.insert('custom_roles', roleData);
+
+      if (error) {
+        logger.error('Failed to create custom role', { error: error.message, accountId });
+        throw error;
+      }
 
       logger.info('Custom role created', { roleId: id, accountId });
-      return this.getCustomRoleById(id);
+      return this.formatRole(result);
     } catch (error) {
       logger.error('Failed to create custom role', { error: error.message, accountId });
       throw error;
@@ -41,10 +51,19 @@ class CustomRoleService {
 
   async getCustomRoleById(roleId) {
     try {
-      const sql = 'SELECT * FROM custom_roles WHERE id = ?';
-      const result = await this.db.query(sql, [roleId]);
-      if (result.rows.length === 0) return null;
-      return this.formatRole(result.rows[0]);
+      const { data, error } = await SupabaseService.getById('custom_roles', roleId);
+      
+      if (error) {
+        // PGRST116 means not found - return null instead of throwing
+        if (error.code === 'PGRST116') {
+          return null;
+        }
+        logger.error('Failed to get custom role', { error: error.message, roleId });
+        throw error;
+      }
+      
+      if (!data) return null;
+      return this.formatRole(data);
     } catch (error) {
       logger.error('Failed to get custom role', { error: error.message, roleId });
       throw error;
@@ -53,15 +72,23 @@ class CustomRoleService {
 
   async listCustomRoles(accountId) {
     try {
-      const sql = 'SELECT * FROM custom_roles WHERE account_id = ? ORDER BY name';
-      const result = await this.db.query(sql, [accountId]);
-      return result.rows.map(row => this.formatRole(row));
+      const { data, error } = await SupabaseService.getMany(
+        'custom_roles',
+        { account_id: accountId },
+        { orderBy: 'name', ascending: true }
+      );
+
+      if (error) {
+        logger.error('Failed to list custom roles', { error: error.message, accountId });
+        throw error;
+      }
+
+      return (data || []).map(row => this.formatRole(row));
     } catch (error) {
       logger.error('Failed to list custom roles', { error: error.message, accountId });
       throw error;
     }
   }
-
 
   async updateCustomRole(roleId, accountId, data) {
     try {
@@ -70,33 +97,29 @@ class CustomRoleService {
         throw new Error('ROLE_NOT_FOUND');
       }
 
-      const updates = [];
-      const params = [];
+      const updates = {
+        updated_at: new Date().toISOString()
+      };
 
       if (data.name !== undefined) {
-        updates.push('name = ?');
-        params.push(data.name);
+        updates.name = data.name;
       }
       if (data.description !== undefined) {
-        updates.push('description = ?');
-        params.push(data.description);
+        updates.description = data.description;
       }
       if (data.permissions !== undefined) {
-        updates.push('permissions = ?');
-        params.push(JSON.stringify(data.permissions));
+        updates.permissions = data.permissions;
       }
 
-      if (updates.length === 0) return role;
+      const { data: result, error } = await SupabaseService.update('custom_roles', roleId, updates);
 
-      updates.push('updated_at = ?');
-      params.push(new Date().toISOString());
-      params.push(roleId);
-
-      const sql = `UPDATE custom_roles SET ${updates.join(', ')} WHERE id = ?`;
-      await this.db.query(sql, params);
+      if (error) {
+        logger.error('Failed to update custom role', { error: error.message, roleId });
+        throw error;
+      }
 
       logger.info('Custom role updated', { roleId });
-      return this.getCustomRoleById(roleId);
+      return this.formatRole(result);
     } catch (error) {
       logger.error('Failed to update custom role', { error: error.message, roleId });
       throw error;
@@ -110,8 +133,13 @@ class CustomRoleService {
         throw new Error('ROLE_NOT_FOUND');
       }
 
-      const sql = 'DELETE FROM custom_roles WHERE id = ?';
-      await this.db.query(sql, [roleId]);
+      const { error } = await SupabaseService.delete('custom_roles', roleId);
+      
+      if (error) {
+        logger.error('Failed to delete custom role', { error: error.message, roleId });
+        throw error;
+      }
+      
       logger.info('Custom role deleted', { roleId });
     } catch (error) {
       logger.error('Failed to delete custom role', { error: error.message, roleId });

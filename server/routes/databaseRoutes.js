@@ -7,6 +7,7 @@ const { sanitizeConnection, sanitizeConnections } = require('../utils/credential
 const { requireAdmin } = require('../middleware/auth');
 const { adminLimiter } = require('../middleware/rateLimiter');
 const { featureMiddleware } = require('../middleware/featureEnforcement');
+const DatabaseConnectionService = require('../services/DatabaseConnectionService');
 
 const router = express.Router();
 
@@ -28,8 +29,7 @@ router.use(featureMiddleware.nocodbIntegration);
 // GET /api/database-connections - Listar todas as conexões
 router.get('/', async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    const connections = await db.getAllConnections();
+    const connections = await DatabaseConnectionService.getAllConnections();
 
     // Mask sensitive credentials before returning
     const sanitizedConnections = sanitizeConnections(connections);
@@ -53,8 +53,7 @@ router.get('/:id', async (req, res) => {
   const { id } = req.params;
 
   try {
-    const db = req.app.locals.db;
-    const connection = await db.getConnectionById(id);
+    const connection = await DatabaseConnectionService.getConnectionById(id);
 
     if (!connection) {
       return res.status(404).json({
@@ -170,11 +169,10 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    const db = req.app.locals.db;
-    const result = await db.createConnection(connectionData);
+    const result = await DatabaseConnectionService.createConnection(connectionData);
 
     // Mask credentials in response
-    const sanitizedResult = sanitizeConnection(result);
+    const sanitizedResult = sanitizeConnection(result.data || result);
 
     res.status(201).json({
       success: true,
@@ -243,10 +241,8 @@ router.put('/:id', async (req, res) => {
   }
 
   try {
-    const db = req.app.locals.db;
-
     // Fetch existing connection to preserve credentials if not provided
-    const existingConnection = await db.getConnectionById(id);
+    const existingConnection = await DatabaseConnectionService.getConnectionById(id);
     if (!existingConnection) {
       return res.status(404).json({
         success: false,
@@ -280,10 +276,10 @@ router.put('/:id', async (req, res) => {
       connectionData.nocodb_token = existingConnection.nocodb_token;
     }
 
-    const result = await db.updateConnection(id, connectionData);
+    const result = await DatabaseConnectionService.updateConnection(id, connectionData);
 
     // Mask credentials in response
-    const sanitizedResult = sanitizeConnection(result);
+    const sanitizedResult = sanitizeConnection(result.data || result);
 
     res.json({
       success: true,
@@ -305,8 +301,7 @@ router.post('/:id/test', async (req, res) => {
   const { id } = req.params;
 
   try {
-    const db = req.app.locals.db;
-    const connection = await db.getConnectionById(id);
+    const connection = await DatabaseConnectionService.getConnectionById(id);
 
     if (!connection) {
       return res.status(404).json({
@@ -341,7 +336,7 @@ router.post('/:id/test', async (req, res) => {
     
     // Atualizar status para error
     try {
-      await req.app.locals.db.updateConnectionStatus(id, 'error');
+      await DatabaseConnectionService.updateConnectionStatus(id, 'error');
     } catch (updateErr) {
       logger.error('Erro ao atualizar status:', updateErr.message);
     }
@@ -366,8 +361,7 @@ router.patch('/:id/status', async (req, res) => {
   }
   
   try {
-    const db = req.app.locals.db;
-    const result = await db.updateConnectionStatus(id, status);
+    const result = await DatabaseConnectionService.updateConnectionStatus(id, status);
     
     if (result.changes === 0) {
       return res.status(404).json({ 
@@ -395,8 +389,7 @@ router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   
   try {
-    const db = req.app.locals.db;
-    const result = await db.deleteConnection(id);
+    const result = await DatabaseConnectionService.deleteConnection(id);
     
     if (result.changes === 0) {
       return res.status(404).json({ 

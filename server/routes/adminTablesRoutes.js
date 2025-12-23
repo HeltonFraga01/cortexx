@@ -2,6 +2,7 @@ const express = require('express');
 const errorHandler = require('../middleware/errorHandler');
 const { adminLimiter } = require('../middleware/rateLimiter');
 const { logger } = require('../utils/logger');
+const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
@@ -27,19 +28,25 @@ router.use(adminLimiter);
 router.get('/',
   async (req, res) => {
     try {
-      const db = req.app.locals.db;
+      // Get list of tables from Supabase using information_schema
+      const { data: tables, error } = await SupabaseService.adminClient
+        .from('information_schema.tables')
+        .select('table_name')
+        .eq('table_schema', 'public')
+        .eq('table_type', 'BASE TABLE');
       
-      // Buscar todas as tabelas disponíveis
-      const tables = await db.getAvailableTables();
+      if (error) throw error;
+      
+      const tableList = (tables || []).map(t => ({ name: t.table_name }));
       
       logger.info('✅ Tabelas disponíveis listadas:', {
-        count: tables.length
+        count: tableList.length
       });
       
       res.json({
         success: true,
-        data: tables,
-        count: tables.length,
+        data: tableList,
+        count: tableList.length,
         timestamp: new Date().toISOString()
       });
       
@@ -76,7 +83,6 @@ router.get('/:tableName',
   async (req, res) => {
     try {
       const { tableName } = req.params;
-      const db = req.app.locals.db;
       
       // Validar formato do nome da tabela
       if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
@@ -91,8 +97,34 @@ router.get('/:tableName',
         });
       }
       
-      // Buscar schema da tabela
-      const schema = await db.getTableSchema(tableName);
+      // Get table columns from information_schema
+      const { data: columns, error } = await SupabaseService.adminClient
+        .from('information_schema.columns')
+        .select('column_name, data_type, is_nullable, column_default')
+        .eq('table_schema', 'public')
+        .eq('table_name', tableName);
+      
+      if (error) throw error;
+      
+      if (!columns || columns.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Not Found',
+          message: `Tabela '${tableName}' não encontrada`,
+          code: 'TABLE_NOT_FOUND',
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      const schema = {
+        tableName,
+        columns: columns.map(c => ({
+          name: c.column_name,
+          type: c.data_type,
+          nullable: c.is_nullable === 'YES',
+          default: c.column_default
+        }))
+      };
       
       logger.info('✅ Schema da tabela obtido:', {
         tableName,
@@ -106,20 +138,6 @@ router.get('/:tableName',
       });
       
     } catch (error) {
-      if (error.message && error.message.includes('not found')) {
-        logger.warn('⚠️ Tabela não encontrada:', {
-          tableName: req.params.tableName
-        });
-        
-        return res.status(404).json({
-          success: false,
-          error: 'Not Found',
-          message: `Tabela '${req.params.tableName}' não encontrada`,
-          code: 'TABLE_NOT_FOUND',
-          timestamp: new Date().toISOString()
-        });
-      }
-      
       logger.error('❌ Erro ao obter schema da tabela:', {
         error: error.message,
         stack: error.stack
@@ -152,7 +170,6 @@ router.get('/:tableName/preview',
   async (req, res) => {
     try {
       const { tableName } = req.params;
-      const db = req.app.locals.db;
       
       // Validar formato do nome da tabela
       if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
@@ -167,22 +184,24 @@ router.get('/:tableName/preview',
         });
       }
       
-      // Buscar primeiros 10 registros
-      const result = await db.queryTable(tableName, {
-        page: 1,
-        limit: 10
-      });
+      // Get first 10 records from table
+      const { data, error, count } = await SupabaseService.adminClient
+        .from(tableName)
+        .select('*', { count: 'exact' })
+        .limit(10);
+      
+      if (error) throw error;
       
       logger.info('✅ Prévia da tabela obtida:', {
         tableName,
-        recordCount: result.data.length
+        recordCount: (data || []).length
       });
       
       res.json({
         success: true,
-        data: result.data,
-        count: result.data.length,
-        total: result.pagination.total,
+        data: data || [],
+        count: (data || []).length,
+        total: count || 0,
         timestamp: new Date().toISOString()
       });
       

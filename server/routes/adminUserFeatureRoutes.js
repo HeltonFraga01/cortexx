@@ -19,24 +19,9 @@ const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
-let featureService = null;
-let auditService = null;
-
-function getFeatureService(req) {
-  if (!featureService) {
-    const db = req.app.locals.db;
-    if (db) featureService = new FeatureFlagService(db);
-  }
-  return featureService;
-}
-
-function getAuditService(req) {
-  if (!auditService) {
-    const db = req.app.locals.db;
-    if (db) auditService = new AdminAuditService(db);
-  }
-  return auditService;
-}
+// Services initialized at module level (use SupabaseService internally)
+const featureService = new FeatureFlagService();
+const auditService = new AdminAuditService();
 
 /**
  * Validate that a user belongs to the specified tenant
@@ -80,7 +65,7 @@ async function validateUserTenant(userId, tenantId) {
  */
 router.get('/features', requireAdmin, async (req, res) => {
   try {
-    const service = getFeatureService(req);
+    const service = featureService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -105,7 +90,7 @@ router.get('/features', requireAdmin, async (req, res) => {
  */
 router.get('/:userId/features', requireAdmin, async (req, res) => {
   try {
-    const service = getFeatureService(req);
+    const service = featureService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -159,8 +144,8 @@ router.get('/:userId/features', requireAdmin, async (req, res) => {
  */
 router.put('/:userId/features/:featureName', requireAdmin, async (req, res) => {
   try {
-    const service = getFeatureService(req);
-    const audit = getAuditService(req);
+    const service = featureService;
+    const audit = auditService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -257,8 +242,8 @@ router.put('/:userId/features/:featureName', requireAdmin, async (req, res) => {
  */
 router.delete('/:userId/features/:featureName/override', requireAdmin, async (req, res) => {
   try {
-    const service = getFeatureService(req);
-    const audit = getAuditService(req);
+    const service = featureService;
+    const audit = auditService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
@@ -334,7 +319,7 @@ router.delete('/:userId/features/:featureName/override', requireAdmin, async (re
  */
 router.get('/:userId/features/:featureName', requireAdmin, async (req, res) => {
   try {
-    const service = getFeatureService(req);
+    const service = featureService;
     if (!service) {
       return res.status(500).json({ error: 'Database not initialized' });
     }

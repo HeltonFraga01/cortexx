@@ -14,10 +14,18 @@ const express = require('express')
 const router = express.Router()
 const { logger } = require('../utils/logger')
 const BotService = require('../services/BotService')
+const AutomationService = require('../services/AutomationService')
+const QuotaService = require('../services/QuotaService')
+const SupabaseService = require('../services/SupabaseService')
 const { quotaMiddleware, resolveUserId } = require('../middleware/quotaEnforcement')
 const { featureMiddleware } = require('../middleware/featureEnforcement')
 const { validateSupabaseToken } = require('../middleware/supabaseAuth')
 const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware')
+
+// Initialize services at module level (they use SupabaseService internally)
+const botService = new BotService()
+const automationService = new AutomationService()
+const quotaService = new QuotaService()
 
 /**
  * Middleware para verificar token do usuário usando InboxContext
@@ -113,8 +121,6 @@ function getBotUserId(req) {
  */
 router.get('/', verifyUserToken, async (req, res) => {
   try {
-    const db = req.app.locals.db
-    const botService = new BotService(db)
     const userId = getBotUserId(req)
     
     const bots = await botService.getBots(userId)
@@ -137,13 +143,7 @@ router.get('/', verifyUserToken, async (req, res) => {
  */
 router.get('/assigned', verifyUserToken, async (req, res) => {
   try {
-    const db = req.app.locals.db
     const userId = getBotUserId(req)
-    const AutomationService = require('../services/AutomationService')
-    const QuotaService = require('../services/QuotaService')
-    const SupabaseService = require('../services/SupabaseService')
-    const automationService = new AutomationService(db)
-    const quotaService = new QuotaService(db)
 
     // Get user's inboxes via accounts table using Supabase
     // Users own accounts, accounts have inboxes
@@ -221,8 +221,6 @@ router.get('/assigned', verifyUserToken, async (req, res) => {
 router.get('/:id', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
-    const db = req.app.locals.db
-    const botService = new BotService(db)
     const userId = getBotUserId(req)
     
     const bot = await botService.getBotById(parseInt(id, 10), userId)
@@ -253,8 +251,6 @@ router.post('/', verifyUserToken, featureMiddleware.botAutomation, quotaMiddlewa
       return res.status(400).json({ success: false, error: 'Outgoing webhook URL is required' })
     }
 
-    const db = req.app.locals.db
-    const botService = new BotService(db)
     const userId = getBotUserId(req)
     
     const bot = await botService.createBot(userId, {
@@ -291,8 +287,6 @@ router.put('/:id', verifyUserToken, async (req, res) => {
     const { id } = req.params
     const { name, description, avatarUrl, outgoingUrl, includeHistory } = req.body
 
-    const db = req.app.locals.db
-    const botService = new BotService(db)
     const userId = getBotUserId(req)
     
     const bot = await botService.updateBot(parseInt(id, 10), userId, {
@@ -322,8 +316,6 @@ router.delete('/:id', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
 
-    const db = req.app.locals.db
-    const botService = new BotService(db)
     const userId = getBotUserId(req)
     
     await botService.deleteBot(parseInt(id, 10), userId)
@@ -347,8 +339,6 @@ router.post('/:id/pause', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
 
-    const db = req.app.locals.db
-    const botService = new BotService(db)
     const userId = getBotUserId(req)
     
     const bot = await botService.pauseBot(parseInt(id, 10), userId)
@@ -372,8 +362,6 @@ router.post('/:id/resume', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
 
-    const db = req.app.locals.db
-    const botService = new BotService(db)
     const userId = getBotUserId(req)
     
     const bot = await botService.resumeBot(parseInt(id, 10), userId)
@@ -397,8 +385,6 @@ router.post('/:id/regenerate-token', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
 
-    const db = req.app.locals.db
-    const botService = new BotService(db)
     const userId = getBotUserId(req)
     
     const bot = await botService.regenerateAccessToken(parseInt(id, 10), userId)
@@ -424,8 +410,6 @@ router.post('/:id/set-default', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
 
-    const db = req.app.locals.db
-    const botService = new BotService(db)
     const userId = getBotUserId(req)
     
     const bot = await botService.setDefaultBot(parseInt(id, 10), userId)
@@ -455,8 +439,6 @@ router.put('/priorities', verifyUserToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Priorities array is required' })
     }
 
-    const db = req.app.locals.db
-    const botService = new BotService(db)
     const userId = getBotUserId(req)
     
     await botService.updatePriorities(userId, priorities)

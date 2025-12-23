@@ -5,14 +5,17 @@
  * Campaigns consume quota from the account owner.
  * 
  * Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 4.1, 4.2, 4.3, 5.3, 5.4, 9.1, 9.4
+ * 
+ * MIGRATED: Now uses SupabaseService directly instead of db parameter
  */
 
 const { v4: uuidv4 } = require('uuid');
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class AgentCampaignService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   /**
@@ -35,37 +38,40 @@ class AgentCampaignService {
     const status = scheduledAt ? 'scheduled' : 'pending';
 
     // Store campaign config as JSON
-    const campaignConfig = JSON.stringify({
+    const campaignConfig = {
       messages: messages || [],
       humanization,
       schedule
+    };
+
+    const { error: insertError } = await SupabaseService.insert('agent_campaigns', {
+      id: campaignId,
+      agent_id: agentId,
+      account_id: accountId,
+      inbox_id: inboxId,
+      name,
+      status,
+      total_contacts: contacts.length,
+      config: campaignConfig,
+      scheduled_at: scheduledAt
     });
 
-    await this.db.query(`
-      INSERT INTO agent_campaigns (
-        id, agent_id, account_id, inbox_id, name, status, 
-        total_contacts, config, scheduled_at, created_at, updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      campaignId, agentId, accountId, inboxId, name, status,
-      contacts.length, campaignConfig, scheduledAt, now, now
-    ]);
+    if (insertError) {
+      logger.error('Failed to create campaign', { error: insertError.message, agentId });
+      throw insertError;
+    }
 
     // Insert contacts
     for (const contact of contacts) {
       const contactId = uuidv4();
-      await this.db.query(`
-        INSERT INTO agent_campaign_contacts (id, campaign_id, phone, name, variables, status, created_at)
-        VALUES (?, ?, ?, ?, ?, 'pending', ?)
-      `, [
-        contactId,
-        campaignId,
-        contact.phone,
-        contact.name || null,
-        JSON.stringify(contact.variables || {}),
-        now
-      ]);
+      await SupabaseService.insert('agent_campaign_contacts', {
+        id: contactId,
+        campaign_id: campaignId,
+        phone: contact.phone,
+        name: contact.name || null,
+        variables: contact.variables || {},
+        status: 'pending'
+      });
     }
 
     logger.info('Agent campaign created', { 
@@ -86,39 +92,38 @@ class AgentCampaignService {
    * @returns {Promise<array>} List of campaigns
    */
   async listCampaigns(agentId, accountId, filters = {}) {
-    let query = `
-      SELECT id, agent_id, account_id, inbox_id, name, status,
-             total_contacts, sent_count, failed_count, current_position,
-             config, scheduled_at, started_at, completed_at, created_at, updated_at
-      FROM agent_campaigns
-      WHERE agent_id = ? AND account_id = ?
-    `;
-    const params = [agentId, accountId];
+    const { data, error } = await SupabaseService.queryAsAdmin('agent_campaigns', (query) => {
+      let q = query.select('*')
+        .eq('agent_id', agentId)
+        .eq('account_id', accountId);
 
-    if (filters.status) {
-      query += ' AND status = ?';
-      params.push(filters.status);
+      if (filters.status) {
+        q = q.eq('status', filters.status);
+      }
+
+      if (filters.startDate) {
+        q = q.gte('created_at', filters.startDate);
+      }
+
+      if (filters.endDate) {
+        q = q.lte('created_at', filters.endDate);
+      }
+
+      q = q.order('created_at', { ascending: false });
+
+      if (filters.limit) {
+        q = q.limit(filters.limit);
+      }
+
+      return q;
+    });
+
+    if (error) {
+      logger.error('Failed to list campaigns', { error: error.message, agentId });
+      return [];
     }
 
-    if (filters.startDate) {
-      query += ' AND created_at >= ?';
-      params.push(filters.startDate);
-    }
-
-    if (filters.endDate) {
-      query += ' AND created_at <= ?';
-      params.push(filters.endDate);
-    }
-
-    query += ' ORDER BY created_at DESC';
-
-    if (filters.limit) {
-      query += ' LIMIT ?';
-      params.push(filters.limit);
-    }
-
-    const { rows } = await this.db.query(query, params);
-    return rows.map(row => this.formatCampaign(row));
+    return (data || []).map(row => this.formatCampaign(row));
   }
 
   /**
@@ -128,19 +133,15 @@ class AgentCampaignService {
    * @returns {Promise<object|null>} Campaign or null
    */
   async getCampaign(agentId, campaignId) {
-    const { rows } = await this.db.query(`
-      SELECT id, agent_id, account_id, inbox_id, name, status,
-             total_contacts, sent_count, failed_count, current_position,
-             config, scheduled_at, started_at, completed_at, created_at, updated_at
-      FROM agent_campaigns
-      WHERE id = ? AND agent_id = ?
-    `, [campaignId, agentId]);
+    const { data, error } = await SupabaseService.queryAsAdmin('agent_campaigns', (query) =>
+      query.select('*').eq('id', campaignId).eq('agent_id', agentId).single()
+    );
 
-    if (rows.length === 0) {
+    if (error || !data) {
       return null;
     }
 
-    return this.formatCampaign(rows[0]);
+    return this.formatCampaign(data);
   }
 
   /**
@@ -150,22 +151,24 @@ class AgentCampaignService {
    * @returns {Promise<array>} List of contacts
    */
   async getCampaignContacts(campaignId, filters = {}) {
-    let query = `
-      SELECT id, campaign_id, phone, name, variables, status, sent_at, error_message, message_id, created_at
-      FROM agent_campaign_contacts
-      WHERE campaign_id = ?
-    `;
-    const params = [campaignId];
+    const { data, error } = await SupabaseService.queryAsAdmin('agent_campaign_contacts', (query) => {
+      let q = query.select('*').eq('campaign_id', campaignId);
 
-    if (filters.status) {
-      query += ' AND status = ?';
-      params.push(filters.status);
+      if (filters.status) {
+        q = q.eq('status', filters.status);
+      }
+
+      q = q.order('created_at', { ascending: true });
+
+      return q;
+    });
+
+    if (error) {
+      logger.error('Failed to get campaign contacts', { error: error.message, campaignId });
+      return [];
     }
 
-    query += ' ORDER BY created_at ASC';
-
-    const { rows } = await this.db.query(query, params);
-    return rows.map(row => this.formatContact(row));
+    return (data || []).map(row => this.formatContact(row));
   }
 
   /**
@@ -184,12 +187,14 @@ class AgentCampaignService {
       throw new Error('Only running campaigns can be paused');
     }
 
-    const now = new Date().toISOString();
-    await this.db.query(`
-      UPDATE agent_campaigns
-      SET status = 'paused', updated_at = ?
-      WHERE id = ? AND agent_id = ?
-    `, [now, campaignId, agentId]);
+    const { error } = await SupabaseService.queryAsAdmin('agent_campaigns', (query) =>
+      query.update({ status: 'paused' }).eq('id', campaignId).eq('agent_id', agentId)
+    );
+
+    if (error) {
+      logger.error('Failed to pause campaign', { error: error.message, campaignId });
+      throw error;
+    }
 
     logger.info('Agent campaign paused', { campaignId, agentId, position: campaign.currentPosition });
 
@@ -212,12 +217,14 @@ class AgentCampaignService {
       throw new Error('Only paused campaigns can be resumed');
     }
 
-    const now = new Date().toISOString();
-    await this.db.query(`
-      UPDATE agent_campaigns
-      SET status = 'running', updated_at = ?
-      WHERE id = ? AND agent_id = ?
-    `, [now, campaignId, agentId]);
+    const { error } = await SupabaseService.queryAsAdmin('agent_campaigns', (query) =>
+      query.update({ status: 'running' }).eq('id', campaignId).eq('agent_id', agentId)
+    );
+
+    if (error) {
+      logger.error('Failed to resume campaign', { error: error.message, campaignId });
+      throw error;
+    }
 
     logger.info('Agent campaign resumed', { campaignId, agentId, position: campaign.currentPosition });
 
@@ -243,18 +250,19 @@ class AgentCampaignService {
     const now = new Date().toISOString();
 
     // Mark remaining pending contacts as cancelled
-    await this.db.query(`
-      UPDATE agent_campaign_contacts
-      SET status = 'cancelled'
-      WHERE campaign_id = ? AND status = 'pending'
-    `, [campaignId]);
+    await SupabaseService.queryAsAdmin('agent_campaign_contacts', (query) =>
+      query.update({ status: 'cancelled' }).eq('campaign_id', campaignId).eq('status', 'pending')
+    );
 
     // Update campaign status
-    await this.db.query(`
-      UPDATE agent_campaigns
-      SET status = 'cancelled', completed_at = ?, updated_at = ?
-      WHERE id = ? AND agent_id = ?
-    `, [now, now, campaignId, agentId]);
+    const { error } = await SupabaseService.queryAsAdmin('agent_campaigns', (query) =>
+      query.update({ status: 'cancelled', completed_at: now }).eq('id', campaignId).eq('agent_id', agentId)
+    );
+
+    if (error) {
+      logger.error('Failed to cancel campaign', { error: error.message, campaignId });
+      throw error;
+    }
 
     logger.info('Agent campaign cancelled', { campaignId, agentId });
 
@@ -278,11 +286,14 @@ class AgentCampaignService {
     }
 
     const now = new Date().toISOString();
-    await this.db.query(`
-      UPDATE agent_campaigns
-      SET status = 'running', started_at = ?, updated_at = ?
-      WHERE id = ? AND agent_id = ?
-    `, [now, now, campaignId, agentId]);
+    const { error } = await SupabaseService.queryAsAdmin('agent_campaigns', (query) =>
+      query.update({ status: 'running', started_at: now }).eq('id', campaignId).eq('agent_id', agentId)
+    );
+
+    if (error) {
+      logger.error('Failed to start campaign', { error: error.message, campaignId });
+      throw error;
+    }
 
     logger.info('Agent campaign started', { campaignId, agentId });
 
@@ -296,13 +307,18 @@ class AgentCampaignService {
    */
   async updateProgress(campaignId, progress) {
     const { sentCount, failedCount, currentPosition } = progress;
-    const now = new Date().toISOString();
 
-    await this.db.query(`
-      UPDATE agent_campaigns
-      SET sent_count = ?, failed_count = ?, current_position = ?, updated_at = ?
-      WHERE id = ?
-    `, [sentCount, failedCount, currentPosition, now, campaignId]);
+    const { error } = await SupabaseService.queryAsAdmin('agent_campaigns', (query) =>
+      query.update({ 
+        sent_count: sentCount, 
+        failed_count: failedCount, 
+        current_position: currentPosition 
+      }).eq('id', campaignId)
+    );
+
+    if (error) {
+      logger.error('Failed to update campaign progress', { error: error.message, campaignId });
+    }
   }
 
   /**
@@ -311,13 +327,15 @@ class AgentCampaignService {
    */
   async completeCampaign(campaignId) {
     const now = new Date().toISOString();
-    await this.db.query(`
-      UPDATE agent_campaigns
-      SET status = 'completed', completed_at = ?, updated_at = ?
-      WHERE id = ?
-    `, [now, now, campaignId]);
+    const { error } = await SupabaseService.queryAsAdmin('agent_campaigns', (query) =>
+      query.update({ status: 'completed', completed_at: now }).eq('id', campaignId)
+    );
 
-    logger.info('Agent campaign completed', { campaignId });
+    if (error) {
+      logger.error('Failed to complete campaign', { error: error.message, campaignId });
+    } else {
+      logger.info('Agent campaign completed', { campaignId });
+    }
   }
 
   /**
@@ -330,11 +348,18 @@ class AgentCampaignService {
     const now = new Date().toISOString();
     const { errorMessage, messageId } = data;
 
-    await this.db.query(`
-      UPDATE agent_campaign_contacts
-      SET status = ?, sent_at = ?, error_message = ?, message_id = ?
-      WHERE id = ?
-    `, [status, status === 'sent' ? now : null, errorMessage || null, messageId || null, contactId]);
+    const { error } = await SupabaseService.queryAsAdmin('agent_campaign_contacts', (query) =>
+      query.update({ 
+        status, 
+        sent_at: status === 'sent' ? now : null, 
+        error_message: errorMessage || null, 
+        message_id: messageId || null 
+      }).eq('id', contactId)
+    );
+
+    if (error) {
+      logger.error('Failed to update contact status', { error: error.message, contactId });
+    }
   }
 
   /**
@@ -343,19 +368,19 @@ class AgentCampaignService {
    * @returns {Promise<object|null>} Next contact or null
    */
   async getNextPendingContact(campaignId) {
-    const { rows } = await this.db.query(`
-      SELECT id, campaign_id, phone, name, variables, status, created_at
-      FROM agent_campaign_contacts
-      WHERE campaign_id = ? AND status = 'pending'
-      ORDER BY created_at ASC
-      LIMIT 1
-    `, [campaignId]);
+    const { data, error } = await SupabaseService.queryAsAdmin('agent_campaign_contacts', (query) =>
+      query.select('*')
+        .eq('campaign_id', campaignId)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: true })
+        .limit(1)
+    );
 
-    if (rows.length === 0) {
+    if (error || !data || data.length === 0) {
       return null;
     }
 
-    return this.formatContact(rows[0]);
+    return this.formatContact(data[0]);
   }
 
   /**
@@ -366,7 +391,7 @@ class AgentCampaignService {
   formatCampaign(row) {
     let config = {};
     try {
-      config = row.config ? JSON.parse(row.config) : {};
+      config = row.config ? (typeof row.config === 'string' ? JSON.parse(row.config) : row.config) : {};
     } catch (e) {
       config = {};
     }
@@ -402,7 +427,7 @@ class AgentCampaignService {
   formatContact(row) {
     let variables = {};
     try {
-      variables = row.variables ? JSON.parse(row.variables) : {};
+      variables = row.variables ? (typeof row.variables === 'string' ? JSON.parse(row.variables) : row.variables) : {};
     } catch (e) {
       variables = {};
     }

@@ -3,6 +3,7 @@ const errorHandler = require('../middleware/errorHandler');
 const { adminLimiter } = require('../middleware/rateLimiter');
 const { requireAdminToken } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
+const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
@@ -53,12 +54,10 @@ router.post('/:connectionId/users',
         });
       }
       
-      const db = req.app.locals.db;
+      // Buscar conexão usando SupabaseService
+      const { data: connection, error: connError } = await SupabaseService.getById('database_connections', connectionId);
       
-      // Buscar conexão
-      const connection = await db.getConnectionById(connectionId);
-      
-      if (!connection) {
+      if (connError || !connection) {
         logger.warn('⚠️ Conexão não encontrada:', { connectionId });
         
         return res.status(404).json({
@@ -83,11 +82,11 @@ router.post('/:connectionId/users',
       const newUsers = user_ids.filter(userId => !assignedUsers.includes(userId));
       const updatedUsers = [...assignedUsers, ...newUsers];
       
-      // Atualizar conexão com novos usuários (atualização direta do campo)
-      await db.query(
-        'UPDATE database_connections SET assigned_users = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [JSON.stringify(updatedUsers), connectionId]
-      );
+      // Atualizar conexão com novos usuários usando SupabaseService
+      await SupabaseService.update('database_connections', connectionId, {
+        assigned_users: JSON.stringify(updatedUsers),
+        updated_at: new Date().toISOString()
+      });
       
       logger.info('✅ Usuários atribuídos à conexão:', {
         connectionId,
@@ -107,11 +106,17 @@ router.post('/:connectionId/users',
         
         for (const userId of newUsers) {
           try {
-            const permission = await db.createTablePermission(
-              userId,
-              connection.table_name,
-              defaultPermissions
-            );
+            // Create table permission using SupabaseService
+            const { data: permission, error: permError } = await SupabaseService.insert('table_permissions', {
+              user_id: userId,
+              table_name: connection.table_name,
+              can_read: defaultPermissions.can_read,
+              can_write: defaultPermissions.can_write,
+              can_delete: defaultPermissions.can_delete,
+              created_at: new Date().toISOString()
+            });
+            
+            if (permError) throw permError;
             
             createdPermissions.push({
               user_id: userId,
@@ -122,7 +127,7 @@ router.post('/:connectionId/users',
             logger.info('✅ Permissão de tabela criada:', {
               user_id: userId,
               table_name: connection.table_name,
-              permission_id: permission.id
+              permission_id: permission?.id
             });
           } catch (error) {
             // Se a permissão já existe, apenas logar e continuar
@@ -192,12 +197,10 @@ router.delete('/:connectionId/users/:userId',
       const { connectionId, userId } = req.params;
       const { delete_permissions = false } = req.query;
       
-      const db = req.app.locals.db;
+      // Buscar conexão usando SupabaseService
+      const { data: connection, error: connError } = await SupabaseService.getById('database_connections', connectionId);
       
-      // Buscar conexão
-      const connection = await db.getConnectionById(connectionId);
-      
-      if (!connection) {
+      if (connError || !connection) {
         logger.warn('⚠️ Conexão não encontrada:', { connectionId });
         
         return res.status(404).json({
@@ -237,11 +240,11 @@ router.delete('/:connectionId/users/:userId',
       // Remover usuário
       const updatedUsers = assignedUsers.filter(id => id !== userId);
       
-      // Atualizar conexão (atualização direta do campo)
-      await db.query(
-        'UPDATE database_connections SET assigned_users = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [JSON.stringify(updatedUsers), connectionId]
-      );
+      // Atualizar conexão usando SupabaseService
+      await SupabaseService.update('database_connections', connectionId, {
+        assigned_users: JSON.stringify(updatedUsers),
+        updated_at: new Date().toISOString()
+      });
       
       logger.info('✅ Usuário removido da conexão:', {
         connectionId,
@@ -254,11 +257,15 @@ router.delete('/:connectionId/users/:userId',
       let deletedPermissions = 0;
       if (delete_permissions && connection.table_name) {
         try {
-          const permissions = await db.getUserTablePermissions(userId);
-          const tablePermission = permissions.find(p => p.table_name === connection.table_name);
+          // Get user's table permissions using SupabaseService
+          const { data: permissions, error: permError } = await SupabaseService.getMany('table_permissions', {
+            user_id: userId,
+            table_name: connection.table_name
+          });
           
-          if (tablePermission) {
-            await db.deleteTablePermission(tablePermission.id);
+          if (!permError && permissions && permissions.length > 0) {
+            const tablePermission = permissions[0];
+            await SupabaseService.delete('table_permissions', tablePermission.id);
             deletedPermissions = 1;
             
             logger.info('✅ Permissão de tabela deletada:', {
@@ -319,12 +326,11 @@ router.get('/:connectionId/users',
   async (req, res) => {
     try {
       const { connectionId } = req.params;
-      const db = req.app.locals.db;
       
-      // Buscar conexão
-      const connection = await db.getConnectionById(connectionId);
+      // Buscar conexão usando SupabaseService
+      const { data: connection, error: connError } = await SupabaseService.getById('database_connections', connectionId);
       
-      if (!connection) {
+      if (connError || !connection) {
         logger.warn('⚠️ Conexão não encontrada:', { connectionId });
         
         return res.status(404).json({

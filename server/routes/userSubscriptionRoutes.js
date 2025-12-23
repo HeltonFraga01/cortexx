@@ -15,26 +15,10 @@ const SubscriptionService = require('../services/SubscriptionService');
 const QuotaService = require('../services/QuotaService');
 const FeatureFlagService = require('../services/FeatureFlagService');
 
-// Services initialized lazily from app.locals.db
-let subscriptionService = null;
-let quotaService = null;
-let featureFlagService = null;
-
-/**
- * Initialize services from app.locals.db
- * @param {Object} db - Database instance from app.locals.db
- */
-function initServices(db) {
-  if (!subscriptionService && db) {
-    subscriptionService = new SubscriptionService(db);
-  }
-  if (!quotaService && db) {
-    quotaService = new QuotaService(db);
-  }
-  if (!featureFlagService && db) {
-    featureFlagService = new FeatureFlagService(db);
-  }
-}
+// Services initialized at module level (use SupabaseService internally)
+const subscriptionService = new SubscriptionService();
+const quotaService = new QuotaService();
+const featureFlagService = new FeatureFlagService();
 
 /**
  * GET /api/user/subscription
@@ -43,7 +27,7 @@ function initServices(db) {
 router.get('/subscription', requireUser, async (req, res) => {
   const userId = getUserId(req);
   try {
-    initServices(req.app.locals.db);
+    
     
     const subscription = await subscriptionService.getUserSubscription(userId);
     
@@ -78,7 +62,7 @@ router.get('/quotas', requireUser, async (req, res) => {
   const userId = getUserId(req);
   const userToken = getUserToken(req);
   try {
-    initServices(req.app.locals.db);
+    
     
     const quotas = await quotaService.getUserQuotas(userId, userToken);
     
@@ -114,7 +98,7 @@ router.get('/quotas/:quotaType', requireUser, async (req, res) => {
   const userToken = getUserToken(req);
   const { quotaType } = req.params;
   try {
-    initServices(req.app.locals.db);
+    
     
     const status = await quotaService.checkQuota(userId, quotaType, 1, userToken);
     const threshold = await quotaService.checkAlertThreshold(userId, quotaType);
@@ -147,7 +131,7 @@ router.get('/quotas/:quotaType', requireUser, async (req, res) => {
 router.get('/features', requireUser, async (req, res) => {
   const userId = getUserId(req);
   try {
-    initServices(req.app.locals.db);
+    
     
     const features = await featureFlagService.getUserFeatures(userId);
     
@@ -175,7 +159,7 @@ router.get('/features/:featureName', requireUser, async (req, res) => {
   const userId = getUserId(req);
   const { featureName } = req.params;
   try {
-    initServices(req.app.locals.db);
+    
     
     const enabled = await featureFlagService.isFeatureEnabled(userId, featureName);
     const features = await featureFlagService.getUserFeatures(userId);
@@ -215,12 +199,10 @@ router.get('/account-summary', requireUser, async (req, res) => {
   const userId = getUserId(req);
   const userToken = getUserToken(req);
   try {
-    initServices(req.app.locals.db);
-    const db = req.app.locals.db;
     
     // Ensure user has a subscription (assign default plan if missing)
     const SubscriptionEnsurer = require('../services/SubscriptionEnsurer');
-    const subscriptionEnsurer = new SubscriptionEnsurer(db);
+    const subscriptionEnsurer = new SubscriptionEnsurer(null);
     
     // Fetch data with error handling for each service
     let subscription = null;

@@ -5,6 +5,8 @@
  * Processes contacts in order with configurable delays.
  * 
  * Requirements: 4.1, 4.2, 4.3, 5.3, 5.4, 9.1, 9.4
+ * 
+ * MIGRATED: Now uses SupabaseService directly instead of db parameter
  */
 
 const axios = require('axios');
@@ -12,12 +14,13 @@ const { logger } = require('../utils/logger');
 const AgentCampaignService = require('./AgentCampaignService');
 const QuotaService = require('./QuotaService');
 const templateProcessor = require('./TemplateProcessor');
+const SupabaseService = require('./SupabaseService');
 
 class AgentCampaignScheduler {
-  constructor(db) {
-    this.db = db;
-    this.campaignService = new AgentCampaignService(db);
-    this.quotaService = new QuotaService(db);
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
+    this.campaignService = new AgentCampaignService();
+    this.quotaService = new QuotaService();
     this.runningCampaigns = new Map();
   }
 
@@ -241,10 +244,15 @@ class AgentCampaignScheduler {
    * @returns {Promise<object|null>}
    */
   async getCampaignStatus(campaignId) {
-    const { rows } = await this.db.query(`
-      SELECT status FROM agent_campaigns WHERE id = ?
-    `, [campaignId]);
-    return rows[0] || null;
+    const { data, error } = await SupabaseService.queryAsAdmin('agent_campaigns', (query) =>
+      query.select('status').eq('id', campaignId).single()
+    );
+    
+    if (error || !data) {
+      return null;
+    }
+    
+    return data;
   }
 
   /**

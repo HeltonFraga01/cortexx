@@ -15,24 +15,11 @@ const MultiUserAuditService = require('../services/MultiUserAuditService');
 const { requireAgentAuth } = require('../middleware/agentAuth');
 const { skipCsrf } = require('../middleware/csrf');
 
-// Services will be initialized with db
-let agentService = null;
-let sessionService = null;
-let accountService = null;
-let auditService = null;
-
-/**
- * Initialize services with database
- * @param {Object} db - Database instance
- */
-function initServices(db) {
-  if (!agentService) {
-    agentService = new AgentService(db);
-    sessionService = new AgentSessionService(db);
-    accountService = new AccountService(db);
-    auditService = new MultiUserAuditService(db);
-  }
-}
+// Services initialized without db parameter (use SupabaseService internally)
+const agentService = new AgentService();
+const sessionService = new AgentSessionService();
+const accountService = new AccountService();
+const auditService = new MultiUserAuditService();
 
 /**
  * POST /api/agent/login
@@ -41,8 +28,6 @@ function initServices(db) {
  */
 router.post('/login', skipCsrf, async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    
     const { accountId, email, password } = req.body;
     
     if (!email || !password) {
@@ -171,8 +156,6 @@ router.post('/login', skipCsrf, async (req, res) => {
  */
 router.post('/logout', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    
     // Set agent availability to offline - Requirements: 4.5
     await agentService.updateAvailability(req.agent.id, 'offline');
     
@@ -197,8 +180,6 @@ router.post('/logout', requireAgentAuth(null), async (req, res) => {
  */
 router.get('/me', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    
     const permissions = await agentService.getAgentPermissions(req.agent.id);
     
     res.json({
@@ -240,8 +221,6 @@ router.get('/me', requireAgentAuth(null), async (req, res) => {
  */
 router.get('/invitation/:token', skipCsrf, async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    
     const { token } = req.params;
     
     const validation = await agentService.validateInvitation(token);
@@ -290,8 +269,6 @@ router.get('/invitation/:token', skipCsrf, async (req, res) => {
  */
 router.post('/register/:token', skipCsrf, async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    
     const { token } = req.params;
     const { email, password, name, avatarUrl } = req.body;
     
@@ -381,8 +358,6 @@ router.post('/register/:token', skipCsrf, async (req, res) => {
  */
 router.put('/availability', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    
     const { availability } = req.body;
     
     if (!['online', 'busy', 'offline'].includes(availability)) {
@@ -413,8 +388,6 @@ router.put('/availability', requireAgentAuth(null), async (req, res) => {
  */
 router.put('/profile', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    
     const { name, avatarUrl } = req.body;
     
     if (!name && avatarUrl === undefined) {
@@ -474,8 +447,6 @@ router.put('/profile', requireAgentAuth(null), async (req, res) => {
  */
 router.put('/password', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    
     const { currentPassword, newPassword } = req.body;
     
     if (!currentPassword || !newPassword) {
@@ -525,8 +496,6 @@ router.put('/password', requireAgentAuth(null), async (req, res) => {
  */
 router.post('/request-password-reset', skipCsrf, async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    
     const { email } = req.body;
     
     if (!email) {
@@ -584,8 +553,6 @@ router.post('/request-password-reset', skipCsrf, async (req, res) => {
  */
 router.post('/reset-password', skipCsrf, async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    
     const { token, newPassword } = req.body;
     
     if (!token || !newPassword) {
@@ -631,4 +598,3 @@ router.post('/reset-password', skipCsrf, async (req, res) => {
 });
 
 module.exports = router;
-module.exports.initServices = initServices;

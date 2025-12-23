@@ -1,5 +1,7 @@
 /**
  * Media Routes - Endpoints para upload e gerenciamento de mídia
+ * 
+ * Migrated to use QuotaService without db parameter (Task 14.1)
  */
 
 const express = require('express');
@@ -10,7 +12,9 @@ const { logger } = require('../utils/logger');
 const { requireAuth: authenticate } = require('../middleware/auth');
 const { featureMiddleware } = require('../middleware/featureEnforcement');
 const QuotaService = require('../services/QuotaService');
-const db = require('../database');
+
+// Module-level QuotaService instance (uses SupabaseService internally)
+const quotaService = new QuotaService();
 
 // Configuração do multer para upload em memória
 const upload = multer({
@@ -90,7 +94,6 @@ router.post('/upload', authenticate, featureMiddleware.mediaStorage, upload.sing
     const fileSizeMb = req.file.size / (1024 * 1024); // Convert bytes to MB
     
     // Check storage quota before upload
-    const quotaService = new QuotaService(db);
     const quotaCheck = await quotaService.checkQuota(
       userId, 
       QuotaService.QUOTA_TYPES.MAX_STORAGE_MB, 
@@ -354,7 +357,6 @@ router.delete('/:key(*)', authenticate, async (req, res) => {
 
     // Decrement storage usage after successful deletion
     if (fileSizeMb > 0) {
-      const quotaService = new QuotaService(db);
       await quotaService.decrementUsage(userId, QuotaService.QUOTA_TYPES.MAX_STORAGE_MB, fileSizeMb);
     }
 

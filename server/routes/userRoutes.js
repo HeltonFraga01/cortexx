@@ -4,6 +4,7 @@ const { logger } = require('../utils/logger');
 const { requireAuth } = require('../middleware/auth');
 const { validateSupabaseToken } = require('../middleware/supabaseAuth');
 const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
+const UserDataService = require('../services/UserDataService');
 
 const router = express.Router();
 
@@ -81,13 +82,11 @@ router.get('/messages', verifyUserToken, async (req, res) => {
   const { limit = 50, offset = 0 } = req.query;
   
   try {
-    const db = req.app.locals.db;
-    
     // Buscar mensagens reais do banco de dados
-    const messages = await db.getMessageHistory(userToken, parseInt(limit), parseInt(offset));
+    const messages = await UserDataService.getMessageHistory(userToken, parseInt(limit), parseInt(offset));
     
     // Buscar total de mensagens para paginação
-    const totalCount = await db.getMessageCount(userToken, 'all');
+    const totalCount = await UserDataService.getMessageCount(userToken, 'all');
     
     // Formatar mensagens para o formato esperado pelo frontend
     const formattedMessages = messages.map(msg => ({
@@ -130,7 +129,6 @@ router.get('/dashboard-stats', verifyUserToken, async (req, res) => {
   
   try {
     const wuzapiBaseUrl = process.env.WUZAPI_BASE_URL || 'https://wzapi.wasend.com.br';
-    const db = req.app.locals.db;
     
     // Buscar status da sessão
     const sessionResponse = await axios.get(`${wuzapiBaseUrl}/session/status`, {
@@ -147,7 +145,7 @@ router.get('/dashboard-stats', verifyUserToken, async (req, res) => {
     const loggedIn = sessionData.loggedIn || false;
     
     // Buscar contagem real de mensagens enviadas hoje
-    const messagesCount = await db.getMessageCount(userToken, 'today');
+    const messagesCount = await UserDataService.getMessageCount(userToken, 'today');
     
     // Estatísticas baseadas no status da sessão e dados reais
     const stats = {
@@ -189,8 +187,7 @@ router.get('/database-connections', verifyUserToken, async (req, res) => {
   const userId = req.userId;
   
   try {
-    const db = req.app.locals.db;
-    const connections = await db.getUserConnections(userId);
+    const connections = await UserDataService.getUserConnections(userId);
     
     res.json({
       success: true,
@@ -217,10 +214,8 @@ router.get('/database-connections/:id', verifyUserToken, async (req, res) => {
       userId: userId?.substring(0, 8) + '...' 
     });
     
-    const db = req.app.locals.db;
-    
     // Buscar a conexão
-    const connection = await db.getConnectionById(parseInt(id));
+    const connection = await UserDataService.getConnectionById(parseInt(id));
     
     if (!connection) {
       return res.status(404).json({
@@ -232,7 +227,7 @@ router.get('/database-connections/:id', verifyUserToken, async (req, res) => {
     }
     
     // Validar se o usuário tem acesso à conexão
-    const hasAccess = db.validateUserConnectionAccess(userId, connection);
+    const hasAccess = UserDataService.validateUserConnectionAccess(userId, connection);
     
     if (!hasAccess) {
       return res.status(403).json({
@@ -275,10 +270,8 @@ router.get('/database-connections/:id/record', verifyUserToken, async (req, res)
       userToken: userToken.substring(0, 8) + '...' 
     });
     
-    const db = req.app.locals.db;
-    
     // Buscar configuração da conexão
-    const connection = await db.getConnectionById(parseInt(id));
+    const connection = await UserDataService.getConnectionById(parseInt(id));
     
     if (!connection) {
       return res.status(404).json({
@@ -292,7 +285,7 @@ router.get('/database-connections/:id/record', verifyUserToken, async (req, res)
     // Validar usuário e obter ID
     let userId;
     try {
-      userId = await db.validateUserAndGetId(userToken);
+      userId = await UserDataService.validateUserAndGetId(userToken);
     } catch (error) {
       return res.status(401).json({
         success: false,
@@ -304,7 +297,7 @@ router.get('/database-connections/:id/record', verifyUserToken, async (req, res)
     }
     
     // Verificar se o usuário tem acesso a esta conexão
-    if (!db.validateUserConnectionAccess(userId, connection)) {
+    if (!UserDataService.validateUserConnectionAccess(userId, connection)) {
       return res.status(403).json({
         success: false,
         error: 'Access denied to this connection',
@@ -326,55 +319,13 @@ router.get('/database-connections/:id/record', verifyUserToken, async (req, res)
     }
     
     // Buscar registro baseado no tipo de banco
-    let record = null;
-    
-    try {
-      if (connection.type === 'NOCODB') {
-        record = await db.fetchNocoDBUserRecord(connection, userLinkField, userToken);
-      } else if (connection.type === 'MYSQL' || connection.type === 'POSTGRESQL' || connection.type === 'POSTGRES') {
-        record = await db.fetchSQLUserRecord(connection, userLinkField, userToken);
-      } else {
-        return res.status(400).json({
-          success: false,
-          error: `Database type not supported: ${connection.type}`,
-          code: 'UNSUPPORTED_TYPE',
-          timestamp: new Date().toISOString()
-        });
-      }
-    } catch (error) {
-      logger.error('❌ Erro ao buscar registro do usuário:', { 
-        connectionId: id, 
-        error: error.message,
-        stack: error.stack 
-      });
-      
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to fetch user record',
-        message: error.message,
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    if (!record) {
-      return res.status(404).json({
-        success: false,
-        error: 'No record found for this user',
-        code: 'RECORD_NOT_FOUND',
-        suggestion: 'Contact administrator to create a record for your account',
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    res.json({
-      success: true,
-      data: record,
-      metadata: {
-        connectionId: parseInt(id),
-        connectionName: connection.name,
-        tableName: connection.table_name || connection.nocodb_table_id,
-        userLinkField: userLinkField
-      }
+    // NOTE: These methods need to be implemented in a dedicated NocoDB/SQL service
+    // For now, return not implemented error
+    return res.status(501).json({
+      success: false,
+      error: 'External database record fetch not yet migrated to new service',
+      code: 'NOT_IMPLEMENTED',
+      timestamp: new Date().toISOString()
     });
     
   } catch (error) {
@@ -404,17 +355,13 @@ router.get('/database-connections/:id/data', verifyUserToken, async (req, res) =
       userToken: userToken.substring(0, 8) + '...' 
     });
     
-    const db = req.app.locals.db;
-    const data = await db.getUserTableData(userToken, parseInt(id));
-    
-    res.json({
-      success: true,
-      data: data,
-      metadata: {
-        totalRecords: data.length,
-        connectionId: parseInt(id),
-        timestamp: new Date().toISOString()
-      }
+    // NOTE: getUserTableData requires NocoDB/external DB integration
+    // This needs to be implemented in a dedicated service
+    return res.status(501).json({
+      success: false,
+      error: 'External database data fetch not yet migrated to new service',
+      code: 'NOT_IMPLEMENTED',
+      timestamp: new Date().toISOString()
     });
     
   } catch (error) {
@@ -453,13 +400,13 @@ router.post('/database-connections/:id/data', verifyUserToken, async (req, res) 
     const userToken = req.userToken;
     const recordData = req.body;
     
-    const db = req.app.locals.db;
-    const result = await db.createUserTableRecord(userToken, id, recordData);
-    
-    res.status(201).json({
-      success: true,
-      message: 'Registro criado com sucesso',
-      data: result
+    // NOTE: createUserTableRecord requires NocoDB/external DB integration
+    // This needs to be implemented in a dedicated service
+    return res.status(501).json({
+      success: false,
+      error: 'External database record creation not yet migrated to new service',
+      code: 'NOT_IMPLEMENTED',
+      timestamp: new Date().toISOString()
     });
   } catch (err) {
     logger.error('Erro ao criar registro:', err.message);
@@ -484,21 +431,12 @@ router.get('/database-connections/:id/data/:recordId', verifyUserToken, async (r
       userToken: userToken.substring(0, 8) + '...' 
     });
     
-    const db = req.app.locals.db;
-    const record = await db.getUserTableRecordById(userToken, parseInt(id), recordId);
-    
-    if (!record) {
-      return res.status(404).json({
-        success: false,
-        error: 'Registro não encontrado',
-        code: 'RECORD_NOT_FOUND',
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    res.json({
-      success: true,
-      data: record,
+    // NOTE: getUserTableRecordById requires NocoDB/external DB integration
+    // This needs to be implemented in a dedicated service
+    return res.status(501).json({
+      success: false,
+      error: 'External database record fetch not yet migrated to new service',
+      code: 'NOT_IMPLEMENTED',
       timestamp: new Date().toISOString()
     });
     
@@ -539,13 +477,13 @@ router.put('/database-connections/:id/data/:recordId', verifyUserToken, async (r
     const userToken = req.userToken;
     const recordData = req.body;
     
-    const db = req.app.locals.db;
-    const result = await db.updateUserTableRecord(userToken, id, recordId, recordData);
-    
-    res.json({
-      success: true,
-      message: 'Registro atualizado com sucesso',
-      data: result
+    // NOTE: updateUserTableRecord requires NocoDB/external DB integration
+    // This needs to be implemented in a dedicated service
+    return res.status(501).json({
+      success: false,
+      error: 'External database record update not yet migrated to new service',
+      code: 'NOT_IMPLEMENTED',
+      timestamp: new Date().toISOString()
     });
   } catch (err) {
     logger.error('Erro ao atualizar registro:', err.message);
@@ -564,13 +502,13 @@ router.delete('/database-connections/:id/data/:recordId', verifyUserToken, async
     const { id, recordId } = req.params;
     const userToken = req.userToken;
     
-    const db = req.app.locals.db;
-    const result = await db.deleteUserTableRecord(userToken, id, recordId);
-    
-    res.json({
-      success: true,
-      message: 'Registro deletado com sucesso',
-      data: result
+    // NOTE: deleteUserTableRecord requires NocoDB/external DB integration
+    // This needs to be implemented in a dedicated service
+    return res.status(501).json({
+      success: false,
+      error: 'External database record deletion not yet migrated to new service',
+      code: 'NOT_IMPLEMENTED',
+      timestamp: new Date().toISOString()
     });
   } catch (err) {
     logger.error('Erro ao deletar registro:', err.message);
@@ -589,8 +527,7 @@ router.get('/scheduled-messages', verifyUserToken, async (req, res) => {
   const { instance } = req.query;
   
   try {
-    const db = req.app.locals.db;
-    const messages = await db.getScheduledSingleMessages(userToken, instance);
+    const messages = await UserDataService.getScheduledSingleMessages(userToken, instance);
     
     res.json({
       success: true,
@@ -613,8 +550,7 @@ router.delete('/scheduled-messages/:id', verifyUserToken, async (req, res) => {
   const { id } = req.params;
   
   try {
-    const db = req.app.locals.db;
-    await db.cancelScheduledSingleMessage(id, userToken);
+    await UserDataService.cancelScheduledSingleMessage(id, userToken);
     
     res.json({
       success: true,
@@ -636,8 +572,7 @@ router.delete('/messages', verifyUserToken, async (req, res) => {
   const { messageIds } = req.body;
   
   try {
-    const db = req.app.locals.db;
-    const deletedCount = await db.deleteMessages(userToken, messageIds);
+    const deletedCount = await UserDataService.deleteMessages(userToken, messageIds);
     
     res.json({
       success: true,
@@ -659,8 +594,7 @@ router.get('/templates', verifyUserToken, async (req, res) => {
   const userToken = req.userToken;
   
   try {
-    const db = req.app.locals.db;
-    const templates = await db.getTemplates(userToken);
+    const templates = await UserDataService.getTemplates(userToken);
     
     res.json({
       success: true,
@@ -703,9 +637,8 @@ router.post('/templates', verifyUserToken, async (req, res) => {
       });
     }
     
-    const db = req.app.locals.db;
     const hasVariations = content.includes('|') && validation.blockCount > 0;
-    const templateId = await db.createTemplate(userToken, name, content, hasVariations);
+    const templateId = await UserDataService.createTemplate(userToken, name, content, hasVariations);
     
     res.status(201).json({
       success: true,
@@ -759,9 +692,8 @@ router.put('/templates/:id', verifyUserToken, async (req, res) => {
       });
     }
     
-    const db = req.app.locals.db;
     const hasVariations = content.includes('|') && validation.blockCount > 0;
-    const updated = await db.updateTemplate(userToken, parseInt(id), name, content, hasVariations);
+    const updated = await UserDataService.updateTemplate(userToken, parseInt(id), name, content, hasVariations);
     
     if (!updated) {
       return res.status(404).json({
@@ -800,8 +732,7 @@ router.delete('/templates/:id', verifyUserToken, async (req, res) => {
   const { id } = req.params;
   
   try {
-    const db = req.app.locals.db;
-    const deleted = await db.deleteTemplate(userToken, parseInt(id));
+    const deleted = await UserDataService.deleteTemplate(userToken, parseInt(id));
     
     if (!deleted) {
       return res.status(404).json({
@@ -1066,83 +997,11 @@ router.get('/messages/stats', verifyUserToken, async (req, res) => {
   const { period = 'all' } = req.query; // all, today, week, month
   
   try {
-    const db = req.app.locals.db;
-    
-    // Definir filtro de data
-    let dateFilter = '';
-    switch (period) {
-      case 'today':
-        dateFilter = "AND DATE(created_at) = DATE('now')";
-        break;
-      case 'week':
-        dateFilter = "AND created_at >= DATE('now', '-7 days')";
-        break;
-      case 'month':
-        dateFilter = "AND created_at >= DATE('now', '-30 days')";
-        break;
-      case 'all':
-      default:
-        dateFilter = '';
-    }
-    
-    // Buscar estatisticas gerais
-    const statsSql = `
-      SELECT 
-        COUNT(*) as total,
-        SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-        SUM(CASE WHEN message_type = 'text' THEN 1 ELSE 0 END) as text_messages,
-        SUM(CASE WHEN message_type = 'media' THEN 1 ELSE 0 END) as media_messages
-      FROM sent_messages
-      WHERE user_token = ? ${dateFilter}
-    `;
-    
-    const statsResult = await db.query(statsSql, [userToken]);
-    const stats = statsResult.rows[0];
-    
-    // Buscar mensagens por dia (ultimos 7 dias)
-    const dailySql = `
-      SELECT 
-        DATE(created_at) as date,
-        COUNT(*) as count,
-        SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
-      FROM sent_messages
-      WHERE user_token = ?
-      AND created_at >= DATE('now', '-7 days')
-      GROUP BY DATE(created_at)
-      ORDER BY date DESC
-    `;
-    
-    const dailyResult = await db.query(dailySql, [userToken]);
-    const dailyStats = dailyResult.rows;
-    
-    // Buscar mensagens agendadas pendentes
-    const scheduledSql = `
-      SELECT COUNT(*) as count
-      FROM scheduled_single_messages
-      WHERE user_token = ?
-      AND status = 'pending'
-    `;
-    
-    const scheduledResult = await db.query(scheduledSql, [userToken]);
-    const scheduledCount = scheduledResult.rows[0]?.count || 0;
+    const stats = await UserDataService.getMessageStats(userToken, period);
     
     res.json({
       success: true,
-      data: {
-        summary: {
-          total: stats.total || 0,
-          sent: stats.sent || 0,
-          failed: stats.failed || 0,
-          successRate: stats.total > 0 ? ((stats.sent / stats.total) * 100).toFixed(2) : 0,
-          textMessages: stats.text_messages || 0,
-          mediaMessages: stats.media_messages || 0,
-          scheduled: scheduledCount
-        },
-        daily: dailyStats,
-        period
-      }
+      data: stats
     });
     
   } catch (error) {

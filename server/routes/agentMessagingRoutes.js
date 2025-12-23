@@ -14,23 +14,15 @@ const { logger } = require('../utils/logger');
 const { requireAgentAuth, requirePermission } = require('../middleware/agentAuth');
 const InboxService = require('../services/InboxService');
 const QuotaService = require('../services/QuotaService');
+const SupabaseService = require('../services/SupabaseService');
 const { validatePhoneWithAPI } = require('../services/PhoneValidationService');
 
 // Template processor for message variations
 const templateProcessor = require('../services/TemplateProcessor');
 
-// Services will be initialized with db
-let inboxService = null;
-let quotaService = null;
-
-function initServices(db) {
-  if (!inboxService) {
-    inboxService = new InboxService(db);
-  }
-  if (!quotaService) {
-    quotaService = new QuotaService(db);
-  }
-}
+// Services initialized without db parameter (use SupabaseService internally)
+const inboxService = new InboxService();
+const quotaService = new QuotaService();
 
 /**
  * Helper to get agent's inbox IDs
@@ -43,8 +35,7 @@ async function getAgentInboxIds(agentId) {
 /**
  * Helper to get account owner's user ID for quota consumption
  */
-async function getAccountOwnerId(db, accountId) {
-  const SupabaseService = require('../services/SupabaseService');
+async function getAccountOwnerId(accountId) {
   const { data, error } = await SupabaseService.queryAsAdmin('accounts', (query) =>
     query.select('owner_user_id').eq('id', accountId).single()
   );
@@ -58,8 +49,7 @@ async function getAccountOwnerId(db, accountId) {
 /**
  * Helper to get inbox details including WUZAPI token
  */
-async function getInboxDetails(db, inboxId) {
-  const SupabaseService = require('../services/SupabaseService');
+async function getInboxDetails(inboxId) {
   const { data, error } = await SupabaseService.queryAsAdmin('inboxes', (query) =>
     query.select('id, name, wuzapi_token, phone_number, wuzapi_connected').eq('id', inboxId).single()
   );
@@ -88,7 +78,6 @@ function isGroupJid(identifier) {
  */
 router.get('/inboxes', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
     const agentId = req.agent.id;
     
     const inboxes = await inboxService.listAgentInboxes(agentId);
@@ -120,9 +109,6 @@ router.get('/inboxes', requireAgentAuth(null), async (req, res) => {
  */
 router.post('/send/text', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
-    
     const agentId = req.agent.id;
     const accountId = req.account.id;
     const { Phone, Body, inboxId, variables = {} } = req.body;
@@ -152,7 +138,7 @@ router.post('/send/text', requireAgentAuth(null), requirePermission('messages:se
     }
     
     // Get inbox details
-    const inbox = await getInboxDetails(db, inboxId);
+    const inbox = await getInboxDetails(inboxId);
     if (!inbox || !inbox.wuzapi_token) {
       return res.status(400).json({
         success: false,
@@ -168,7 +154,7 @@ router.post('/send/text', requireAgentAuth(null), requirePermission('messages:se
     }
     
     // Get owner's user ID for quota consumption
-    const ownerId = await getAccountOwnerId(db, accountId);
+    const ownerId = await getAccountOwnerId(accountId);
     if (!ownerId) {
       return res.status(500).json({
         success: false,
@@ -321,9 +307,6 @@ router.post('/send/text', requireAgentAuth(null), requirePermission('messages:se
  */
 router.post('/send/image', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
-    
     const agentId = req.agent.id;
     const accountId = req.account.id;
     const { Phone, Image, Caption, inboxId } = req.body;
@@ -345,7 +328,7 @@ router.post('/send/image', requireAgentAuth(null), requirePermission('messages:s
     }
     
     // Get inbox details
-    const inbox = await getInboxDetails(db, inboxId);
+    const inbox = await getInboxDetails(inboxId);
     if (!inbox || !inbox.wuzapi_token || !inbox.wuzapi_connected) {
       return res.status(400).json({
         success: false,
@@ -354,7 +337,7 @@ router.post('/send/image', requireAgentAuth(null), requirePermission('messages:s
     }
     
     // Get owner's user ID for quota consumption
-    const ownerId = await getAccountOwnerId(db, accountId);
+    const ownerId = await getAccountOwnerId(accountId);
     if (!ownerId) {
       return res.status(500).json({
         success: false,
@@ -439,9 +422,6 @@ router.post('/send/image', requireAgentAuth(null), requirePermission('messages:s
  */
 router.post('/send/document', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
-    
     const agentId = req.agent.id;
     const accountId = req.account.id;
     const { Phone, Document, FileName, Caption, inboxId } = req.body;
@@ -463,7 +443,7 @@ router.post('/send/document', requireAgentAuth(null), requirePermission('message
     }
     
     // Get inbox details
-    const inbox = await getInboxDetails(db, inboxId);
+    const inbox = await getInboxDetails(inboxId);
     if (!inbox || !inbox.wuzapi_token || !inbox.wuzapi_connected) {
       return res.status(400).json({
         success: false,
@@ -472,7 +452,7 @@ router.post('/send/document', requireAgentAuth(null), requirePermission('message
     }
     
     // Get owner's user ID for quota consumption
-    const ownerId = await getAccountOwnerId(db, accountId);
+    const ownerId = await getAccountOwnerId(accountId);
     if (!ownerId) {
       return res.status(500).json({
         success: false,
@@ -558,9 +538,6 @@ router.post('/send/document', requireAgentAuth(null), requirePermission('message
  */
 router.post('/send/audio', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
-    
     const agentId = req.agent.id;
     const accountId = req.account.id;
     const { Phone, Audio, inboxId } = req.body;
@@ -582,7 +559,7 @@ router.post('/send/audio', requireAgentAuth(null), requirePermission('messages:s
     }
     
     // Get inbox details
-    const inbox = await getInboxDetails(db, inboxId);
+    const inbox = await getInboxDetails(inboxId);
     if (!inbox || !inbox.wuzapi_token || !inbox.wuzapi_connected) {
       return res.status(400).json({
         success: false,
@@ -591,7 +568,7 @@ router.post('/send/audio', requireAgentAuth(null), requirePermission('messages:s
     }
     
     // Get owner's user ID for quota consumption
-    const ownerId = await getAccountOwnerId(db, accountId);
+    const ownerId = await getAccountOwnerId(accountId);
     if (!ownerId) {
       return res.status(500).json({
         success: false,
@@ -677,13 +654,10 @@ router.post('/send/audio', requireAgentAuth(null), requirePermission('messages:s
  */
 router.get('/quota', requireAgentAuth(null), async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initServices(db);
-    
     const accountId = req.account.id;
     
     // Get owner's user ID
-    const ownerId = await getAccountOwnerId(db, accountId);
+    const ownerId = await getAccountOwnerId(accountId);
     if (!ownerId) {
       return res.status(500).json({
         success: false,
@@ -726,22 +700,10 @@ const AgentTemplateService = require('../services/AgentTemplateService');
 const AgentCampaignService = require('../services/AgentCampaignService');
 const AgentCampaignScheduler = require('../services/AgentCampaignScheduler');
 
-let templateService = null;
-let campaignService = null;
-let campaignScheduler = null;
-
-function initMessagingServices(db) {
-  initServices(db);
-  if (!templateService) {
-    templateService = new AgentTemplateService(db);
-  }
-  if (!campaignService) {
-    campaignService = new AgentCampaignService(db);
-  }
-  if (!campaignScheduler) {
-    campaignScheduler = new AgentCampaignScheduler(db);
-  }
-}
+// Services initialized without db parameter (use SupabaseService internally)
+const templateService = new AgentTemplateService();
+const campaignService = new AgentCampaignService();
+const campaignScheduler = new AgentCampaignScheduler();
 
 /**
  * GET /api/agent/messaging/templates
@@ -750,7 +712,6 @@ function initMessagingServices(db) {
  */
 router.get('/templates', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    initMessagingServices(req.app.locals.db);
     const templates = await templateService.listTemplates(req.agent.id, req.account.id);
     res.json({ success: true, data: templates });
   } catch (error) {
@@ -769,7 +730,6 @@ router.get('/templates', requireAgentAuth(null), requirePermission('messages:sen
  */
 router.post('/templates', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    initMessagingServices(req.app.locals.db);
     const { name, content, config } = req.body;
     
     if (!name || !content) {
@@ -799,7 +759,6 @@ router.post('/templates', requireAgentAuth(null), requirePermission('messages:se
  */
 router.get('/templates/:id', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    initMessagingServices(req.app.locals.db);
     const template = await templateService.getTemplate(req.agent.id, req.params.id);
     
     if (!template) {
@@ -824,7 +783,6 @@ router.get('/templates/:id', requireAgentAuth(null), requirePermission('messages
  */
 router.put('/templates/:id', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    initMessagingServices(req.app.locals.db);
     const { name, content, config } = req.body;
     
     const template = await templateService.updateTemplate(req.agent.id, req.params.id, {
@@ -854,7 +812,6 @@ router.put('/templates/:id', requireAgentAuth(null), requirePermission('messages
  */
 router.delete('/templates/:id', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    initMessagingServices(req.app.locals.db);
     await templateService.deleteTemplate(req.agent.id, req.params.id);
     res.json({ success: true, message: 'Template deleted' });
   } catch (error) {
@@ -879,9 +836,6 @@ router.delete('/templates/:id', requireAgentAuth(null), requirePermission('messa
  */
 router.post('/campaigns', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initMessagingServices(db);
-    
     const { name, inboxId, messages, contacts, humanization, schedule } = req.body;
     
     if (!name || !inboxId || !contacts || contacts.length === 0) {
@@ -901,7 +855,7 @@ router.post('/campaigns', requireAgentAuth(null), requirePermission('messages:se
     }
     
     // Check owner quota
-    const ownerId = await getAccountOwnerId(db, req.account.id);
+    const ownerId = await getAccountOwnerId(req.account.id);
     if (!ownerId) {
       return res.status(500).json({ success: false, error: 'Invalid account configuration' });
     }
@@ -942,8 +896,6 @@ router.post('/campaigns', requireAgentAuth(null), requirePermission('messages:se
  */
 router.get('/campaigns', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    initMessagingServices(req.app.locals.db);
-    
     const { status, startDate, endDate, limit } = req.query;
     
     const campaigns = await campaignService.listCampaigns(req.agent.id, req.account.id, {
@@ -970,8 +922,6 @@ router.get('/campaigns', requireAgentAuth(null), requirePermission('messages:sen
  */
 router.get('/campaigns/:id', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    initMessagingServices(req.app.locals.db);
-    
     const campaign = await campaignService.getCampaign(req.agent.id, req.params.id);
     if (!campaign) {
       return res.status(404).json({ success: false, error: 'Campaign not found' });
@@ -1000,22 +950,19 @@ router.get('/campaigns/:id', requireAgentAuth(null), requirePermission('messages
  */
 router.post('/campaigns/:id/start', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initMessagingServices(db);
-    
     const campaign = await campaignService.getCampaign(req.agent.id, req.params.id);
     if (!campaign) {
       return res.status(404).json({ success: false, error: 'Campaign not found' });
     }
     
     // Get inbox details
-    const inbox = await getInboxDetails(db, campaign.inboxId);
+    const inbox = await getInboxDetails(campaign.inboxId);
     if (!inbox || !inbox.wuzapi_token) {
       return res.status(400).json({ success: false, error: 'Inbox not configured' });
     }
     
     // Get owner ID
-    const ownerId = await getAccountOwnerId(db, req.account.id);
+    const ownerId = await getAccountOwnerId(req.account.id);
     
     // Start campaign execution in background
     campaignScheduler.executeCampaign(req.agent.id, req.params.id, ownerId, inbox)
@@ -1039,8 +986,6 @@ router.post('/campaigns/:id/start', requireAgentAuth(null), requirePermission('m
  */
 router.put('/campaigns/:id/pause', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    initMessagingServices(req.app.locals.db);
-    
     campaignScheduler.stopCampaign(req.params.id);
     const campaign = await campaignService.pauseCampaign(req.agent.id, req.params.id);
     
@@ -1065,14 +1010,11 @@ router.put('/campaigns/:id/pause', requireAgentAuth(null), requirePermission('me
  */
 router.put('/campaigns/:id/resume', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    initMessagingServices(db);
-    
     const campaign = await campaignService.resumeCampaign(req.agent.id, req.params.id);
     
     // Get inbox and owner for execution
-    const inbox = await getInboxDetails(db, campaign.inboxId);
-    const ownerId = await getAccountOwnerId(db, req.account.id);
+    const inbox = await getInboxDetails(campaign.inboxId);
+    const ownerId = await getAccountOwnerId(req.account.id);
     
     // Resume execution in background
     campaignScheduler.executeCampaign(req.agent.id, req.params.id, ownerId, inbox)
@@ -1099,8 +1041,6 @@ router.put('/campaigns/:id/resume', requireAgentAuth(null), requirePermission('m
  */
 router.put('/campaigns/:id/cancel', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    initMessagingServices(req.app.locals.db);
-    
     campaignScheduler.stopCampaign(req.params.id);
     const campaign = await campaignService.cancelCampaign(req.agent.id, req.params.id);
     
@@ -1127,8 +1067,6 @@ router.put('/campaigns/:id/cancel', requireAgentAuth(null), requirePermission('m
  */
 router.get('/reports', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    initMessagingServices(req.app.locals.db);
-    
     const { startDate, endDate } = req.query;
     
     const campaigns = await campaignService.listCampaigns(req.agent.id, req.account.id, {
@@ -1162,8 +1100,6 @@ router.get('/reports', requireAgentAuth(null), requirePermission('messages:send'
  */
 router.get('/reports/:id', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    initMessagingServices(req.app.locals.db);
-    
     const campaign = await campaignService.getCampaign(req.agent.id, req.params.id);
     if (!campaign) {
       return res.status(404).json({ success: false, error: 'Report not found' });
@@ -1197,8 +1133,6 @@ router.get('/reports/:id', requireAgentAuth(null), requirePermission('messages:s
  */
 router.get('/reports/:id/export', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    initMessagingServices(req.app.locals.db);
-    
     const campaign = await campaignService.getCampaign(req.agent.id, req.params.id);
     if (!campaign) {
       return res.status(404).json({ success: false, error: 'Report not found' });
@@ -1243,25 +1177,29 @@ router.get('/reports/:id/export', requireAgentAuth(null), requirePermission('mes
  */
 router.post('/drafts', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    const db = req.app.locals.db;
     const { data } = req.body;
     const now = new Date().toISOString();
     
     // Check if draft exists
-    const { rows: existing } = await db.query(`
-      SELECT id FROM agent_drafts WHERE agent_id = ? AND account_id = ?
-    `, [req.agent.id, req.account.id]);
+    const { data: existing, error: findError } = await SupabaseService.queryAsAdmin('agent_drafts', (query) =>
+      query.select('id').eq('agent_id', req.agent.id).eq('account_id', req.account.id)
+    );
     
-    if (existing.length > 0) {
-      await db.query(`
-        UPDATE agent_drafts SET data = ?, updated_at = ? WHERE agent_id = ? AND account_id = ?
-      `, [JSON.stringify(data), now, req.agent.id, req.account.id]);
+    if (!findError && existing && existing.length > 0) {
+      await SupabaseService.update('agent_drafts', existing[0].id, {
+        data: JSON.stringify(data),
+        updated_at: now
+      });
     } else {
       const { v4: uuidv4 } = require('uuid');
-      await db.query(`
-        INSERT INTO agent_drafts (id, agent_id, account_id, data, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `, [uuidv4(), req.agent.id, req.account.id, JSON.stringify(data), now, now]);
+      await SupabaseService.insert('agent_drafts', {
+        id: uuidv4(),
+        agent_id: req.agent.id,
+        account_id: req.account.id,
+        data: JSON.stringify(data),
+        created_at: now,
+        updated_at: now
+      });
     }
     
     res.json({ success: true, message: 'Draft saved' });
@@ -1281,19 +1219,17 @@ router.post('/drafts', requireAgentAuth(null), requirePermission('messages:send'
  */
 router.get('/drafts', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    const db = req.app.locals.db;
+    const { data: rows, error } = await SupabaseService.queryAsAdmin('agent_drafts', (query) =>
+      query.select('data, updated_at').eq('agent_id', req.agent.id).eq('account_id', req.account.id)
+    );
     
-    const { rows } = await db.query(`
-      SELECT data, updated_at FROM agent_drafts WHERE agent_id = ? AND account_id = ?
-    `, [req.agent.id, req.account.id]);
-    
-    if (rows.length === 0) {
+    if (error || !rows || rows.length === 0) {
       return res.json({ success: true, data: null });
     }
     
     let data = null;
     try {
-      data = JSON.parse(rows[0].data);
+      data = typeof rows[0].data === 'string' ? JSON.parse(rows[0].data) : rows[0].data;
     } catch (e) {
       data = null;
     }
@@ -1321,11 +1257,9 @@ router.get('/drafts', requireAgentAuth(null), requirePermission('messages:send')
  */
 router.delete('/drafts', requireAgentAuth(null), requirePermission('messages:send'), async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    
-    await db.query(`
-      DELETE FROM agent_drafts WHERE agent_id = ? AND account_id = ?
-    `, [req.agent.id, req.account.id]);
+    await SupabaseService.queryAsAdmin('agent_drafts', (query) =>
+      query.delete().eq('agent_id', req.agent.id).eq('account_id', req.account.id)
+    );
     
     res.json({ success: true, message: 'Draft cleared' });
   } catch (error) {

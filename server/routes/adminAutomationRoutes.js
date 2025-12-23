@@ -17,23 +17,9 @@ const router = express.Router();
 // Apply admin authentication to all routes
 router.use(requireAdmin);
 
-// Services will be initialized lazily using app.locals.db
-let automationService = null;
-let auditLogService = null;
-
-// Middleware to ensure services are initialized with the database instance
-router.use((req, res, next) => {
-  if (!automationService || !auditLogService) {
-    const db = req.app.locals.db;
-    if (!db) {
-      logger.error('Database not initialized in app.locals');
-      return res.status(500).json({ success: false, error: 'Database not initialized' });
-    }
-    automationService = new AutomationService(db);
-    auditLogService = new AuditLogService(db);
-  }
-  next();
-});
+// Services initialized at module level (use SupabaseService internally)
+const automationService = new AutomationService();
+const auditLogService = new AuditLogService();
 
 // ==================== Global Settings ====================
 

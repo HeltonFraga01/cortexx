@@ -56,8 +56,8 @@ const DAILY_QUOTAS = [
 const ALERT_THRESHOLD = 0.8;
 
 class QuotaService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   /**

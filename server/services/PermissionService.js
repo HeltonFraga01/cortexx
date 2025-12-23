@@ -8,6 +8,7 @@
 
 const { logger } = require('../utils/logger');
 const crypto = require('crypto');
+const SupabaseService = require('./SupabaseService');
 
 // All available permissions
 const ALL_PERMISSIONS = [
@@ -69,8 +70,8 @@ const DEFAULT_ROLE_PERMISSIONS = {
 };
 
 class PermissionService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   /**
@@ -155,26 +156,22 @@ class PermissionService {
   async getAgentPermissions(agentId) {
     try {
       // Get agent with role info
-      const agentResult = await this.db.query(
-        'SELECT role, custom_role_id FROM agents WHERE id = ?',
-        [agentId]
+      const { data: agent, error: agentError } = await SupabaseService.queryAsAdmin('agents', (query) =>
+        query.select('role, custom_role_id').eq('id', agentId).single()
       );
       
-      if (agentResult.rows.length === 0) {
+      if (agentError || !agent) {
         return [];
       }
       
-      const agent = agentResult.rows[0];
-      
       // If agent has a custom role, get those permissions
       if (agent.custom_role_id) {
-        const roleResult = await this.db.query(
-          'SELECT permissions FROM custom_roles WHERE id = ?',
-          [agent.custom_role_id]
+        const { data: role, error: roleError } = await SupabaseService.queryAsAdmin('custom_roles', (query) =>
+          query.select('permissions').eq('id', agent.custom_role_id).single()
         );
         
-        if (roleResult.rows.length > 0) {
-          return this.parseJSON(roleResult.rows[0].permissions, []);
+        if (!roleError && role) {
+          return this.parseJSON(role.permissions, []);
         }
       }
       
@@ -233,20 +230,19 @@ class PermissionService {
       const id = this.generateId();
       const now = new Date().toISOString();
       
-      const sql = `
-        INSERT INTO custom_roles (id, account_id, name, description, permissions, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `;
+      const { error } = await SupabaseService.queryAsAdmin('custom_roles', (query) =>
+        query.insert({
+          id,
+          account_id: accountId,
+          name: data.name,
+          description: data.description || null,
+          permissions: JSON.stringify(data.permissions),
+          created_at: now,
+          updated_at: now
+        })
+      );
       
-      await this.db.query(sql, [
-        id,
-        accountId,
-        data.name,
-        data.description || null,
-        JSON.stringify(data.permissions),
-        now,
-        now
-      ]);
+      if (error) throw error;
       
       logger.info('Custom role created', { roleId: id, accountId, name: data.name });
       
@@ -264,14 +260,15 @@ class PermissionService {
    */
   async getCustomRoleById(roleId) {
     try {
-      const sql = 'SELECT * FROM custom_roles WHERE id = ?';
-      const result = await this.db.query(sql, [roleId]);
+      const { data, error } = await SupabaseService.queryAsAdmin('custom_roles', (query) =>
+        query.select('*').eq('id', roleId).single()
+      );
       
-      if (result.rows.length === 0) {
+      if (error || !data) {
         return null;
       }
       
-      return this.formatCustomRole(result.rows[0]);
+      return this.formatCustomRole(data);
     } catch (error) {
       logger.error('Failed to get custom role', { error: error.message, roleId });
       throw error;
@@ -285,9 +282,13 @@ class PermissionService {
    */
   async listCustomRoles(accountId) {
     try {
-      const sql = 'SELECT * FROM custom_roles WHERE account_id = ? ORDER BY name';
-      const result = await this.db.query(sql, [accountId]);
-      return result.rows.map(row => this.formatCustomRole(row));
+      const { data, error } = await SupabaseService.queryAsAdmin('custom_roles', (query) =>
+        query.select('*').eq('account_id', accountId).order('name')
+      );
+      
+      if (error) throw error;
+      
+      return (data || []).map(row => this.formatCustomRole(row));
     } catch (error) {
       logger.error('Failed to list custom roles', { error: error.message, accountId });
       throw error;
@@ -302,17 +303,14 @@ class PermissionService {
    */
   async updateCustomRole(roleId, data) {
     try {
-      const updates = [];
-      const params = [];
+      const updateData = {};
       
       if (data.name !== undefined) {
-        updates.push('name = ?');
-        params.push(data.name);
+        updateData.name = data.name;
       }
       
       if (data.description !== undefined) {
-        updates.push('description = ?');
-        params.push(data.description);
+        updateData.description = data.description;
       }
       
       if (data.permissions !== undefined) {
@@ -322,20 +320,20 @@ class PermissionService {
           throw new Error(`Invalid permissions: ${invalidPermissions.join(', ')}`);
         }
         
-        updates.push('permissions = ?');
-        params.push(JSON.stringify(data.permissions));
+        updateData.permissions = JSON.stringify(data.permissions);
       }
       
-      if (updates.length === 0) {
+      if (Object.keys(updateData).length === 0) {
         return this.getCustomRoleById(roleId);
       }
       
-      updates.push('updated_at = ?');
-      params.push(new Date().toISOString());
-      params.push(roleId);
+      updateData.updated_at = new Date().toISOString();
       
-      const sql = `UPDATE custom_roles SET ${updates.join(', ')} WHERE id = ?`;
-      await this.db.query(sql, params);
+      const { error } = await SupabaseService.queryAsAdmin('custom_roles', (query) =>
+        query.update(updateData).eq('id', roleId)
+      );
+      
+      if (error) throw error;
       
       logger.info('Custom role updated', { roleId });
       
@@ -354,13 +352,16 @@ class PermissionService {
   async deleteCustomRole(roleId) {
     try {
       // First, remove custom role from any agents using it
-      await this.db.query(
-        'UPDATE agents SET custom_role_id = NULL WHERE custom_role_id = ?',
-        [roleId]
+      await SupabaseService.queryAsAdmin('agents', (query) =>
+        query.update({ custom_role_id: null }).eq('custom_role_id', roleId)
       );
       
       // Then delete the role
-      await this.db.query('DELETE FROM custom_roles WHERE id = ?', [roleId]);
+      const { error } = await SupabaseService.queryAsAdmin('custom_roles', (query) =>
+        query.delete().eq('id', roleId)
+      );
+      
+      if (error) throw error;
       
       logger.info('Custom role deleted', { roleId });
     } catch (error) {
@@ -376,11 +377,11 @@ class PermissionService {
    */
   async getCustomRoleUsageCount(roleId) {
     try {
-      const result = await this.db.query(
-        'SELECT COUNT(*) as count FROM agents WHERE custom_role_id = ?',
-        [roleId]
-      );
-      return result.rows[0]?.count || 0;
+      const { count, error } = await SupabaseService.count('agents', { custom_role_id: roleId });
+      
+      if (error) throw error;
+      
+      return count || 0;
     } catch (error) {
       logger.error('Failed to get custom role usage', { error: error.message, roleId });
       throw error;
@@ -398,13 +399,15 @@ class PermissionService {
    */
   async assignRole(agentId, role, customRoleId = null) {
     try {
-      const sql = `
-        UPDATE agents 
-        SET role = ?, custom_role_id = ?, updated_at = ? 
-        WHERE id = ?
-      `;
+      const { error } = await SupabaseService.queryAsAdmin('agents', (query) =>
+        query.update({
+          role,
+          custom_role_id: customRoleId,
+          updated_at: new Date().toISOString()
+        }).eq('id', agentId)
+      );
       
-      await this.db.query(sql, [role, customRoleId, new Date().toISOString(), agentId]);
+      if (error) throw error;
       
       logger.info('Role assigned to agent', { agentId, role, customRoleId });
     } catch (error) {
@@ -427,13 +430,14 @@ class PermissionService {
         throw new Error('CUSTOM_ROLE_NOT_FOUND');
       }
       
-      const sql = `
-        UPDATE agents 
-        SET custom_role_id = ?, updated_at = ? 
-        WHERE id = ?
-      `;
+      const { error } = await SupabaseService.queryAsAdmin('agents', (query) =>
+        query.update({
+          custom_role_id: customRoleId,
+          updated_at: new Date().toISOString()
+        }).eq('id', agentId)
+      );
       
-      await this.db.query(sql, [customRoleId, new Date().toISOString(), agentId]);
+      if (error) throw error;
       
       logger.info('Custom role assigned to agent', { agentId, customRoleId });
     } catch (error) {
@@ -449,13 +453,14 @@ class PermissionService {
    */
   async removeCustomRole(agentId) {
     try {
-      const sql = `
-        UPDATE agents 
-        SET custom_role_id = NULL, updated_at = ? 
-        WHERE id = ?
-      `;
+      const { error } = await SupabaseService.queryAsAdmin('agents', (query) =>
+        query.update({
+          custom_role_id: null,
+          updated_at: new Date().toISOString()
+        }).eq('id', agentId)
+      );
       
-      await this.db.query(sql, [new Date().toISOString(), agentId]);
+      if (error) throw error;
       
       logger.info('Custom role removed from agent', { agentId });
     } catch (error) {
@@ -556,16 +561,15 @@ class PermissionService {
       }
       
       // Get current role
-      const result = await this.db.query(
-        'SELECT role FROM agents WHERE id = ?',
-        [agentId]
+      const { data: agent, error } = await SupabaseService.queryAsAdmin('agents', (query) =>
+        query.select('role').eq('id', agentId).single()
       );
       
-      if (result.rows.length === 0) {
+      if (error || !agent) {
         return { allowed: false, reason: 'AGENT_NOT_FOUND' };
       }
       
-      const currentRole = result.rows[0].role;
+      const currentRole = agent.role;
       
       // Prevent owner from demoting themselves
       if (currentRole === 'owner' && newRole !== 'owner') {
@@ -626,13 +630,15 @@ class PermissionService {
    */
   async checkActiveSessionsImpact(agentId) {
     try {
-      const result = await this.db.query(
-        `SELECT COUNT(*) as count FROM agent_sessions 
-         WHERE agent_id = ? AND expires_at > ?`,
-        [agentId, new Date().toISOString()]
+      const now = new Date().toISOString();
+      
+      const { data, error } = await SupabaseService.queryAsAdmin('agent_sessions', (query) =>
+        query.select('id', { count: 'exact', head: true })
+          .eq('agent_id', agentId)
+          .gt('expires_at', now)
       );
       
-      const sessionCount = result.rows[0]?.count || 0;
+      const sessionCount = data?.length || 0;
       
       return {
         hasActiveSessions: sessionCount > 0,

@@ -66,27 +66,19 @@ router.get('/usage', requireAdmin, async (req, res) => {
       });
     }
 
-    // Get usage metrics for tenant users from user_quota_usage using Raw SQL
-    const db = req.app.locals.db;
-    if (!db) {
-      throw new Error('Database connection not available');
-    }
-
+    // Get usage metrics for tenant users from user_quota_usage using SupabaseService
     let usageMetrics = [];
     if (userIds.length > 0) {
-      // Create placeholders for userIds IN clause
-      const placeholders = userIds.map(() => '?').join(',');
-      const query = `
-        SELECT user_id, quota_type, current_usage, period_start 
-        FROM user_quota_usage 
-        WHERE user_id IN (${placeholders}) 
-        AND period_start >= ? 
-        AND period_start <= ?
-        ORDER BY period_start DESC
-      `;
-      
-      const { rows } = await db.query(query, [...userIds, start.toISOString(), end.toISOString()]);
-      usageMetrics = rows;
+      const { data: metrics, error: metricsError } = await SupabaseService.adminClient
+        .from('user_quota_usage')
+        .select('user_id, quota_type, current_usage, period_start')
+        .in('user_id', userIds)
+        .gte('period_start', start.toISOString())
+        .lte('period_start', end.toISOString())
+        .order('period_start', { ascending: false });
+
+      if (metricsError) throw metricsError;
+      usageMetrics = metrics || [];
     }
 
     // Aggregate metrics
@@ -479,21 +471,15 @@ router.get('/export', requireAdmin, async (req, res) => {
       filename = `usage-report-${start.toISOString().split('T')[0]}-${end.toISOString().split('T')[0]}`;
 
       if (userIds.length > 0) {
-        const db = req.app.locals.db;
-        if (!db) throw new Error('Database connection not available');
+        const { data: metrics, error: metricsError } = await SupabaseService.adminClient
+          .from('user_quota_usage')
+          .select('user_id, quota_type, current_usage, period_start')
+          .in('user_id', userIds)
+          .gte('period_start', start.toISOString())
+          .lte('period_start', end.toISOString())
+          .order('period_start', { ascending: false });
 
-        const placeholders = userIds.map(() => '?').join(',');
-        const query = `
-          SELECT user_id, quota_type, current_usage, period_start 
-          FROM user_quota_usage 
-          WHERE user_id IN (${placeholders}) 
-          AND period_start >= ? 
-          AND period_start <= ?
-          ORDER BY period_start DESC
-        `;
-
-        const { rows: metrics } = await db.query(query, [...userIds, start.toISOString(), end.toISOString()]);
-
+        if (metricsError) throw metricsError;
         data = (metrics || []).map(row => [row.user_id, row.quota_type, row.current_usage, row.period_start]);
       }
 

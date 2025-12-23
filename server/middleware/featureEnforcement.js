@@ -6,14 +6,16 @@
  * Returns 403 with feature info when disabled.
  * Supports both JWT (Supabase Auth) and session-based authentication.
  * 
+ * Migrated to use module-level service initialization (Task 14.1)
+ * 
  * Requirements: 4.2, 4.3
  */
 
 const { logger } = require('../utils/logger');
 const FeatureFlagService = require('../services/FeatureFlagService');
 
-// FeatureFlagService instance - initialized lazily from app.locals.db
-let featureService = null;
+// Module-level service instance (FeatureFlagService now uses SupabaseService internally)
+const featureService = new FeatureFlagService();
 
 /**
  * Helper to get user ID from request (JWT or session)
@@ -30,15 +32,10 @@ function getUserRole(req) {
 }
 
 /**
- * Get or initialize the FeatureFlagService instance
- * @param {Object} req - Express request with app.locals.db
- * @returns {FeatureFlagService|null} FeatureFlagService instance or null if db not available
+ * Get the FeatureFlagService instance
+ * @returns {FeatureFlagService} FeatureFlagService instance
  */
-function getFeatureService(req) {
-  if (!featureService && req.app?.locals?.db) {
-    featureService = new FeatureFlagService(req.app.locals.db);
-    logger.debug('FeatureFlagService initialized from app.locals.db');
-  }
+function getFeatureService() {
   return featureService;
 }
 
@@ -59,13 +56,6 @@ function isAdminFeature(featureName) {
 function requireFeature(featureName) {
   return async (req, res, next) => {
     try {
-      // Get FeatureFlagService instance from app.locals.db
-      const service = getFeatureService(req);
-      if (!service) {
-        logger.warn('Feature check skipped - FeatureFlagService not initialized', { featureName });
-        return next();
-      }
-
       // Skip feature check for admin users (JWT or session)
       const userRole = getUserRole(req);
       if (userRole === 'admin' || userRole === 'superadmin') {
@@ -99,7 +89,7 @@ function requireFeature(featureName) {
       }
 
       // Check if feature is enabled for user
-      const isEnabled = await service.isFeatureEnabled(userId, featureName);
+      const isEnabled = await featureService.isFeatureEnabled(userId, featureName);
 
       if (!isEnabled) {
         logger.warn('Feature disabled for user', {

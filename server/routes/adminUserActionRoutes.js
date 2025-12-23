@@ -22,24 +22,14 @@ const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
-let subscriptionService = null;
-let quotaService = null;
-let featureService = null;
-let auditService = null;
-let usageService = null;
+// Services initialized at module level (use SupabaseService internally)
+const subscriptionService = new SubscriptionService();
+const quotaService = new QuotaService();
+const featureService = new FeatureFlagService();
+const auditService = new AdminAuditService();
+const usageService = new UsageTrackingService();
 
-function getServices(req) {
-  const db = req.app.locals.db;
-  if (!db) return null;
-  
-  if (!subscriptionService) subscriptionService = new SubscriptionService(db);
-  if (!quotaService) quotaService = new QuotaService(db);
-  if (!featureService) featureService = new FeatureFlagService(db);
-  if (!auditService) auditService = new AdminAuditService(db);
-  if (!usageService) usageService = new UsageTrackingService(db);
-  
-  return { subscriptionService, quotaService, featureService, auditService, usageService };
-}
+const services = { subscriptionService, quotaService, featureService, auditService, usageService };
 
 /**
  * Validate that a user belongs to the specified tenant
@@ -84,8 +74,8 @@ async function validateUserTenant(userId, tenantId) {
  */
 router.post('/:userId/suspend', requireAdmin, async (req, res) => {
   try {
-    const services = getServices(req);
-    if (!services) {
+    // Services already initialized at module level
+    if (!services.subscriptionService) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
@@ -157,8 +147,8 @@ router.post('/:userId/suspend', requireAdmin, async (req, res) => {
  */
 router.post('/:userId/reactivate', requireAdmin, async (req, res) => {
   try {
-    const services = getServices(req);
-    if (!services) {
+    // Services already initialized at module level
+    if (!services.subscriptionService) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
@@ -223,8 +213,8 @@ router.post('/:userId/reactivate', requireAdmin, async (req, res) => {
  */
 router.post('/:userId/reset-password', requireAdmin, async (req, res) => {
   try {
-    const services = getServices(req);
-    if (!services) {
+    // Services already initialized at module level
+    if (!services.subscriptionService) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
@@ -294,8 +284,8 @@ router.post('/:userId/reset-password', requireAdmin, async (req, res) => {
  */
 router.delete('/:userId', requireAdmin, async (req, res) => {
   try {
-    const services = getServices(req);
-    if (!services) {
+    // Services already initialized at module level
+    if (!services.subscriptionService) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
@@ -401,8 +391,8 @@ router.delete('/:userId', requireAdmin, async (req, res) => {
  */
 router.get('/:userId/export', requireAdmin, async (req, res) => {
   try {
-    const services = getServices(req);
-    if (!services) {
+    // Services already initialized at module level
+    if (!services.subscriptionService) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 
@@ -494,8 +484,8 @@ router.get('/:userId/export', requireAdmin, async (req, res) => {
  */
 router.post('/:userId/notify', requireAdmin, async (req, res) => {
   try {
-    const services = getServices(req);
-    if (!services) {
+    // Services already initialized at module level
+    if (!services.subscriptionService) {
       return res.status(500).json({ error: 'Database not initialized' });
     }
 

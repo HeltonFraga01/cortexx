@@ -8,6 +8,7 @@
 
 const { logger } = require('../utils/logger');
 const crypto = require('crypto');
+const SupabaseService = require('./SupabaseService');
 
 // Metric types
 const METRIC_TYPES = {
@@ -21,8 +22,8 @@ const METRIC_TYPES = {
 };
 
 class UsageTrackingService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   generateId() {

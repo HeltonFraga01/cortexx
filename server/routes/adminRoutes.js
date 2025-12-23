@@ -8,31 +8,9 @@ const supabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
 
-// Services will be initialized lazily using app.locals.db
-let automationService = null;
-let auditLogService = null;
-
-// Helper function to get automation service
-function getAutomationService(req) {
-  if (!automationService) {
-    const db = req.app.locals.db;
-    if (db) {
-      automationService = new AutomationService(db);
-    }
-  }
-  return automationService;
-}
-
-// Helper function to get audit log service
-function getAuditLogService(req) {
-  if (!auditLogService) {
-    const db = req.app.locals.db;
-    if (db) {
-      auditLogService = new AuditLogService(db);
-    }
-  }
-  return auditLogService;
-}
+// Services initialized at module level (use SupabaseService internally)
+const automationService = new AutomationService();
+const auditLogService = new AuditLogService();
 
 /**
  * Helper function to get the best available WUZAPI admin token
@@ -928,12 +906,10 @@ router.post('/users',
         // Apply automations to new user (non-blocking, don't fail user creation)
         let automationResults = null;
         try {
-          const autoService = getAutomationService(req);
-          const auditService = getAuditLogService(req);
-          if (autoService && auditService) {
-            automationResults = await autoService.applyAutomationsToNewUser(
+          if (automationService && auditLogService) {
+            automationResults = await automationService.applyAutomationsToNewUser(
               userData.token,
-              auditService
+              auditLogService
             );
             
             logger.info('Automations applied to new user', {

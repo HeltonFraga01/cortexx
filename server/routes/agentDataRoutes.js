@@ -13,17 +13,14 @@ const { requireAgentAuth } = require('../middleware/agentAuth');
 const InboxService = require('../services/InboxService');
 const AgentService = require('../services/AgentService');
 const SupabaseService = require('../services/SupabaseService');
+const DatabaseConnectionService = require('../services/DatabaseConnectionService');
+const AgentDatabaseAccessService = require('../services/AgentDatabaseAccessService');
+const ContactFetcherService = require('../services/ContactFetcherService');
 
-// Services will be initialized with db
-let inboxService = null;
-let agentService = null;
-
-function initServices(db) {
-  if (!inboxService) {
-    inboxService = new InboxService(db);
-    agentService = new AgentService(db);
-  }
-}
+// Initialize services at module level (they use SupabaseService internally)
+const inboxService = new InboxService();
+const agentService = new AgentService();
+const accessService = new AgentDatabaseAccessService();
 
 /**
  * GET /api/agent/my/inboxes
@@ -31,8 +28,6 @@ function initServices(db) {
  */
 router.get('/my/inboxes', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
-    
     const agentId = req.agent.id;
     
     // Get inboxes where this agent is a member (uses existing listAgentInboxes method)
@@ -58,7 +53,6 @@ router.get('/my/inboxes', requireAgentAuth(null), async (req, res) => {
  */
 router.get('/my/inboxes/status', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
     const wuzapiClient = require('../utils/wuzapiClient');
     
     const agentId = req.agent.id;
@@ -179,7 +173,7 @@ router.get('/my/inboxes/status', requireAgentAuth(null), async (req, res) => {
  */
 router.get('/my/inboxes/:inboxId/status', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    
     const wuzapiClient = require('../utils/wuzapiClient');
     
     const agentId = req.agent.id;
@@ -294,7 +288,7 @@ router.get('/my/inboxes/:inboxId/status', requireAgentAuth(null), async (req, re
  */
 router.get('/my/conversations', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    
     
     const agentId = req.agent.id;
     const accountId = req.account.id;
@@ -325,7 +319,7 @@ router.get('/my/conversations', requireAgentAuth(null), async (req, res) => {
  */
 router.get('/my/contacts', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    
     const SupabaseService = require('../services/SupabaseService');
     
     const agentId = req.agent.id;
@@ -465,7 +459,7 @@ router.get('/my/contacts', requireAgentAuth(null), async (req, res) => {
  */
 router.get('/my/stats', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    
     const SupabaseService = require('../services/SupabaseService');
     
     const agentId = req.agent.id;
@@ -559,7 +553,7 @@ router.get('/my/stats', requireAgentAuth(null), async (req, res) => {
  */
 router.post('/my/inboxes/:inboxId/import-contacts', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    
     const axios = require('axios');
     const SupabaseService = require('../services/SupabaseService');
     const crypto = require('crypto');
@@ -794,11 +788,8 @@ router.post('/my/inboxes/:inboxId/import-contacts', requireAgentAuth(null), asyn
  */
 router.get('/database-connections', requireAgentAuth(null), async (req, res) => {
   try {
-    const db = req.app.locals.db;
-    const accountId = req.account.id;
-    
     // Get all connections for the account
-    const connections = await db.getAllConnections();
+    const connections = await DatabaseConnectionService.getAllConnections();
     
     // Filter to only return basic info (no credentials)
     const sanitizedConnections = connections.map(conn => ({
@@ -828,12 +819,7 @@ router.get('/database-connections', requireAgentAuth(null), async (req, res) => 
  */
 router.get('/my-database-connections', requireAgentAuth(null), async (req, res) => {
   try {
-    const db = req.app.locals.db;
     const agentId = req.agent.id;
-    
-    // Initialize AgentDatabaseAccessService
-    const AgentDatabaseAccessService = require('../services/AgentDatabaseAccessService');
-    const accessService = new AgentDatabaseAccessService(db);
     
     // Get accessible databases for this agent
     const accessibleDatabases = await accessService.getAccessibleDatabases(agentId);
@@ -847,7 +833,7 @@ router.get('/my-database-connections', requireAgentAuth(null), async (req, res) 
     
     // Get full connection details for accessible databases
     const connectionIds = accessibleDatabases.map(a => a.connectionId);
-    const connections = await db.getAllConnections();
+    const connections = await DatabaseConnectionService.getAllConnections();
     
     // Filter and enrich with access level
     const accessibleConnections = connections
@@ -884,11 +870,9 @@ router.post('/database-connections/:id/preview', requireAgentAuth(null), async (
   try {
     const { id } = req.params;
     const { query } = req.body;
-    const db = req.app.locals.db;
     
     // Import ContactFetcherService
-    const ContactFetcherService = require('../services/ContactFetcherService');
-    const fetcher = new ContactFetcherService(db);
+    const fetcher = new ContactFetcherService();
     
     // Use a system token or the account's token for fetching
     // For now, we'll pass null and let the service handle it
@@ -921,11 +905,9 @@ router.post('/database-connections/:id/fetch', requireAgentAuth(null), async (re
   try {
     const { id } = req.params;
     const { query } = req.body;
-    const db = req.app.locals.db;
     
     // Import ContactFetcherService
-    const ContactFetcherService = require('../services/ContactFetcherService');
-    const fetcher = new ContactFetcherService(db);
+    const fetcher = new ContactFetcherService();
     
     const contacts = await fetcher.fetchContacts(id, null, query);
     
@@ -960,13 +942,10 @@ router.post('/database-connections/:id/fetch', requireAgentAuth(null), async (re
  */
 router.get('/database/:connectionId', requireAgentAuth(null), async (req, res) => {
   try {
-    const db = req.app.locals.db;
     const agentId = req.agent.id;
     const { connectionId } = req.params;
     
     // Check agent has access to this connection
-    const AgentDatabaseAccessService = require('../services/AgentDatabaseAccessService');
-    const accessService = new AgentDatabaseAccessService(db);
     const accessLevel = await accessService.checkDatabaseAccess(agentId, connectionId);
     
     if (accessLevel === 'none') {
@@ -974,7 +953,7 @@ router.get('/database/:connectionId', requireAgentAuth(null), async (req, res) =
     }
     
     // Get connection details
-    const connection = await db.getConnectionById(parseInt(connectionId));
+    const connection = await DatabaseConnectionService.getConnectionById(connectionId);
     if (!connection) {
       return res.status(404).json({ error: 'Conexão não encontrada' });
     }
@@ -1019,13 +998,10 @@ router.get('/database/:connectionId', requireAgentAuth(null), async (req, res) =
  */
 router.get('/database/:connectionId/data', requireAgentAuth(null), async (req, res) => {
   try {
-    const db = req.app.locals.db;
     const agentId = req.agent.id;
     const { connectionId } = req.params;
     
     // Check agent has access
-    const AgentDatabaseAccessService = require('../services/AgentDatabaseAccessService');
-    const accessService = new AgentDatabaseAccessService(db);
     const accessLevel = await accessService.checkDatabaseAccess(agentId, connectionId);
     
     if (accessLevel === 'none') {
@@ -1033,7 +1009,7 @@ router.get('/database/:connectionId/data', requireAgentAuth(null), async (req, r
     }
     
     // Get connection
-    const connection = await db.getConnectionById(parseInt(connectionId));
+    const connection = await DatabaseConnectionService.getConnectionById(connectionId);
     if (!connection) {
       return res.status(404).json({ error: 'Conexão não encontrada' });
     }
@@ -1072,18 +1048,15 @@ router.get('/database/:connectionId/data', requireAgentAuth(null), async (req, r
       records = [];
     }
     
-    // Format data if method exists
-    const formattedData = db.formatTableData ? db.formatTableData(records, connection) : records;
-    
     logger.info('Agent fetched database data', {
       agentId,
       connectionId,
-      recordCount: formattedData.length
+      recordCount: records.length
     });
     
     res.json({
       success: true,
-      data: formattedData
+      data: records
     });
   } catch (error) {
     logger.error('Failed to get database data for agent', { 
@@ -1101,13 +1074,10 @@ router.get('/database/:connectionId/data', requireAgentAuth(null), async (req, r
  */
 router.get('/database/:connectionId/record/:recordId', requireAgentAuth(null), async (req, res) => {
   try {
-    const db = req.app.locals.db;
     const agentId = req.agent.id;
     const { connectionId, recordId } = req.params;
     
     // Check agent has access
-    const AgentDatabaseAccessService = require('../services/AgentDatabaseAccessService');
-    const accessService = new AgentDatabaseAccessService(db);
     const accessLevel = await accessService.checkDatabaseAccess(agentId, connectionId);
     
     if (accessLevel === 'none') {
@@ -1115,17 +1085,31 @@ router.get('/database/:connectionId/record/:recordId', requireAgentAuth(null), a
     }
     
     // Get connection
-    const connection = await db.getConnectionById(parseInt(connectionId));
+    const connection = await DatabaseConnectionService.getConnectionById(connectionId);
     if (!connection) {
       return res.status(404).json({ error: 'Conexão não encontrada' });
     }
     
-    // Fetch record using database methods
+    // Fetch record from NocoDB
     let record = null;
     if (connection.type === 'NOCODB') {
-      record = await db.getNocoDBRecordById(connection, recordId);
-    } else {
-      record = await db.getExternalDBRecordById(connection, recordId);
+      const axios = require('axios');
+      const nocoApi = axios.create({
+        baseURL: connection.host,
+        headers: {
+          'xc-token': connection.nocodb_token || connection.password || '',
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+      
+      const projectId = connection.nocodb_project_id || connection.database;
+      const tableId = connection.nocodb_table_id || connection.table_name;
+      
+      const response = await nocoApi.get(
+        `/api/v1/db/data/noco/${projectId}/${tableId}/${recordId}`
+      );
+      record = response.data;
     }
     
     if (!record) {
@@ -1160,14 +1144,11 @@ router.get('/database/:connectionId/record/:recordId', requireAgentAuth(null), a
  */
 router.put('/database/:connectionId/record/:recordId', requireAgentAuth(null), async (req, res) => {
   try {
-    const db = req.app.locals.db;
     const agentId = req.agent.id;
     const { connectionId, recordId } = req.params;
     const updateData = req.body;
     
     // Check agent has FULL access
-    const AgentDatabaseAccessService = require('../services/AgentDatabaseAccessService');
-    const accessService = new AgentDatabaseAccessService(db);
     const accessLevel = await accessService.checkDatabaseAccess(agentId, connectionId);
     
     if (accessLevel === 'none') {
@@ -1179,17 +1160,34 @@ router.put('/database/:connectionId/record/:recordId', requireAgentAuth(null), a
     }
     
     // Get connection
-    const connection = await db.getConnectionById(parseInt(connectionId));
+    const connection = await DatabaseConnectionService.getConnectionById(connectionId);
     if (!connection) {
       return res.status(404).json({ error: 'Conexão não encontrada' });
     }
     
-    // Update record using database methods
+    // Update record in NocoDB
     let updatedRecord = null;
     if (connection.type === 'NOCODB') {
-      updatedRecord = await db.updateNocoDBRecord(connection, recordId, updateData);
+      const axios = require('axios');
+      const nocoApi = axios.create({
+        baseURL: connection.host,
+        headers: {
+          'xc-token': connection.nocodb_token || connection.password || '',
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+      
+      const projectId = connection.nocodb_project_id || connection.database;
+      const tableId = connection.nocodb_table_id || connection.table_name;
+      
+      const response = await nocoApi.patch(
+        `/api/v1/db/data/noco/${projectId}/${tableId}/${recordId}`,
+        updateData
+      );
+      updatedRecord = response.data;
     } else {
-      updatedRecord = await db.updateExternalDBRecord(connection, recordId, updateData);
+      throw new Error('Atualização de registros não suportada para este tipo de conexão');
     }
     
     logger.info('Agent updated database record', {
@@ -1220,14 +1218,11 @@ router.put('/database/:connectionId/record/:recordId', requireAgentAuth(null), a
  */
 router.post('/database/:connectionId/record', requireAgentAuth(null), async (req, res) => {
   try {
-    const db = req.app.locals.db;
     const agentId = req.agent.id;
     const { connectionId } = req.params;
     const recordData = req.body;
     
     // Check agent has FULL access
-    const AgentDatabaseAccessService = require('../services/AgentDatabaseAccessService');
-    const accessService = new AgentDatabaseAccessService(db);
     const accessLevel = await accessService.checkDatabaseAccess(agentId, connectionId);
     
     if (accessLevel === 'none') {
@@ -1239,15 +1234,14 @@ router.post('/database/:connectionId/record', requireAgentAuth(null), async (req
     }
     
     // Get connection
-    const connection = await db.getConnectionById(parseInt(connectionId));
+    const connection = await DatabaseConnectionService.getConnectionById(connectionId);
     if (!connection) {
       return res.status(404).json({ error: 'Conexão não encontrada' });
     }
     
-    // Create record using database methods
+    // Create record in NocoDB
     let newRecord = null;
     if (connection.type === 'NOCODB') {
-      // Use axios directly for NocoDB create
       const axios = require('axios');
       const nocoApi = axios.create({
         baseURL: connection.host,
@@ -1267,11 +1261,6 @@ router.post('/database/:connectionId/record', requireAgentAuth(null), async (req
       );
       newRecord = response.data;
     } else {
-      // For other types, use existing methods if available
-      logger.warn('Agent record creation for non-NocoDB connections not fully implemented', {
-        connectionType: connection.type,
-        connectionId
-      });
       throw new Error('Criação de registros não suportada para este tipo de conexão');
     }
     
@@ -1301,13 +1290,10 @@ router.post('/database/:connectionId/record', requireAgentAuth(null), async (req
  */
 router.get('/database/:connectionId/columns', requireAgentAuth(null), async (req, res) => {
   try {
-    const db = req.app.locals.db;
     const agentId = req.agent.id;
     const { connectionId } = req.params;
     
     // Check agent has access
-    const AgentDatabaseAccessService = require('../services/AgentDatabaseAccessService');
-    const accessService = new AgentDatabaseAccessService(db);
     const accessLevel = await accessService.checkDatabaseAccess(agentId, connectionId);
     
     if (accessLevel === 'none') {
@@ -1315,7 +1301,7 @@ router.get('/database/:connectionId/columns', requireAgentAuth(null), async (req
     }
     
     // Get connection
-    const connection = await db.getConnectionById(parseInt(connectionId));
+    const connection = await DatabaseConnectionService.getConnectionById(connectionId);
     if (!connection) {
       return res.status(404).json({ error: 'Conexão não encontrada' });
     }
@@ -1359,9 +1345,8 @@ router.get('/database/:connectionId/columns', requireAgentAuth(null), async (req
  */
 router.get('/custom-themes', requireAgentAuth(null), async (req, res) => {
   try {
-    const db = req.app.locals.db;
     const { getCustomThemeService } = require('../services/CustomThemeService');
-    const service = getCustomThemeService(db);
+    const service = getCustomThemeService();
     
     const { connection_id, limit, offset } = req.query;
 
@@ -1398,9 +1383,8 @@ router.get('/custom-themes', requireAgentAuth(null), async (req, res) => {
  */
 router.get('/custom-themes/:id', requireAgentAuth(null), async (req, res) => {
   try {
-    const db = req.app.locals.db;
     const { getCustomThemeService } = require('../services/CustomThemeService');
-    const service = getCustomThemeService(db);
+    const service = getCustomThemeService();
     
     const { id } = req.params;
     const theme = await service.getById(parseInt(id, 10));
@@ -1562,7 +1546,7 @@ function parseCSV(content) {
  */
 router.post('/contacts/import/wuzapi', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    
     
     const agentId = req.agent.id;
     const { instance, inboxId } = req.body;
@@ -1824,7 +1808,7 @@ router.post('/contacts/import/wuzapi', requireAgentAuth(null), async (req, res) 
  */
 router.post('/contacts/import/csv', requireAgentAuth(null), upload.single('file'), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    
     
     const agentId = req.agent.id;
     const { inboxId } = req.body;
@@ -1913,7 +1897,7 @@ router.post('/contacts/import/csv', requireAgentAuth(null), upload.single('file'
  */
 router.post('/contacts/import/manual', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.locals.db);
+    
     
     const agentId = req.agent.id;
     const { numbers, inboxId } = req.body;

@@ -7,10 +7,11 @@
  */
 
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class CascadeDeleteService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   /**
@@ -44,84 +45,72 @@ class CascadeDeleteService {
       logger.info('Starting cascade delete for account', { accountId });
 
       // 1. Delete audit logs
-      const auditResult = await this.db.query(
-        'DELETE FROM audit_log WHERE account_id = ?',
-        [accountId]
+      await SupabaseService.queryAsAdmin('audit_log', (query) =>
+        query.delete().eq('account_id', accountId)
       );
-      summary.deletedCounts.auditLogs = auditResult.changes || 0;
+      summary.deletedCounts.auditLogs = 'deleted';
 
       // 2. Delete agent sessions
-      const sessionsResult = await this.db.query(
-        'DELETE FROM agent_sessions WHERE account_id = ?',
-        [accountId]
+      await SupabaseService.queryAsAdmin('agent_sessions', (query) =>
+        query.delete().eq('account_id', accountId)
       );
-      summary.deletedCounts.sessions = sessionsResult.changes || 0;
+      summary.deletedCounts.sessions = 'deleted';
 
       // 3. Get all agents for this account (needed for inbox/team member cleanup)
-      const { rows: agents } = await this.db.query(
-        'SELECT id FROM agents WHERE account_id = ?',
-        [accountId]
+      const { data: agents } = await SupabaseService.queryAsAdmin('agents', (query) =>
+        query.select('id').eq('account_id', accountId)
       );
-      const agentIds = agents.map(a => a.id);
+      const agentIds = (agents || []).map(a => a.id);
 
       // 4. Delete inbox members for account's agents
       if (agentIds.length > 0) {
-        const placeholders = agentIds.map(() => '?').join(',');
-        const inboxMembersResult = await this.db.query(
-          `DELETE FROM inbox_members WHERE agent_id IN (${placeholders})`,
-          agentIds
+        await SupabaseService.queryAsAdmin('inbox_members', (query) =>
+          query.delete().in('agent_id', agentIds)
         );
-        summary.deletedCounts.inboxMembers = inboxMembersResult.changes || 0;
+        summary.deletedCounts.inboxMembers = 'deleted';
 
         // 5. Delete team members for account's agents
-        const teamMembersResult = await this.db.query(
-          `DELETE FROM team_members WHERE agent_id IN (${placeholders})`,
-          agentIds
+        await SupabaseService.queryAsAdmin('team_members', (query) =>
+          query.delete().in('agent_id', agentIds)
         );
-        summary.deletedCounts.teamMembers = teamMembersResult.changes || 0;
+        summary.deletedCounts.teamMembers = 'deleted';
       }
 
       // 6. Delete inboxes
-      const inboxesResult = await this.db.query(
-        'DELETE FROM inboxes WHERE account_id = ?',
-        [accountId]
+      await SupabaseService.queryAsAdmin('inboxes', (query) =>
+        query.delete().eq('account_id', accountId)
       );
-      summary.deletedCounts.inboxes = inboxesResult.changes || 0;
+      summary.deletedCounts.inboxes = 'deleted';
 
       // 7. Delete teams
-      const teamsResult = await this.db.query(
-        'DELETE FROM teams WHERE account_id = ?',
-        [accountId]
+      await SupabaseService.queryAsAdmin('teams', (query) =>
+        query.delete().eq('account_id', accountId)
       );
-      summary.deletedCounts.teams = teamsResult.changes || 0;
+      summary.deletedCounts.teams = 'deleted';
 
       // 8. Delete custom roles
-      const rolesResult = await this.db.query(
-        'DELETE FROM custom_roles WHERE account_id = ?',
-        [accountId]
+      await SupabaseService.queryAsAdmin('custom_roles', (query) =>
+        query.delete().eq('account_id', accountId)
       );
-      summary.deletedCounts.customRoles = rolesResult.changes || 0;
+      summary.deletedCounts.customRoles = 'deleted';
 
       // 9. Delete agent invitations
-      const invitationsResult = await this.db.query(
-        'DELETE FROM agent_invitations WHERE account_id = ?',
-        [accountId]
+      await SupabaseService.queryAsAdmin('agent_invitations', (query) =>
+        query.delete().eq('account_id', accountId)
       );
-      summary.deletedCounts.invitations = invitationsResult.changes || 0;
+      summary.deletedCounts.invitations = 'deleted';
 
       // 10. Delete agents
-      const agentsResult = await this.db.query(
-        'DELETE FROM agents WHERE account_id = ?',
-        [accountId]
+      await SupabaseService.queryAsAdmin('agents', (query) =>
+        query.delete().eq('account_id', accountId)
       );
-      summary.deletedCounts.agents = agentsResult.changes || 0;
+      summary.deletedCounts.agents = 'deleted';
 
       // 11. Finally delete the account
-      const accountResult = await this.db.query(
-        'DELETE FROM accounts WHERE id = ?',
-        [accountId]
+      await SupabaseService.queryAsAdmin('accounts', (query) =>
+        query.delete().eq('id', accountId)
       );
-      summary.deletedCounts.accounts = accountResult.changes || 0;
+      summary.deletedCounts.accounts = 'deleted';
 
       summary.success = true;
       logger.info('Cascade delete completed for account', { accountId, summary });
@@ -154,39 +143,34 @@ class CascadeDeleteService {
       logger.info('Starting cascade delete for agent', { agentId });
 
       // 1. Delete agent sessions
-      const sessionsResult = await this.db.query(
-        'DELETE FROM agent_sessions WHERE agent_id = ?',
-        [agentId]
+      await SupabaseService.queryAsAdmin('agent_sessions', (query) =>
+        query.delete().eq('agent_id', agentId)
       );
-      summary.deletedCounts.sessions = sessionsResult.changes || 0;
+      summary.deletedCounts.sessions = 'deleted';
 
       // 2. Delete inbox memberships
-      const inboxMembersResult = await this.db.query(
-        'DELETE FROM inbox_members WHERE agent_id = ?',
-        [agentId]
+      await SupabaseService.queryAsAdmin('inbox_members', (query) =>
+        query.delete().eq('agent_id', agentId)
       );
-      summary.deletedCounts.inboxMembers = inboxMembersResult.changes || 0;
+      summary.deletedCounts.inboxMembers = 'deleted';
 
       // 3. Delete team memberships
-      const teamMembersResult = await this.db.query(
-        'DELETE FROM team_members WHERE agent_id = ?',
-        [agentId]
+      await SupabaseService.queryAsAdmin('team_members', (query) =>
+        query.delete().eq('agent_id', agentId)
       );
-      summary.deletedCounts.teamMembers = teamMembersResult.changes || 0;
+      summary.deletedCounts.teamMembers = 'deleted';
 
       // 4. Update conversations to remove agent assignment
-      const conversationsResult = await this.db.query(
-        'UPDATE conversations SET assigned_agent_id = NULL WHERE assigned_agent_id = ?',
-        [agentId]
+      await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.update({ assigned_agent_id: null }).eq('assigned_agent_id', agentId)
       );
-      summary.deletedCounts.conversationAssignments = conversationsResult.changes || 0;
+      summary.deletedCounts.conversationAssignments = 'updated';
 
       // 5. Delete the agent
-      const agentResult = await this.db.query(
-        'DELETE FROM agents WHERE id = ?',
-        [agentId]
+      await SupabaseService.queryAsAdmin('agents', (query) =>
+        query.delete().eq('id', agentId)
       );
-      summary.deletedCounts.agents = agentResult.changes || 0;
+      summary.deletedCounts.agents = 'deleted';
 
       summary.success = true;
       logger.info('Cascade delete completed for agent', { agentId, summary });
@@ -219,18 +203,16 @@ class CascadeDeleteService {
       logger.info('Starting cascade delete for team', { teamId });
 
       // 1. Delete team members
-      const membersResult = await this.db.query(
-        'DELETE FROM team_members WHERE team_id = ?',
-        [teamId]
+      await SupabaseService.queryAsAdmin('team_members', (query) =>
+        query.delete().eq('team_id', teamId)
       );
-      summary.deletedCounts.members = membersResult.changes || 0;
+      summary.deletedCounts.members = 'deleted';
 
       // 2. Delete the team
-      const teamResult = await this.db.query(
-        'DELETE FROM teams WHERE id = ?',
-        [teamId]
+      await SupabaseService.queryAsAdmin('teams', (query) =>
+        query.delete().eq('id', teamId)
       );
-      summary.deletedCounts.teams = teamResult.changes || 0;
+      summary.deletedCounts.teams = 'deleted';
 
       summary.success = true;
       logger.info('Cascade delete completed for team', { teamId, summary });
@@ -263,25 +245,22 @@ class CascadeDeleteService {
       logger.info('Starting cascade delete for inbox', { inboxId });
 
       // 1. Delete inbox members
-      const membersResult = await this.db.query(
-        'DELETE FROM inbox_members WHERE inbox_id = ?',
-        [inboxId]
+      await SupabaseService.queryAsAdmin('inbox_members', (query) =>
+        query.delete().eq('inbox_id', inboxId)
       );
-      summary.deletedCounts.members = membersResult.changes || 0;
+      summary.deletedCounts.members = 'deleted';
 
       // 2. Update conversations to remove inbox assignment
-      const conversationsResult = await this.db.query(
-        'UPDATE conversations SET inbox_id = NULL WHERE inbox_id = ?',
-        [inboxId]
+      await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.update({ inbox_id: null }).eq('inbox_id', inboxId)
       );
-      summary.deletedCounts.conversationAssignments = conversationsResult.changes || 0;
+      summary.deletedCounts.conversationAssignments = 'updated';
 
       // 3. Delete the inbox
-      const inboxResult = await this.db.query(
-        'DELETE FROM inboxes WHERE id = ?',
-        [inboxId]
+      await SupabaseService.queryAsAdmin('inboxes', (query) =>
+        query.delete().eq('id', inboxId)
       );
-      summary.deletedCounts.inboxes = inboxResult.changes || 0;
+      summary.deletedCounts.inboxes = 'deleted';
 
       summary.success = true;
       logger.info('Cascade delete completed for inbox', { inboxId, summary });
@@ -308,32 +287,20 @@ class CascadeDeleteService {
 
     try {
       // Check for orphaned agents
-      const { rows: agents } = await this.db.query(
-        'SELECT COUNT(*) as count FROM agents WHERE account_id = ?',
-        [accountId]
-      );
-      orphans.agents = agents[0]?.count || 0;
+      const { count: agentCount } = await SupabaseService.count('agents', { account_id: accountId });
+      orphans.agents = agentCount || 0;
 
       // Check for orphaned teams
-      const { rows: teams } = await this.db.query(
-        'SELECT COUNT(*) as count FROM teams WHERE account_id = ?',
-        [accountId]
-      );
-      orphans.teams = teams[0]?.count || 0;
+      const { count: teamCount } = await SupabaseService.count('teams', { account_id: accountId });
+      orphans.teams = teamCount || 0;
 
       // Check for orphaned inboxes
-      const { rows: inboxes } = await this.db.query(
-        'SELECT COUNT(*) as count FROM inboxes WHERE account_id = ?',
-        [accountId]
-      );
-      orphans.inboxes = inboxes[0]?.count || 0;
+      const { count: inboxCount } = await SupabaseService.count('inboxes', { account_id: accountId });
+      orphans.inboxes = inboxCount || 0;
 
       // Check for orphaned custom roles
-      const { rows: roles } = await this.db.query(
-        'SELECT COUNT(*) as count FROM custom_roles WHERE account_id = ?',
-        [accountId]
-      );
-      orphans.customRoles = roles[0]?.count || 0;
+      const { count: roleCount } = await SupabaseService.count('custom_roles', { account_id: accountId });
+      orphans.customRoles = roleCount || 0;
 
       const hasOrphans = Object.values(orphans).some(count => count > 0);
 

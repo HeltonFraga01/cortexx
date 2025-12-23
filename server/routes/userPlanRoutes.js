@@ -15,29 +15,9 @@ const SubscriptionService = require('../services/SubscriptionService');
 
 const router = express.Router();
 
-// Services initialized lazily
-let planService = null;
-let subscriptionService = null;
-
-function getPlanService(req) {
-  if (!planService) {
-    const db = req.app.locals.db;
-    if (db) {
-      planService = new PlanService(db);
-    }
-  }
-  return planService;
-}
-
-function getSubscriptionService(req) {
-  if (!subscriptionService) {
-    const db = req.app.locals.db;
-    if (db) {
-      subscriptionService = new SubscriptionService(db);
-    }
-  }
-  return subscriptionService;
-}
+// Services initialized at module level (use SupabaseService internally)
+const planService = new PlanService();
+const subscriptionService = new SubscriptionService();
 
 /**
  * GET /api/user/plans
@@ -46,22 +26,13 @@ function getSubscriptionService(req) {
 router.get('/', requireUser, async (req, res) => {
   const userId = getUserId(req);
   try {
-    const service = getPlanService(req);
-    const subService = getSubscriptionService(req);
-    
-    if (!service) {
-      return res.status(500).json({ error: 'Database not initialized' });
-    }
-
     // Get all active plans
-    const plans = await service.listPlans({ status: 'active' });
+    const plans = await planService.listPlans({ status: 'active' });
     
     // Get current user subscription to mark current plan
     let currentPlanId = null;
-    if (subService) {
-      const subscription = await subService.getUserSubscription(userId);
-      currentPlanId = subscription?.planId || null;
-    }
+    const subscription = await subscriptionService.getUserSubscription(userId);
+    currentPlanId = subscription?.planId || null;
 
     // Format plans for frontend (exclude internal fields)
     // Filter out credit packages - users should only see subscription plans

@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { logger } = require('../utils/logger');
 const ReportGenerator = require('../services/ReportGenerator');
 const AuditLogger = require('../services/AuditLogger');
+const BulkCampaignService = require('../services/BulkCampaignService');
 const { normalizePhoneNumber } = require('../utils/phoneUtils');
 const {
   validateCampaignCreation,
@@ -24,15 +25,15 @@ const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware
 
 const router = express.Router();
 
+// Module-level AuditLogger instance
+const auditLogger = new AuditLogger();
+
 /**
  * Helper to get AuditLogger instance
- * @param {Object} req - Express request
- * @returns {AuditLogger|null}
+ * @returns {AuditLogger}
  */
-function getAuditLogger(req) {
-  const db = req.app.locals.db;
-  if (!db) return null;
-  return new AuditLogger(db);
+function getAuditLogger() {
+  return auditLogger;
 }
 
 /**
@@ -176,72 +177,46 @@ router.post('/', campaignCreationLimiter, verifyUserToken, featureMiddleware.bul
     const sanitizedName = sanitizeCampaignName(name);
     const sanitizedContent = sanitizeMessageContent(messageContent);
 
-    const db = req.app.locals.db;
     const scheduler = req.app.locals.campaignScheduler;
 
     // Gerar ID único para campanha (UUID)
     const campaignId = uuidv4();
 
-    // Criar campanha no banco
-    const insertCampaignSql = `
-      INSERT INTO bulk_campaigns (
-        id, name, instance, user_token, status, message_type, message_content,
-        media_url, media_type, media_file_name, delay_min, delay_max,
-        randomize_order, is_scheduled, scheduled_at, total_contacts,
-        messages, sending_window, inboxes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
     // Campanhas não agendadas devem ter scheduled_at = now para serem processadas imediatamente
     const effectiveScheduledAt = isScheduled ? scheduledAt : new Date().toISOString();
     const status = 'scheduled';
 
-    // Serialize inboxes array if provided
-    const inboxesJson = inboxes && Array.isArray(inboxes) ? JSON.stringify(inboxes) : null;
+    // Normalize phone numbers for contacts
+    const normalizedContacts = contacts.map((contact, i) => ({
+      ...contact,
+      phone: normalizePhoneNumber(contact.phone)
+    }));
 
-    await db.query(insertCampaignSql, [
-      campaignId,
-      sanitizedName,
+    // Create campaign using service
+    await BulkCampaignService.createCampaign({
+      id: campaignId,
+      name: sanitizedName,
       instance,
       userToken,
       status,
       messageType,
-      sanitizedContent,
-      mediaUrl || null,
-      mediaType || null,
-      mediaFileName || null,
+      messageContent: sanitizedContent,
+      mediaUrl,
+      mediaType,
+      mediaFileName,
       delayMin,
       delayMax,
-      randomizeOrder ? 1 : 0,
-      isScheduled ? 1 : 0,
-      effectiveScheduledAt,
-      contacts.length,
-      messages ? JSON.stringify(messages) : null,
-      sendingWindow ? JSON.stringify(sendingWindow) : null,
-      inboxesJson
-    ]);
+      randomizeOrder,
+      isScheduled,
+      scheduledAt: effectiveScheduledAt,
+      totalContacts: contacts.length,
+      messages,
+      sendingWindow,
+      inboxes
+    });
 
-    // Inserir contatos
-    const insertContactSql = `
-      INSERT INTO campaign_contacts (
-        campaign_id, phone, name, variables, status, processing_order
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `;
-
-    for (let i = 0; i < contacts.length; i++) {
-      const contact = contacts[i];
-      // Normalizar o número antes de salvar
-      const normalizedPhone = normalizePhoneNumber(contact.phone);
-
-      await db.query(insertContactSql, [
-        campaignId,
-        normalizedPhone,
-        contact.name || null,
-        JSON.stringify(contact.variables || {}),
-        'pending',
-        i
-      ]);
-    }
+    // Create campaign contacts
+    await BulkCampaignService.createCampaignContacts(campaignId, normalizedContacts);
 
     logger.info('Campanha criada', {
       campaignId,
@@ -253,9 +228,9 @@ router.post('/', campaignCreationLimiter, verifyUserToken, featureMiddleware.bul
     });
 
     // Audit log for campaign creation
-    const auditLogger = getAuditLogger(req);
-    if (auditLogger) {
-      auditLogger.log({
+    const campaignAuditLogger = getAuditLogger();
+    if (campaignAuditLogger) {
+      campaignAuditLogger.log({
         campaignId,
         userId: req.session?.userId || userToken,
         action: 'create',
@@ -304,25 +279,12 @@ router.get('/active', verifyUserToken, async (req, res) => {
     const userToken = req.userToken;
     const { instance } = req.query;
 
-    const db = req.app.locals.db;
     const scheduler = req.app.locals.campaignScheduler;
 
-    let sql = `
-      SELECT * FROM bulk_campaigns 
-      WHERE user_token = ? 
-      AND status IN ('scheduled', 'running', 'paused')
-    `;
-
-    const params = [userToken];
-
-    if (instance) {
-      sql += ' AND instance = ?';
-      params.push(instance);
-    }
-
-    sql += ' ORDER BY created_at DESC';
-
-    const { rows } = await db.query(sql, params);
+    const rows = await BulkCampaignService.getCampaignsByUserToken(userToken, {
+      instance,
+      statuses: ['scheduled', 'running', 'paused']
+    });
 
     // Enriquecer com progresso em tempo real
     const campaigns = rows.map(campaign => {
@@ -333,7 +295,9 @@ router.get('/active', verifyUserToken, async (req, res) => {
       let sendingWindow = null;
       if (campaign.sending_window) {
         try {
-          sendingWindow = JSON.parse(campaign.sending_window);
+          sendingWindow = typeof campaign.sending_window === 'string'
+            ? JSON.parse(campaign.sending_window)
+            : campaign.sending_window;
         } catch {
           sendingWindow = null;
         }
@@ -351,7 +315,7 @@ router.get('/active', verifyUserToken, async (req, res) => {
         currentIndex: campaign.current_index,
         createdAt: campaign.created_at,
         startedAt: campaign.started_at,
-        isScheduled: campaign.is_scheduled === 1,
+        isScheduled: campaign.is_scheduled === 1 || campaign.is_scheduled === true,
         scheduledAt: campaign.scheduled_at,
         delayMin: campaign.delay_min,
         delayMax: campaign.delay_max,
@@ -389,20 +353,16 @@ router.get('/:id/progress', verifyUserToken, async (req, res) => {
       });
     }
 
-    const db = req.app.locals.db;
     const scheduler = req.app.locals.campaignScheduler;
 
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
-    const { rows } = await db.query(sql, [id, userToken]);
+    const campaign = await BulkCampaignService.getCampaignByIdAndToken(id, userToken);
 
-    if (rows.length === 0) {
+    if (!campaign) {
       return res.status(404).json({
         error: 'Campanha não encontrada'
       });
     }
-
-    const campaign = rows[0];
 
     // Tentar obter progresso em tempo real (usar enhanced se disponível)
     const queue = scheduler?.getActiveQueue(id);
@@ -411,44 +371,28 @@ router.get('/:id/progress', verifyUserToken, async (req, res) => {
     // Se não há progresso em tempo real, buscar contato atual do banco
     let currentContact = null;
     if (!liveProgress && (campaign.status === 'running' || campaign.status === 'paused')) {
-      // Buscar o contato que está sendo processado (baseado no current_index)
-      const contactSql = `
-        SELECT phone, name, variables, processing_order
-        FROM campaign_contacts 
-        WHERE campaign_id = ? AND status = 'pending'
-        ORDER BY processing_order ASC
-        LIMIT 1
-      `;
-      const { rows: contactRows } = await db.query(contactSql, [id]);
-      if (contactRows.length > 0) {
+      const pendingContact = await BulkCampaignService.getPendingContact(id);
+      if (pendingContact) {
         currentContact = {
-          phone: contactRows[0].phone,
-          name: contactRows[0].name,
-          variables: contactRows[0].variables ? JSON.parse(contactRows[0].variables) : {},
-          position: contactRows[0].processing_order + 1
+          phone: pendingContact.phone,
+          name: pendingContact.name,
+          variables: pendingContact.variables ? 
+            (typeof pendingContact.variables === 'string' ? JSON.parse(pendingContact.variables) : pendingContact.variables) 
+            : {},
+          position: pendingContact.processing_order + 1
         };
       }
     }
     
     // Buscar erros recentes para exibição
-    let recentErrors = [];
-    const errorsSql = `
-      SELECT phone, name, error_type, error_message, sent_at
-      FROM campaign_contacts 
-      WHERE campaign_id = ? AND status = 'failed'
-      ORDER BY id DESC
-      LIMIT 5
-    `;
-    const { rows: errorRows } = await db.query(errorsSql, [id]);
-    if (errorRows.length > 0) {
-      recentErrors = errorRows.map(row => ({
-        contactPhone: row.phone,
-        contactName: row.name,
-        errorType: row.error_type || 'UNKNOWN',
-        errorMessage: row.error_message || 'Erro desconhecido',
-        timestamp: row.sent_at
-      }));
-    }
+    const errorRows = await BulkCampaignService.getRecentFailedContacts(id, 5);
+    const recentErrors = errorRows.map(row => ({
+      contactPhone: row.phone,
+      contactName: row.name,
+      errorType: row.error_type || 'UNKNOWN',
+      errorMessage: row.error_message || 'Erro desconhecido',
+      timestamp: row.sent_at
+    }));
 
     // Construir resposta com dados do banco se não houver progresso em tempo real
     const fallbackProgress = {
@@ -496,14 +440,12 @@ router.post('/:id/pause', verifyUserToken, async (req, res) => {
     const { id } = req.params;
     const userToken = req.userToken;
 
-    const db = req.app.locals.db;
     const scheduler = req.app.locals.campaignScheduler;
 
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
-    const { rows } = await db.query(sql, [id, userToken]);
+    const campaign = await BulkCampaignService.getCampaignByIdAndToken(id, userToken);
 
-    if (rows.length === 0) {
+    if (!campaign) {
       return res.status(404).json({
         error: 'Campanha não encontrada'
       });
@@ -520,9 +462,9 @@ router.post('/:id/pause', verifyUserToken, async (req, res) => {
     logger.info('Campanha pausada via API', { campaignId: id });
 
     // Audit log for pause
-    const auditLogger = getAuditLogger(req);
-    if (auditLogger) {
-      auditLogger.log({
+    const campaignAuditLogger = getAuditLogger();
+    if (campaignAuditLogger) {
+      campaignAuditLogger.log({
         campaignId: id,
         userId: req.session?.userId || userToken,
         action: 'pause',
@@ -570,14 +512,12 @@ router.patch('/:id/config', verifyUserToken, async (req, res) => {
       });
     }
 
-    const db = req.app.locals.db;
     const scheduler = req.app.locals.campaignScheduler;
 
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
-    const { rows } = await db.query(sql, [id, userToken]);
+    const campaign = await BulkCampaignService.getCampaignByIdAndToken(id, userToken);
 
-    if (rows.length === 0) {
+    if (!campaign) {
       return res.status(404).json({
         error: 'Campanha não encontrada',
         message: 'A campanha solicitada não existe ou não pertence a este usuário'
@@ -661,21 +601,17 @@ router.post('/:id/resume', verifyUserToken, async (req, res) => {
     const { id } = req.params;
     const userToken = req.userToken;
 
-    const db = req.app.locals.db;
     const scheduler = req.app.locals.campaignScheduler;
 
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
-    const { rows } = await db.query(sql, [id, userToken]);
+    const campaign = await BulkCampaignService.getCampaignByIdAndToken(id, userToken);
 
-    if (rows.length === 0) {
+    if (!campaign) {
       return res.status(404).json({
         error: 'Campanha não encontrada',
         message: 'A campanha solicitada não existe ou não pertence a este usuário'
       });
     }
-
-    const campaign = rows[0];
 
     // Validar status antes de tentar retomar
     if (campaign.status !== 'paused') {
@@ -701,9 +637,9 @@ router.post('/:id/resume', verifyUserToken, async (req, res) => {
     });
 
     // Audit log for resume
-    const auditLogger = getAuditLogger(req);
-    if (auditLogger) {
-      auditLogger.log({
+    const campaignAuditLogger = getAuditLogger();
+    if (campaignAuditLogger) {
+      campaignAuditLogger.log({
         campaignId: id,
         userId: req.session?.userId || userToken,
         action: 'resume',
@@ -770,20 +706,16 @@ router.post('/:id/cancel', verifyUserToken, async (req, res) => {
     const { id } = req.params;
     const userToken = req.userToken;
 
-    const db = req.app.locals.db;
     const scheduler = req.app.locals.campaignScheduler;
 
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
-    const { rows } = await db.query(sql, [id, userToken]);
+    const campaign = await BulkCampaignService.getCampaignByIdAndToken(id, userToken);
 
-    if (rows.length === 0) {
+    if (!campaign) {
       return res.status(404).json({
         error: 'Campanha não encontrada'
       });
     }
-
-    const campaign = rows[0];
 
     // Se a campanha já está cancelada ou concluída, retornar sucesso
     if (campaign.status === 'cancelled' || campaign.status === 'completed') {
@@ -820,15 +752,14 @@ router.post('/:id/cancel', verifyUserToken, async (req, res) => {
     }
 
     // SEMPRE atualizar status no banco (independente do scheduler)
-    const updateSql = 'UPDATE bulk_campaigns SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?';
-    await db.query(updateSql, ['cancelled', id]);
+    await BulkCampaignService.updateCampaignStatus(id, 'cancelled');
 
     logger.info('Campanha cancelada via API', { campaignId: id });
 
     // Audit log for cancel
-    const auditLogger = getAuditLogger(req);
-    if (auditLogger) {
-      auditLogger.log({
+    const campaignAuditLogger = getAuditLogger();
+    if (campaignAuditLogger) {
+      campaignAuditLogger.log({
         campaignId: id,
         userId: req.session?.userId || userToken,
         action: 'cancel',
@@ -972,19 +903,16 @@ router.get('/:id/report', verifyUserToken, async (req, res) => {
     const { id } = req.params;
     const userToken = req.userToken;
 
-    const db = req.app.locals.db;
-
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
-    const { rows } = await db.query(sql, [id, userToken]);
+    const campaign = await BulkCampaignService.getCampaignByIdAndToken(id, userToken);
 
-    if (rows.length === 0) {
+    if (!campaign) {
       return res.status(404).json({
         error: 'Campanha não encontrada'
       });
     }
 
-    const reportGenerator = new ReportGenerator(db);
+    const reportGenerator = new ReportGenerator();
     const report = await reportGenerator.generateReport(id);
 
     res.json({
@@ -1007,20 +935,16 @@ router.get('/:id/report/export', verifyUserToken, async (req, res) => {
     const { id } = req.params;
     const userToken = req.userToken;
 
-    const db = req.app.locals.db;
-
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
-    const { rows } = await db.query(sql, [id, userToken]);
+    const campaign = await BulkCampaignService.getCampaignByIdAndToken(id, userToken);
 
-    if (rows.length === 0) {
+    if (!campaign) {
       return res.status(404).json({
         error: 'Campanha não encontrada'
       });
     }
 
-    const campaign = rows[0];
-    const reportGenerator = new ReportGenerator(db);
+    const reportGenerator = new ReportGenerator();
     const csvContent = await reportGenerator.exportToCSV(id);
 
     // Configurar headers para download
@@ -1052,21 +976,17 @@ router.post('/compare', verifyUserToken, async (req, res) => {
       });
     }
 
-    const db = req.app.locals.db;
-
     // Verificar se todas as campanhas pertencem ao usuário
-    const placeholders = campaignIds.map(() => '?').join(',');
-    const sql = `SELECT id FROM bulk_campaigns WHERE id IN (${placeholders}) AND user_token = ?`;
-    const { rows } = await db.query(sql, [...campaignIds, userToken]);
+    const validIds = await BulkCampaignService.verifyCampaignsOwnership(campaignIds, userToken);
 
-    if (rows.length !== campaignIds.length) {
+    if (validIds.length !== campaignIds.length) {
       return res.status(403).json({
         error: 'Acesso negado',
         message: 'Uma ou mais campanhas não pertencem a este usuário'
       });
     }
 
-    const reportGenerator = new ReportGenerator(db);
+    const reportGenerator = new ReportGenerator();
     const comparison = await reportGenerator.compareCampaigns(campaignIds);
 
     res.json({
@@ -1098,19 +1018,14 @@ router.delete('/:id', verifyUserToken, async (req, res) => {
       });
     }
 
-    const db = req.app.locals.db;
-
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
-    const { rows } = await db.query(sql, [id, userToken]);
+    const campaign = await BulkCampaignService.getCampaignByIdAndToken(id, userToken);
 
-    if (rows.length === 0) {
+    if (!campaign) {
       return res.status(404).json({
         error: 'Campanha não encontrada'
       });
     }
-
-    const campaign = rows[0];
 
     // Não permitir exclusão de campanhas em execução
     if (campaign.status === 'running') {
@@ -1120,11 +1035,8 @@ router.delete('/:id', verifyUserToken, async (req, res) => {
       });
     }
 
-    // Excluir contatos da campanha
-    await db.query('DELETE FROM campaign_contacts WHERE campaign_id = ?', [id]);
-
-    // Excluir campanha
-    await db.query('DELETE FROM bulk_campaigns WHERE id = ?', [id]);
+    // Delete campaign and contacts
+    await BulkCampaignService.deleteCampaign(id);
 
     logger.info('Campanha excluída', {
       campaignId: id,
@@ -1132,10 +1044,10 @@ router.delete('/:id', verifyUserToken, async (req, res) => {
       userToken: userToken.substring(0, 8) + '...'
     });
 
-    // Audit log for delete (logged before deletion to preserve campaign_id reference)
-    const auditLogger = getAuditLogger(req);
-    if (auditLogger) {
-      auditLogger.log({
+    // Audit log for delete
+    const campaignAuditLogger = getAuditLogger();
+    if (campaignAuditLogger) {
+      campaignAuditLogger.log({
         campaignId: id,
         userId: req.session?.userId || userToken,
         action: 'delete',

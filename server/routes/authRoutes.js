@@ -7,16 +7,9 @@ const AgentService = require('../services/AgentService');
 const AccountService = require('../services/AccountService');
 const { regenerateSession } = require('../utils/sessionHelper');
 
-// Lazy initialization of services
-let agentService = null;
-let accountService = null;
-
-function initServices(db) {
-  if (!agentService) {
-    agentService = new AgentService(db);
-    accountService = new AccountService(db);
-  }
-}
+// Initialize services at module level (uses SupabaseService internally)
+const agentService = new AgentService();
+const accountService = new AccountService();
 
 /**
  * POST /api/auth/admin-login
@@ -30,8 +23,6 @@ router.post('/admin-login', async (req, res) => {
   const { email, password } = req.body;
   
   try {
-    initServices(req.app.locals.db);
-    
     if (!email || !password) {
       return res.status(400).json({
         error: 'Email e senha são obrigatórios',

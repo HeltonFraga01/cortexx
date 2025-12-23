@@ -8,14 +8,15 @@
  */
 
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 const crypto = require('crypto');
 
 // Valid access levels
 const ACCESS_LEVELS = ['none', 'view', 'full'];
 
 class AgentDatabaseAccessService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // Uses SupabaseService directly - no db parameter needed
   }
 
   /**
@@ -33,14 +34,14 @@ class AgentDatabaseAccessService {
    */
   async getAgentDatabaseAccess(agentId) {
     try {
-      const sql = `
-        SELECT id, agent_id, connection_id, access_level, created_at, updated_at
-        FROM agent_database_access
-        WHERE agent_id = ?
-      `;
+      const { data, error } = await SupabaseService.queryAsAdmin('agent_database_access', (query) => {
+        return query
+          .select('id, agent_id, connection_id, access_level, created_at, updated_at')
+          .eq('agent_id', agentId);
+      });
       
-      const result = await this.db.query(sql, [agentId]);
-      return result.rows.map(row => this.formatAccessConfig(row));
+      if (error) throw error;
+      return (data || []).map(row => this.formatAccessConfig(row));
     } catch (error) {
       logger.error('Failed to get agent database access', { error: error.message, agentId });
       throw error;
@@ -66,20 +67,22 @@ class AgentDatabaseAccessService {
       const now = new Date().toISOString();
 
       // Delete existing configurations
-      await this.db.query(
-        'DELETE FROM agent_database_access WHERE agent_id = ?',
-        [agentId]
-      );
+      await SupabaseService.queryAsAdmin('agent_database_access', (query) => {
+        return query.delete().eq('agent_id', agentId);
+      });
 
       // Insert new configurations (skip 'none' as it's the default)
       for (const config of accessConfigs) {
         if (config.accessLevel !== 'none') {
           const id = this.generateId();
-          await this.db.query(
-            `INSERT INTO agent_database_access (id, agent_id, connection_id, access_level, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [id, agentId, config.connectionId, config.accessLevel, now, now]
-          );
+          await SupabaseService.insert('agent_database_access', {
+            id,
+            agent_id: agentId,
+            connection_id: config.connectionId,
+            access_level: config.accessLevel,
+            created_at: now,
+            updated_at: now
+          });
         }
       }
 
@@ -103,19 +106,21 @@ class AgentDatabaseAccessService {
    */
   async checkDatabaseAccess(agentId, connectionId) {
     try {
-      const sql = `
-        SELECT access_level
-        FROM agent_database_access
-        WHERE agent_id = ? AND connection_id = ?
-      `;
+      const { data, error } = await SupabaseService.queryAsAdmin('agent_database_access', (query) => {
+        return query
+          .select('access_level')
+          .eq('agent_id', agentId)
+          .eq('connection_id', connectionId)
+          .single();
+      });
       
-      const result = await this.db.query(sql, [agentId, connectionId]);
+      if (error && error.code !== 'PGRST116') throw error;
       
-      if (result.rows.length === 0) {
+      if (!data) {
         return 'none';
       }
       
-      return result.rows[0].access_level;
+      return data.access_level;
     } catch (error) {
       logger.error('Failed to check database access', { 
         error: error.message, 
@@ -134,14 +139,15 @@ class AgentDatabaseAccessService {
    */
   async getAccessibleDatabases(agentId) {
     try {
-      const sql = `
-        SELECT ada.connection_id, ada.access_level
-        FROM agent_database_access ada
-        WHERE ada.agent_id = ? AND ada.access_level IN ('view', 'full')
-      `;
+      const { data, error } = await SupabaseService.queryAsAdmin('agent_database_access', (query) => {
+        return query
+          .select('connection_id, access_level')
+          .eq('agent_id', agentId)
+          .in('access_level', ['view', 'full']);
+      });
       
-      const result = await this.db.query(sql, [agentId]);
-      return result.rows.map(row => ({
+      if (error) throw error;
+      return (data || []).map(row => ({
         connectionId: row.connection_id,
         accessLevel: row.access_level
       }));
@@ -167,10 +173,9 @@ class AgentDatabaseAccessService {
       const now = new Date().toISOString();
 
       // Delete existing config for this connection
-      await this.db.query(
-        'DELETE FROM agent_database_access WHERE agent_id = ? AND connection_id = ?',
-        [agentId, connectionId]
-      );
+      await SupabaseService.queryAsAdmin('agent_database_access', (query) => {
+        return query.delete().eq('agent_id', agentId).eq('connection_id', connectionId);
+      });
 
       // If access level is 'none', we're done (no record needed)
       if (accessLevel === 'none') {
@@ -180,11 +185,14 @@ class AgentDatabaseAccessService {
 
       // Insert new config
       const id = this.generateId();
-      await this.db.query(
-        `INSERT INTO agent_database_access (id, agent_id, connection_id, access_level, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [id, agentId, connectionId, accessLevel, now, now]
-      );
+      await SupabaseService.insert('agent_database_access', {
+        id,
+        agent_id: agentId,
+        connection_id: connectionId,
+        access_level: accessLevel,
+        created_at: now,
+        updated_at: now
+      });
 
       logger.info('Database access set', { agentId, connectionId, accessLevel });
 
@@ -213,10 +221,9 @@ class AgentDatabaseAccessService {
    */
   async removeAllAccess(agentId) {
     try {
-      await this.db.query(
-        'DELETE FROM agent_database_access WHERE agent_id = ?',
-        [agentId]
-      );
+      await SupabaseService.queryAsAdmin('agent_database_access', (query) => {
+        return query.delete().eq('agent_id', agentId);
+      });
       
       logger.info('All database access removed for agent', { agentId });
     } catch (error) {
@@ -232,18 +239,25 @@ class AgentDatabaseAccessService {
    */
   async getAgentsWithAccess(connectionId) {
     try {
-      const sql = `
-        SELECT ada.agent_id, ada.access_level, a.name as agent_name, a.email as agent_email
-        FROM agent_database_access ada
-        JOIN agents a ON ada.agent_id = a.id
-        WHERE ada.connection_id = ? AND ada.access_level IN ('view', 'full')
-      `;
+      const { data, error } = await SupabaseService.queryAsAdmin('agent_database_access', (query) => {
+        return query
+          .select(`
+            agent_id,
+            access_level,
+            agents!inner (
+              name,
+              email
+            )
+          `)
+          .eq('connection_id', connectionId)
+          .in('access_level', ['view', 'full']);
+      });
       
-      const result = await this.db.query(sql, [connectionId]);
-      return result.rows.map(row => ({
+      if (error) throw error;
+      return (data || []).map(row => ({
         agentId: row.agent_id,
-        agentName: row.agent_name,
-        agentEmail: row.agent_email,
+        agentName: row.agents?.name,
+        agentEmail: row.agents?.email,
         accessLevel: row.access_level
       }));
     } catch (error) {
@@ -270,19 +284,21 @@ class AgentDatabaseAccessService {
 
       for (const agentId of agentIds) {
         // Delete existing
-        await this.db.query(
-          'DELETE FROM agent_database_access WHERE agent_id = ? AND connection_id = ?',
-          [agentId, connectionId]
-        );
+        await SupabaseService.queryAsAdmin('agent_database_access', (query) => {
+          return query.delete().eq('agent_id', agentId).eq('connection_id', connectionId);
+        });
 
         // Insert if not 'none'
         if (accessLevel !== 'none') {
           const id = this.generateId();
-          await this.db.query(
-            `INSERT INTO agent_database_access (id, agent_id, connection_id, access_level, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [id, agentId, connectionId, accessLevel, now, now]
-          );
+          await SupabaseService.insert('agent_database_access', {
+            id,
+            agent_id: agentId,
+            connection_id: connectionId,
+            access_level: accessLevel,
+            created_at: now,
+            updated_at: now
+          });
         }
         updatedCount++;
       }

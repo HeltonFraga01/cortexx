@@ -1,5 +1,13 @@
+/**
+ * Contact List Routes
+ * Handles contact list operations
+ * 
+ * Migrated to use SupabaseService directly
+ */
+
 const express = require('express');
 const { logger } = require('../utils/logger');
+const SupabaseService = require('../services/SupabaseService');
 const router = express.Router();
 
 // Middleware para verificar token
@@ -20,16 +28,21 @@ const verifyUserToken = async (req, res, next) => {
 // GET /api/user/contact-lists - Listar todas as listas
 router.get('/', verifyUserToken, async (req, res) => {
     try {
-        const db = req.app.locals.db;
-        const sql = `
-            SELECT * FROM contact_lists 
-            WHERE user_token = ? 
-            ORDER BY created_at DESC
-        `;
-        const { rows } = await db.query(sql, [req.userToken]);
-        res.json({ success: true, data: rows });
+        const { data: rows, error } = await SupabaseService.queryAsAdmin(
+            'contact_lists',
+            (query) => query
+                .select('*')
+                .eq('user_token', req.userToken)
+                .order('created_at', { ascending: false })
+        );
+
+        if (error) {
+            throw error;
+        }
+
+        res.json({ success: true, data: rows || [] });
     } catch (error) {
-        logger.error('Erro ao listar listas de contatos:', error);
+        logger.error('Erro ao listar listas de contatos:', { error: error.message });
         res.status(500).json({ error: 'Erro ao listar contatos' });
     }
 });
@@ -37,26 +50,45 @@ router.get('/', verifyUserToken, async (req, res) => {
 // GET /api/user/contact-lists/:id - Obter detalhes de uma lista
 router.get('/:id', verifyUserToken, async (req, res) => {
     try {
-        const db = req.app.locals.db;
         const { id } = req.params;
 
         // Buscar lista
-        const listSql = `SELECT * FROM contact_lists WHERE id = ? AND user_token = ?`;
-        const { rows: listRows } = await db.query(listSql, [id, req.userToken]);
+        const { data: listRows, error: listError } = await SupabaseService.queryAsAdmin(
+            'contact_lists',
+            (query) => query
+                .select('*')
+                .eq('id', id)
+                .eq('user_token', req.userToken)
+        );
 
-        if (listRows.length === 0) {
+        if (listError) {
+            throw listError;
+        }
+
+        if (!listRows || listRows.length === 0) {
             return res.status(404).json({ error: 'Lista não encontrada' });
         }
 
         // Buscar contatos (paginado seria ideal, mas por enquanto trazemos tudo ou limitamos)
-        const contactsSql = `SELECT * FROM contacts WHERE list_id = ? LIMIT 1000`;
-        const { rows: contactsRows } = await db.query(contactsSql, [id]);
+        const { data: contactsRows, error: contactsError } = await SupabaseService.queryAsAdmin(
+            'contacts',
+            (query) => query
+                .select('*')
+                .eq('list_id', id)
+                .limit(1000)
+        );
+
+        if (contactsError) {
+            throw contactsError;
+        }
 
         // Parse variables JSON e adiciona nome às variáveis se não existir
-        const contacts = contactsRows.map(contact => {
+        const contacts = (contactsRows || []).map(contact => {
             let variables = {};
             try {
-                variables = contact.variables ? JSON.parse(contact.variables) : {};
+                variables = contact.variables ? 
+                    (typeof contact.variables === 'string' ? JSON.parse(contact.variables) : contact.variables) 
+                    : {};
             } catch (e) {
                 logger.warn('Erro ao parsear variables do contato:', { contactId: contact.id, error: e.message });
             }
@@ -82,7 +114,7 @@ router.get('/:id', verifyUserToken, async (req, res) => {
             }
         });
     } catch (error) {
-        logger.error('Erro ao buscar lista:', error);
+        logger.error('Erro ao buscar lista:', { error: error.message });
         res.status(500).json({ error: 'Erro ao buscar lista' });
     }
 });
@@ -90,45 +122,60 @@ router.get('/:id', verifyUserToken, async (req, res) => {
 // POST /api/user/contact-lists - Criar nova lista
 router.post('/', verifyUserToken, async (req, res) => {
     try {
-        const db = req.app.locals.db;
         const { name, description, contacts } = req.body;
 
         if (!name) {
             return res.status(400).json({ error: 'Nome da lista é obrigatório' });
         }
 
-        // Operations are executed sequentially
-
         // 1. Criar lista
-        const createListSql = `
-            INSERT INTO contact_lists (name, description, user_token, total_contacts)
-            VALUES (?, ?, ?, ?)
-        `;
-        const listResult = await db.query(createListSql, [name, description, req.userToken, contacts ? contacts.length : 0]);
-        const listId = listResult.lastID;
+        const { data: listData, error: listError } = await SupabaseService.queryAsAdmin(
+            'contact_lists',
+            (query) => query.insert({
+                name,
+                description: description || null,
+                user_token: req.userToken,
+                total_contacts: contacts ? contacts.length : 0
+            }).select().single()
+        );
+
+        if (listError) {
+            throw listError;
+        }
+
+        const listId = listData.id;
 
         // 2. Inserir contatos
         if (contacts && contacts.length > 0) {
-            const insertContactSql = `
-                INSERT INTO contacts (list_id, phone, name, variables)
-                VALUES (?, ?, ?, ?)
-            `;
+            const contactsToInsert = contacts.map(contact => ({
+                list_id: listId,
+                phone: contact.phone,
+                name: contact.name || null,
+                variables: contact.variables || {}
+            }));
 
-            // Inserir em lote ou loop
-            for (const contact of contacts) {
-                await db.query(insertContactSql, [
-                    listId,
-                    contact.phone,
-                    contact.name,
-                    JSON.stringify(contact.variables || {})
-                ]);
+            const { error: contactsError } = await SupabaseService.queryAsAdmin(
+                'contacts',
+                (query) => query.insert(contactsToInsert)
+            );
+
+            if (contactsError) {
+                logger.error('Erro ao inserir contatos:', { error: contactsError.message });
+                // Continue anyway, list was created
             }
         }
 
-        res.json({ success: true, data: { id: listId, name, total_contacts: contacts ? contacts.length : 0 } });
+        res.json({ 
+            success: true, 
+            data: { 
+                id: listId, 
+                name, 
+                total_contacts: contacts ? contacts.length : 0 
+            } 
+        });
 
     } catch (error) {
-        logger.error('Erro ao criar lista:', error);
+        logger.error('Erro ao criar lista:', { error: error.message });
         res.status(500).json({ error: 'Erro ao criar lista' });
     }
 });
@@ -136,19 +183,44 @@ router.post('/', verifyUserToken, async (req, res) => {
 // DELETE /api/user/contact-lists/:id - Deletar lista
 router.delete('/:id', verifyUserToken, async (req, res) => {
     try {
-        const db = req.app.locals.db;
         const { id } = req.params;
 
-        const sql = `DELETE FROM contact_lists WHERE id = ? AND user_token = ?`;
-        const result = await db.query(sql, [id, req.userToken]);
+        // First verify ownership
+        const { data: existing, error: checkError } = await SupabaseService.queryAsAdmin(
+            'contact_lists',
+            (query) => query
+                .select('id')
+                .eq('id', id)
+                .eq('user_token', req.userToken)
+        );
 
-        if (result.rowCount === 0) {
+        if (checkError) {
+            throw checkError;
+        }
+
+        if (!existing || existing.length === 0) {
             return res.status(404).json({ error: 'Lista não encontrada' });
+        }
+
+        // Delete contacts first (foreign key constraint)
+        await SupabaseService.queryAsAdmin(
+            'contacts',
+            (query) => query.delete().eq('list_id', id)
+        );
+
+        // Delete the list
+        const { error: deleteError } = await SupabaseService.queryAsAdmin(
+            'contact_lists',
+            (query) => query.delete().eq('id', id)
+        );
+
+        if (deleteError) {
+            throw deleteError;
         }
 
         res.json({ success: true, message: 'Lista removida com sucesso' });
     } catch (error) {
-        logger.error('Erro ao deletar lista:', error);
+        logger.error('Erro ao deletar lista:', { error: error.message });
         res.status(500).json({ error: 'Erro ao deletar lista' });
     }
 });

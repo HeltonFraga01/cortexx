@@ -1,7 +1,17 @@
+/**
+ * Analytics Routes
+ * Handles analytics and metrics operations
+ * 
+ * Migrated to use SupabaseService directly
+ */
+
 const express = require('express');
 const { logger } = require('../utils/logger');
 const AnalyticsService = require('../services/AnalyticsService');
 const router = express.Router();
+
+// Initialize service at module level (no db parameter needed)
+const analyticsService = new AnalyticsService();
 
 // Middleware para verificar token
 const verifyUserToken = async (req, res, next) => {
@@ -21,11 +31,10 @@ const verifyUserToken = async (req, res, next) => {
 // GET /api/user/analytics/overview
 router.get('/overview', verifyUserToken, async (req, res) => {
     try {
-        const db = req.app.locals.db;
-        const service = new AnalyticsService(db);
-        const metrics = await service.getOverviewMetrics(req.userToken);
+        const metrics = await analyticsService.getOverviewMetrics(req.userToken);
         res.json({ success: true, metrics });
     } catch (error) {
+        logger.error('Erro ao obter métricas:', { error: error.message });
         res.status(500).json({ error: 'Erro ao obter métricas', message: error.message });
     }
 });
@@ -33,11 +42,10 @@ router.get('/overview', verifyUserToken, async (req, res) => {
 // GET /api/user/analytics/hourly
 router.get('/hourly', verifyUserToken, async (req, res) => {
     try {
-        const db = req.app.locals.db;
-        const service = new AnalyticsService(db);
-        const data = await service.getHourlyDeliveryStats(req.userToken);
+        const data = await analyticsService.getHourlyDeliveryStats(req.userToken);
         res.json({ success: true, data });
     } catch (error) {
+        logger.error('Erro ao obter dados por hora:', { error: error.message });
         res.status(500).json({ error: 'Erro ao obter dados por hora', message: error.message });
     }
 });
@@ -45,11 +53,10 @@ router.get('/hourly', verifyUserToken, async (req, res) => {
 // GET /api/user/analytics/funnel
 router.get('/funnel', verifyUserToken, async (req, res) => {
     try {
-        const db = req.app.locals.db;
-        const service = new AnalyticsService(db);
-        const data = await service.getConversionFunnel(req.userToken);
+        const data = await analyticsService.getConversionFunnel(req.userToken);
         res.json({ success: true, data });
     } catch (error) {
+        logger.error('Erro ao obter funil:', { error: error.message });
         res.status(500).json({ error: 'Erro ao obter funil', message: error.message });
     }
 });

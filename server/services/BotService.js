@@ -4,18 +4,21 @@
  * Handles bot lifecycle, configuration, and message forwarding
  * 
  * Requirements: 17.1-17.6, 18.1-18.4, 19.1-19.3
+ * 
+ * MIGRATED: Now uses SupabaseService directly instead of db parameter
  */
 
 const crypto = require('crypto')
 const axios = require('axios')
 const { logger } = require('../utils/logger')
 const { toBoolean } = require('../utils/responseTransformer')
+const SupabaseService = require('./SupabaseService')
 const QuotaService = require('./QuotaService')
 
 class BotService {
-  constructor(db) {
-    this.db = db
-    this.quotaService = new QuotaService(db)
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
+    this.quotaService = new QuotaService()
   }
 
   /**
@@ -39,11 +42,12 @@ class BotService {
    * @returns {Promise<number>} Number of bots
    */
   async countBots(userId) {
-    const { rows } = await this.db.query(
-      'SELECT COUNT(*) as count FROM agent_bots WHERE user_id = ?',
-      [userId]
-    );
-    return rows[0]?.count || 0;
+    const { count, error } = await SupabaseService.count('agent_bots', { user_id: userId });
+    if (error) {
+      logger.error('Failed to count bots', { error: error.message, userId });
+      return 0;
+    }
+    return count || 0;
   }
 
   /**
@@ -53,14 +57,18 @@ class BotService {
    */
   async getMaxBots(userId) {
     try {
-      const { rows } = await this.db.query(
-        `SELECT p.max_bots FROM user_subscriptions s
-         JOIN plans p ON s.plan_id = p.id
-         WHERE s.user_id = ? AND s.status IN ('trial', 'active')
-         LIMIT 1`,
-        [userId]
+      const { data, error } = await SupabaseService.queryAsAdmin('user_subscriptions', (query) =>
+        query.select('plans!inner(max_bots)')
+          .eq('user_id', userId)
+          .in('status', ['trial', 'active'])
+          .limit(1)
       );
-      return rows[0]?.max_bots || 3; // Default to 3 if no subscription
+      
+      if (error || !data || data.length === 0) {
+        return 3; // Default to 3 if no subscription
+      }
+      
+      return data[0]?.plans?.max_bots || 3;
     } catch (error) {
       logger.error('Failed to get max bots quota', { error: error.message, userId });
       return 3; // Default fallback
@@ -398,45 +406,38 @@ class BotService {
     const accessToken = this.generateAccessToken()
 
     // Get the next priority (max + 1) for this user
-    const { rows: priorityRows } = await this.db.query(
-      'SELECT COALESCE(MAX(priority), 0) + 1 as next_priority FROM agent_bots WHERE user_id = ?',
-      [userId]
-    )
-    const nextPriority = priorityRows[0]?.next_priority || 1
+    const { data: priorityData, error: priorityError } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.select('priority').eq('user_id', userId).order('priority', { ascending: false }).limit(1)
+    );
+    const nextPriority = (priorityData && priorityData.length > 0) ? (priorityData[0].priority || 0) + 1 : 1;
 
     // Check if this is the first bot (should be default)
-    const { rows: countRows } = await this.db.query(
-      'SELECT COUNT(*) as count FROM agent_bots WHERE user_id = ?',
-      [userId]
-    )
-    const isFirstBot = countRows[0]?.count === 0
-    const isDefault = isFirstBot ? 1 : 0
-    const priority = isFirstBot ? 1 : nextPriority
+    const botCount = await this.countBots(userId);
+    const isFirstBot = botCount === 0;
+    const isDefault = isFirstBot;
+    const priority = isFirstBot ? 1 : nextPriority;
 
-    const sql = `
-      INSERT INTO agent_bots (
-        user_id, name, description, avatar_url, outgoing_url, 
-        access_token, status, priority, is_default, include_history, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, datetime('now'), datetime('now'))
-    `
-
-    const { lastID } = await this.db.query(sql, [
-      userId,
+    const { data: newBot, error: insertError } = await SupabaseService.insert('agent_bots', {
+      user_id: userId,
       name,
       description,
-      avatarUrl,
-      outgoingUrl,
-      accessToken,
+      avatar_url: avatarUrl,
+      outgoing_url: outgoingUrl,
+      access_token: accessToken,
+      status: 'active',
       priority,
-      isDefault,
-      includeHistory ? 1 : 0
-    ])
+      is_default: isDefault,
+      include_history: includeHistory
+    });
 
-    const bot = await this.getBotById(lastID, userId)
+    if (insertError) {
+      logger.error('Failed to create bot', { error: insertError.message, userId });
+      throw insertError;
+    }
 
-    logger.info('Bot created', { botId: lastID, userId, name })
+    logger.info('Bot created', { botId: newBot.id, userId, name });
 
-    return bot
+    return this.transformBot(newBot);
   }
 
   /**
@@ -466,49 +467,30 @@ class BotService {
       }
     }
 
-    const updates = []
-    const params = []
+    const updates = {}
 
-    if (name !== undefined) {
-      updates.push('name = ?')
-      params.push(name)
-    }
-    if (description !== undefined) {
-      updates.push('description = ?')
-      params.push(description)
-    }
-    if (avatarUrl !== undefined) {
-      updates.push('avatar_url = ?')
-      params.push(avatarUrl)
-    }
-    if (outgoingUrl !== undefined) {
-      updates.push('outgoing_url = ?')
-      params.push(outgoingUrl)
-    }
-    if (includeHistory !== undefined) {
-      updates.push('include_history = ?')
-      params.push(includeHistory ? 1 : 0)
-    }
+    if (name !== undefined) updates.name = name;
+    if (description !== undefined) updates.description = description;
+    if (avatarUrl !== undefined) updates.avatar_url = avatarUrl;
+    if (outgoingUrl !== undefined) updates.outgoing_url = outgoingUrl;
+    if (includeHistory !== undefined) updates.include_history = includeHistory;
 
-    if (updates.length === 0) {
+    if (Object.keys(updates).length === 0) {
       return existingBot
     }
 
-    updates.push("updated_at = datetime('now')")
-    params.push(botId, userId)
+    const { data: updatedBot, error } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.update(updates).eq('id', botId).eq('user_id', userId).select().single()
+    );
 
-    const sql = `
-      UPDATE agent_bots SET ${updates.join(', ')}
-      WHERE id = ? AND user_id = ?
-    `
-
-    await this.db.query(sql, params)
-
-    const bot = await this.getBotById(botId, userId)
+    if (error) {
+      logger.error('Failed to update bot', { error: error.message, botId, userId });
+      throw error;
+    }
 
     logger.info('Bot updated', { botId, userId })
 
-    return bot
+    return this.transformBot(updatedBot);
   }
 
   /**
@@ -525,17 +507,18 @@ class BotService {
       throw new Error('Bot not found or unauthorized')
     }
 
-    const sql = `
-      UPDATE agent_bots 
-      SET status = 'paused', updated_at = datetime('now')
-      WHERE id = ? AND user_id = ?
-    `
+    const { data: updatedBot, error } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.update({ status: 'paused' }).eq('id', botId).eq('user_id', userId).select().single()
+    );
 
-    await this.db.query(sql, [botId, userId])
+    if (error) {
+      logger.error('Failed to pause bot', { error: error.message, botId, userId });
+      throw error;
+    }
 
     logger.info('Bot paused', { botId, userId })
 
-    return this.getBotById(botId, userId)
+    return this.transformBot(updatedBot);
   }
 
   /**
@@ -552,17 +535,18 @@ class BotService {
       throw new Error('Bot not found or unauthorized')
     }
 
-    const sql = `
-      UPDATE agent_bots 
-      SET status = 'active', updated_at = datetime('now')
-      WHERE id = ? AND user_id = ?
-    `
+    const { data: updatedBot, error } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.update({ status: 'active' }).eq('id', botId).eq('user_id', userId).select().single()
+    );
 
-    await this.db.query(sql, [botId, userId])
+    if (error) {
+      logger.error('Failed to resume bot', { error: error.message, botId, userId });
+      throw error;
+    }
 
     logger.info('Bot resumed', { botId, userId })
 
-    return this.getBotById(botId, userId)
+    return this.transformBot(updatedBot);
   }
 
   /**
@@ -581,33 +565,31 @@ class BotService {
     const wasDefault = bot.isDefault
 
     // Remove bot from all conversations first
-    await this.db.query(
-      'UPDATE conversations SET assigned_bot_id = NULL WHERE assigned_bot_id = ?',
-      [botId]
-    )
+    await SupabaseService.queryAsAdmin('conversations', (query) =>
+      query.update({ assigned_bot_id: null }).eq('assigned_bot_id', botId)
+    );
 
     // Delete the bot
-    await this.db.query(
-      'DELETE FROM agent_bots WHERE id = ? AND user_id = ?',
-      [botId, userId]
-    )
+    const { error: deleteError } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.delete().eq('id', botId).eq('user_id', userId)
+    );
+
+    if (deleteError) {
+      logger.error('Failed to delete bot', { error: deleteError.message, botId, userId });
+      throw deleteError;
+    }
 
     // If deleted bot was default, promote next bot in priority order
     if (wasDefault) {
-      const { rows } = await this.db.query(
-        `SELECT id FROM agent_bots 
-         WHERE user_id = ? 
-         ORDER BY priority ASC, created_at DESC 
-         LIMIT 1`,
-        [userId]
-      )
+      const { data: nextBots } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+        query.select('id').eq('user_id', userId).order('priority', { ascending: true }).order('created_at', { ascending: false }).limit(1)
+      );
       
-      if (rows.length > 0) {
-        await this.db.query(
-          'UPDATE agent_bots SET is_default = 1, priority = 1 WHERE id = ?',
-          [rows[0].id]
-        )
-        logger.info('Next bot promoted to default', { newDefaultBotId: rows[0].id, userId })
+      if (nextBots && nextBots.length > 0) {
+        await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+          query.update({ is_default: true, priority: 1 }).eq('id', nextBots[0].id)
+        );
+        logger.info('Next bot promoted to default', { newDefaultBotId: nextBots[0].id, userId })
       }
     }
 
@@ -625,14 +607,15 @@ class BotService {
    * Requirements: 17.4, 17.5
    */
   async forwardToBot(botId, message, conversation, options = {}) {
-    const sql = 'SELECT * FROM agent_bots WHERE id = ?'
-    const { rows } = await this.db.query(sql, [botId])
+    const { data: bots, error } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.select('*').eq('id', botId)
+    );
 
-    if (rows.length === 0) {
+    if (error || !bots || bots.length === 0) {
       throw new Error('Bot not found')
     }
 
-    const bot = rows[0]
+    const bot = bots[0]
 
     // Check if bot is active (Property 13: Bot status enforcement)
     if (bot.status !== 'active') {
@@ -643,13 +626,15 @@ class BotService {
     // Get conversation labels
     let labels = []
     try {
-      const labelsResult = await this.db.query(`
-        SELECT l.id, l.name, l.color 
-        FROM labels l
-        JOIN conversation_labels cl ON l.id = cl.label_id
-        WHERE cl.conversation_id = ?
-      `, [conversation.id])
-      labels = labelsResult.rows || []
+      const { data: labelsData } = await SupabaseService.queryAsAdmin('labels', (query) =>
+        query.select('id, name, color')
+          .in('id', SupabaseService.adminClient.from('conversation_labels').select('label_id').eq('conversation_id', conversation.id))
+      );
+      // Fallback: get labels via join
+      const { data: labelJoinData } = await SupabaseService.queryAsAdmin('conversation_labels', (query) =>
+        query.select('labels(id, name, color)').eq('conversation_id', conversation.id)
+      );
+      labels = labelJoinData?.map(l => l.labels).filter(Boolean) || [];
     } catch (e) {
       // Labels table might not exist
     }
@@ -658,15 +643,13 @@ class BotService {
     let recentMessages = []
     if (bot.include_history) {
       try {
-        const historyResult = await this.db.query(`
-          SELECT id, message_id, direction, message_type, content, media_url, 
-                 media_mime_type, media_filename, status, created_at
-          FROM chat_messages 
-          WHERE conversation_id = ?
-          ORDER BY created_at DESC
-          LIMIT 10
-        `, [conversation.id])
-        recentMessages = (historyResult.rows || []).reverse() // Oldest first
+        const { data: historyData } = await SupabaseService.queryAsAdmin('chat_messages', (query) =>
+          query.select('id, message_id, direction, message_type, content, media_url, media_mime_type, media_filename, status, created_at')
+            .eq('conversation_id', conversation.id)
+            .order('created_at', { ascending: false })
+            .limit(10)
+        );
+        recentMessages = (historyData || []).reverse() // Oldest first
       } catch (e) {
         // Ignore history errors
       }
@@ -827,31 +810,27 @@ class BotService {
     }
 
     // Verify conversation belongs to user
-    const convSql = 'SELECT * FROM conversations WHERE id = ? AND user_id = ?'
-    const { rows: convRows } = await this.db.query(convSql, [conversationId, userId])
+    const { data: convData, error: convError } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+      query.select('*').eq('id', conversationId).eq('user_id', userId).single()
+    );
     
-    if (convRows.length === 0) {
+    if (convError || !convData) {
       throw new Error('Conversation not found or unauthorized')
     }
 
     // Assign bot
-    const sql = `
-      UPDATE conversations 
-      SET assigned_bot_id = ?, updated_at = datetime('now')
-      WHERE id = ?
-    `
+    const { data: updatedConv, error: updateError } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+      query.update({ assigned_bot_id: botId }).eq('id', conversationId).select().single()
+    );
 
-    await this.db.query(sql, [botId, conversationId])
+    if (updateError) {
+      logger.error('Failed to assign bot to conversation', { error: updateError.message, conversationId, botId });
+      throw updateError;
+    }
 
     logger.info('Bot assigned to conversation', { conversationId, botId, userId })
 
-    // Return updated conversation
-    const { rows } = await this.db.query(
-      'SELECT * FROM conversations WHERE id = ?',
-      [conversationId]
-    )
-
-    return rows[0]
+    return updatedConv;
   }
 
   /**
@@ -864,29 +843,26 @@ class BotService {
    */
   async removeBotFromConversation(conversationId, userId) {
     // Verify conversation belongs to user
-    const convSql = 'SELECT * FROM conversations WHERE id = ? AND user_id = ?'
-    const { rows: convRows } = await this.db.query(convSql, [conversationId, userId])
+    const { data: convData, error: convError } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+      query.select('*').eq('id', conversationId).eq('user_id', userId).single()
+    );
     
-    if (convRows.length === 0) {
+    if (convError || !convData) {
       throw new Error('Conversation not found or unauthorized')
     }
 
-    const sql = `
-      UPDATE conversations 
-      SET assigned_bot_id = NULL, updated_at = datetime('now')
-      WHERE id = ?
-    `
+    const { data: updatedConv, error: updateError } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+      query.update({ assigned_bot_id: null }).eq('id', conversationId).select().single()
+    );
 
-    await this.db.query(sql, [conversationId])
+    if (updateError) {
+      logger.error('Failed to remove bot from conversation', { error: updateError.message, conversationId });
+      throw updateError;
+    }
 
     logger.info('Bot removed from conversation', { conversationId, userId })
 
-    const { rows } = await this.db.query(
-      'SELECT * FROM conversations WHERE id = ?',
-      [conversationId]
-    )
-
-    return rows[0]
+    return updatedConv;
   }
 
   // ==================== Helper Methods ====================
@@ -925,14 +901,20 @@ class BotService {
    * Requirements: 1.1, 1.3
    */
   async getHighestPriorityActiveBot(userId) {
-    const sql = `
-      SELECT * FROM agent_bots 
-      WHERE user_id = ? AND status = 'active'
-      ORDER BY priority ASC, created_at DESC
-      LIMIT 1
-    `
-    const { rows } = await this.db.query(sql, [userId])
-    return this.transformBot(rows[0])
+    const { data, error } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.select('*')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .order('priority', { ascending: true })
+        .order('created_at', { ascending: false })
+        .limit(1)
+    );
+    
+    if (error || !data || data.length === 0) {
+      return null;
+    }
+    
+    return this.transformBot(data[0]);
   }
 
   /**
@@ -950,26 +932,27 @@ class BotService {
     }
 
     // Remove default status from all user's bots
-    await this.db.query(
-      'UPDATE agent_bots SET is_default = 0 WHERE user_id = ?',
-      [userId]
-    )
+    await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.update({ is_default: false }).eq('user_id', userId)
+    );
 
     // Set this bot as default with priority 1
-    await this.db.query(
-      `UPDATE agent_bots 
-       SET is_default = 1, priority = 1, updated_at = datetime('now')
-       WHERE id = ? AND user_id = ?`,
-      [botId, userId]
-    )
+    await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.update({ is_default: true, priority: 1 }).eq('id', botId).eq('user_id', userId)
+    );
 
     // Reorder other bots' priorities (shift by 1)
-    await this.db.query(
-      `UPDATE agent_bots 
-       SET priority = priority + 1, updated_at = datetime('now')
-       WHERE user_id = ? AND id != ? AND priority >= 1`,
-      [userId, botId]
-    )
+    const { data: otherBots } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.select('id, priority').eq('user_id', userId).neq('id', botId).gte('priority', 1)
+    );
+    
+    if (otherBots && otherBots.length > 0) {
+      for (const otherBot of otherBots) {
+        await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+          query.update({ priority: (otherBot.priority || 0) + 1 }).eq('id', otherBot.id)
+        );
+      }
+    }
 
     logger.info('Bot set as default', { botId, userId })
 
@@ -991,34 +974,28 @@ class BotService {
 
     // Verify all bots belong to user
     const botIds = priorities.map(p => p.id)
-    const { rows } = await this.db.query(
-      `SELECT id FROM agent_bots WHERE user_id = ? AND id IN (${botIds.map(() => '?').join(',')})`,
-      [userId, ...botIds]
-    )
+    const { data: userBots, error } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.select('id').eq('user_id', userId).in('id', botIds)
+    );
 
-    if (rows.length !== botIds.length) {
+    if (error || !userBots || userBots.length !== botIds.length) {
       throw new Error('One or more bots not found or unauthorized')
     }
 
     // Update priorities
     for (const { id, priority } of priorities) {
-      await this.db.query(
-        `UPDATE agent_bots 
-         SET priority = ?, updated_at = datetime('now')
-         WHERE id = ? AND user_id = ?`,
-        [priority, id, userId]
-      )
+      await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+        query.update({ priority }).eq('id', id).eq('user_id', userId)
+      );
     }
 
     // Set is_default for priority 1 bot, remove from others
-    await this.db.query(
-      'UPDATE agent_bots SET is_default = 0 WHERE user_id = ?',
-      [userId]
-    )
-    await this.db.query(
-      'UPDATE agent_bots SET is_default = 1 WHERE user_id = ? AND priority = 1',
-      [userId]
-    )
+    await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.update({ is_default: false }).eq('user_id', userId)
+    );
+    await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.update({ is_default: true }).eq('user_id', userId).eq('priority', 1)
+    );
 
     logger.info('Bot priorities updated', { userId, count: priorities.length })
   }
@@ -1030,9 +1007,15 @@ class BotService {
    * @returns {Promise<Object|null>} Bot or null
    */
   async getBotById(botId, userId) {
-    const sql = 'SELECT * FROM agent_bots WHERE id = ? AND user_id = ?'
-    const { rows } = await this.db.query(sql, [botId, userId])
-    return this.transformBot(rows[0])
+    const { data, error } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.select('*').eq('id', botId).eq('user_id', userId).single()
+    );
+    
+    if (error || !data) {
+      return null;
+    }
+    
+    return this.transformBot(data);
   }
 
   /**
@@ -1041,17 +1024,23 @@ class BotService {
    * @returns {Promise<Array>} Bots ordered by priority
    */
   async getBots(userId) {
-    const sql = `
-      SELECT ab.*, 
-             COUNT(c.id) as assigned_conversations
-      FROM agent_bots ab
-      LEFT JOIN conversations c ON ab.id = c.assigned_bot_id
-      WHERE ab.user_id = ?
-      GROUP BY ab.id
-      ORDER BY ab.priority ASC, ab.created_at DESC
-    `
-    const { rows } = await this.db.query(sql, [userId])
-    return rows.map(row => this.transformBot(row))
+    // Get bots with conversation count
+    const { data: bots, error } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.select('*').eq('user_id', userId).order('priority', { ascending: true }).order('created_at', { ascending: false })
+    );
+    
+    if (error || !bots) {
+      logger.error('Failed to get bots', { error: error?.message, userId });
+      return [];
+    }
+    
+    // Get conversation counts for each bot
+    const botsWithCounts = await Promise.all(bots.map(async (bot) => {
+      const { count } = await SupabaseService.count('conversations', { assigned_bot_id: bot.id });
+      return { ...bot, assigned_conversations: count || 0 };
+    }));
+    
+    return botsWithCounts.map(row => this.transformBot(row));
   }
 
   /**
@@ -1076,17 +1065,18 @@ class BotService {
 
     const newToken = this.generateAccessToken()
 
-    const sql = `
-      UPDATE agent_bots 
-      SET access_token = ?, updated_at = datetime('now')
-      WHERE id = ? AND user_id = ?
-    `
+    const { data: updatedBot, error } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.update({ access_token: newToken }).eq('id', botId).eq('user_id', userId).select().single()
+    );
 
-    await this.db.query(sql, [newToken, botId, userId])
+    if (error) {
+      logger.error('Failed to regenerate bot access token', { error: error.message, botId, userId });
+      throw error;
+    }
 
     logger.info('Bot access token regenerated', { botId, userId })
 
-    return this.getBotById(botId, userId)
+    return this.transformBot(updatedBot);
   }
 }
 

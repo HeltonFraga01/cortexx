@@ -4,6 +4,8 @@
  * Middleware for authenticating agents in the multi-user system.
  * Validates session tokens and loads agent/account data into request.
  * 
+ * Migrated to use module-level service initialization (Task 14.1)
+ * 
  * Requirements: 6.1, 6.3
  */
 
@@ -13,22 +15,10 @@ const AgentSessionService = require('../services/AgentSessionService');
 const AgentService = require('../services/AgentService');
 const AccountService = require('../services/AccountService');
 
-// Lazy initialization of services (will be set on first use)
-let sessionService = null;
-let agentService = null;
-let accountService = null;
-
-/**
- * Initialize services with database instance
- * @param {Object} db - Database instance
- */
-function initServices(db) {
-  if (!sessionService) {
-    sessionService = new AgentSessionService(db);
-    agentService = new AgentService(db);
-    accountService = new AccountService(db);
-  }
-}
+// Module-level service instances (services now use SupabaseService internally)
+const sessionService = new AgentSessionService();
+const agentService = new AgentService();
+const accountService = new AccountService();
 
 /**
  * Extract session token from request
@@ -61,14 +51,9 @@ function extractToken(req) {
  * 
  * Validates session token and loads agent/account data into request.
  * Sets req.agent, req.account, and req.agentSession.
- * 
- * @param {Object|null} db - Database instance (optional, will use req.app.locals.db if not provided)
  */
-function requireAgentAuth(db) {
+function requireAgentAuth() {
   return async (req, res, next) => {
-    // Get db from parameter or from app.locals
-    const database = db || req.app.locals.db;
-    initServices(database);
     try {
       const token = extractToken(req);
       
@@ -325,14 +310,9 @@ function requirePermission(permission) {
 
 /**
  * Optional agent auth - loads agent data if token present, but doesn't require it
- * 
- * @param {Object|null} db - Database instance (optional, will use req.app.locals.db if not provided)
  */
-function optionalAgentAuth(db) {
+function optionalAgentAuth() {
   return async (req, res, next) => {
-    // Get db from parameter or from app.locals
-    const database = db || req.app.locals.db;
-    initServices(database);
     try {
       const token = extractToken(req);
       
@@ -372,6 +352,5 @@ module.exports = {
   requireAgentRole,
   requirePermission,
   optionalAgentAuth,
-  extractToken,
-  initServices
+  extractToken
 };

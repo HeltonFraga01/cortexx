@@ -5,13 +5,16 @@
  * Implements round-robin distribution, pickup, transfer, and release operations.
  * 
  * Requirements: 1.1, 1.2, 1.3, 2.3, 5.1, 5.2, 5.3, 6.1, 6.2, 6.3, 7.4
+ * 
+ * MIGRATED: Now uses SupabaseService directly instead of db parameter
  */
 
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class ConversationAssignmentService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   /**
@@ -23,13 +26,16 @@ class ConversationAssignmentService {
    */
   async getAgentConversationCount(agentId) {
     try {
-      const sql = `
-        SELECT COUNT(*) as count 
-        FROM conversations 
-        WHERE assigned_agent_id = ? AND status = 'open'
-      `;
-      const { rows } = await this.db.query(sql, [agentId]);
-      return rows[0]?.count || 0;
+      const { count, error } = await SupabaseService.count('conversations', { 
+        assigned_agent_id: agentId, 
+        status: 'open' 
+      });
+      
+      if (error) {
+        throw error;
+      }
+      
+      return count || 0;
     } catch (error) {
       logger.error('Failed to get agent conversation count', { 
         agentId, 
@@ -47,28 +53,45 @@ class ConversationAssignmentService {
    */
   async getAvailableAgents(inboxId, maxConversations = null) {
     try {
-      let sql = `
-        SELECT a.id, a.name, a.availability,
-          (SELECT COUNT(*) FROM conversations c 
-           WHERE c.assigned_agent_id = a.id AND c.status = 'open') as conversation_count
-        FROM agents a
-        INNER JOIN inbox_members im ON a.id = im.agent_id
-        WHERE im.inbox_id = ?
-          AND a.availability = 'online'
-          AND a.status = 'active'
-      `;
+      // Get inbox members
+      const { data: members, error: membersError } = await SupabaseService.queryAsAdmin('inbox_members', (query) =>
+        query.select('agent_id').eq('inbox_id', inboxId)
+      );
       
-      const params = [inboxId];
-      
-      if (maxConversations !== null) {
-        sql += ` HAVING conversation_count < ?`;
-        params.push(maxConversations);
+      if (membersError || !members || members.length === 0) {
+        return [];
       }
       
-      sql += ` ORDER BY a.name`;
+      const agentIds = members.map(m => m.agent_id);
       
-      const { rows } = await this.db.query(sql, params);
-      return rows;
+      // Get active online agents
+      const { data: agents, error: agentsError } = await SupabaseService.queryAsAdmin('agents', (query) =>
+        query.select('id, name, availability')
+          .in('id', agentIds)
+          .eq('availability', 'online')
+          .eq('status', 'active')
+          .order('name')
+      );
+      
+      if (agentsError || !agents) {
+        return [];
+      }
+      
+      // Get conversation counts for each agent
+      const agentsWithCounts = await Promise.all(agents.map(async (agent) => {
+        const { count } = await SupabaseService.count('conversations', { 
+          assigned_agent_id: agent.id, 
+          status: 'open' 
+        });
+        return { ...agent, conversation_count: count || 0 };
+      }));
+      
+      // Filter by max conversations if specified
+      if (maxConversations !== null) {
+        return agentsWithCounts.filter(a => a.conversation_count < maxConversations);
+      }
+      
+      return agentsWithCounts;
     } catch (error) {
       logger.error('Failed to get available agents', { 
         inboxId, 
@@ -88,19 +111,16 @@ class ConversationAssignmentService {
   async getNextAvailableAgent(inboxId) {
     try {
       // Get inbox configuration
-      const inboxSql = `
-        SELECT id, enable_auto_assignment, max_conversations_per_agent, last_assigned_agent_id
-        FROM inboxes
-        WHERE id = ?
-      `;
-      const { rows: inboxRows } = await this.db.query(inboxSql, [inboxId]);
+      const { data: inbox, error: inboxError } = await SupabaseService.queryAsAdmin('inboxes', (query) =>
+        query.select('id, enable_auto_assignment, max_conversations_per_agent, last_assigned_agent_id')
+          .eq('id', inboxId)
+          .single()
+      );
       
-      if (inboxRows.length === 0) {
+      if (inboxError || !inbox) {
         logger.warn('Inbox not found for assignment', { inboxId });
         return null;
       }
-      
-      const inbox = inboxRows[0];
       
       // Check if auto-assignment is enabled
       if (!inbox.enable_auto_assignment) {
@@ -124,18 +144,14 @@ class ConversationAssignmentService {
       const lastAssignedId = inbox.last_assigned_agent_id;
       
       if (lastAssignedId) {
-        // Find index of last assigned agent
         const lastIndex = availableAgents.findIndex(a => a.id === lastAssignedId);
         
         if (lastIndex >= 0 && lastIndex < availableAgents.length - 1) {
-          // Next agent in list
           nextAgent = availableAgents[lastIndex + 1];
         } else {
-          // Wrap around to first agent
           nextAgent = availableAgents[0];
         }
       } else {
-        // No previous assignment, start with first agent
         nextAgent = availableAgents[0];
       }
       
@@ -176,20 +192,14 @@ class ConversationAssignmentService {
       }
       
       // Assign conversation to agent
-      const updateSql = `
-        UPDATE conversations 
-        SET assigned_agent_id = ?, updated_at = datetime('now')
-        WHERE id = ?
-      `;
-      await this.db.query(updateSql, [agentId, conversationId]);
+      await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.update({ assigned_agent_id: agentId }).eq('id', conversationId)
+      );
       
       // Update last assigned agent in inbox for round-robin
-      const inboxUpdateSql = `
-        UPDATE inboxes 
-        SET last_assigned_agent_id = ?, updated_at = datetime('now')
-        WHERE id = ?
-      `;
-      await this.db.query(inboxUpdateSql, [agentId, inboxId]);
+      await SupabaseService.queryAsAdmin('inboxes', (query) =>
+        query.update({ last_assigned_agent_id: agentId }).eq('id', inboxId)
+      );
       
       // Log assignment for audit
       await this.logAssignmentAction(conversationId, null, agentId, 'auto_assign');
@@ -222,16 +232,14 @@ class ConversationAssignmentService {
   async pickupConversation(conversationId, agentId) {
     try {
       // Use optimistic locking - only update if still unassigned
-      const sql = `
-        UPDATE conversations 
-        SET assigned_agent_id = ?, updated_at = datetime('now')
-        WHERE id = ? AND assigned_agent_id IS NULL
-      `;
+      const { data, error } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.update({ assigned_agent_id: agentId })
+          .eq('id', conversationId)
+          .is('assigned_agent_id', null)
+          .select()
+      );
       
-      const result = await this.db.query(sql, [agentId, conversationId]);
-      
-      if (result.changes === 0) {
-        // Conversation was already assigned
+      if (error || !data || data.length === 0) {
         logger.warn('Conversation pickup failed - already assigned', { 
           conversationId, 
           agentId 
@@ -265,13 +273,9 @@ class ConversationAssignmentService {
    */
   async transferConversation(conversationId, targetAgentId, sourceAgentId) {
     try {
-      const sql = `
-        UPDATE conversations 
-        SET assigned_agent_id = ?, updated_at = datetime('now')
-        WHERE id = ?
-      `;
-      
-      await this.db.query(sql, [targetAgentId, conversationId]);
+      await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.update({ assigned_agent_id: targetAgentId }).eq('id', conversationId)
+      );
       
       // Log transfer action
       await this.logAssignmentAction(conversationId, sourceAgentId, targetAgentId, 'transfer');
@@ -302,13 +306,9 @@ class ConversationAssignmentService {
    */
   async releaseConversation(conversationId, agentId) {
     try {
-      const sql = `
-        UPDATE conversations 
-        SET assigned_agent_id = NULL, updated_at = datetime('now')
-        WHERE id = ?
-      `;
-      
-      await this.db.query(sql, [conversationId]);
+      await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.update({ assigned_agent_id: null }).eq('id', conversationId)
+      );
       
       // Log release action - NOTE: Do NOT trigger auto-assignment here
       await this.logAssignmentAction(conversationId, agentId, null, 'release');
@@ -335,13 +335,9 @@ class ConversationAssignmentService {
    */
   async manualAssign(conversationId, targetAgentId, assignerId) {
     try {
-      const sql = `
-        UPDATE conversations 
-        SET assigned_agent_id = ?, updated_at = datetime('now')
-        WHERE id = ?
-      `;
-      
-      await this.db.query(sql, [targetAgentId, conversationId]);
+      await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.update({ assigned_agent_id: targetAgentId }).eq('id', conversationId)
+      );
       
       // Log manual assignment
       await this.logAssignmentAction(conversationId, assignerId, targetAgentId, 'manual_assign');
@@ -371,21 +367,13 @@ class ConversationAssignmentService {
    */
   async logAssignmentAction(conversationId, fromAgentId, toAgentId, action) {
     try {
-      const sql = `
-        INSERT INTO audit_log (
-          entity_type, entity_id, action, 
-          old_value, new_value, 
-          created_at
-        ) VALUES (?, ?, ?, ?, ?, datetime('now'))
-      `;
-      
-      await this.db.query(sql, [
-        'conversation_assignment',
-        conversationId,
+      await SupabaseService.insert('audit_log', {
+        entity_type: 'conversation_assignment',
+        entity_id: conversationId.toString(),
         action,
-        fromAgentId ? JSON.stringify({ agent_id: fromAgentId }) : null,
-        toAgentId ? JSON.stringify({ agent_id: toAgentId }) : null
-      ]);
+        old_value: fromAgentId ? JSON.stringify({ agent_id: fromAgentId }) : null,
+        new_value: toAgentId ? JSON.stringify({ agent_id: toAgentId }) : null
+      });
     } catch (error) {
       // Don't fail the main operation if audit logging fails
       logger.error('Failed to log assignment action', { 
@@ -404,15 +392,21 @@ class ConversationAssignmentService {
    */
   async checkAgentAccess(agentId, conversationId) {
     try {
-      const sql = `
-        SELECT c.id
-        FROM conversations c
-        INNER JOIN inbox_members im ON c.inbox_id = im.inbox_id
-        WHERE c.id = ? AND im.agent_id = ?
-      `;
+      // Get conversation's inbox
+      const { data: conv, error: convError } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.select('inbox_id').eq('id', conversationId).single()
+      );
       
-      const { rows } = await this.db.query(sql, [conversationId, agentId]);
-      return rows.length > 0;
+      if (convError || !conv) {
+        return false;
+      }
+      
+      // Check if agent is member of inbox
+      const { data: member, error: memberError } = await SupabaseService.queryAsAdmin('inbox_members', (query) =>
+        query.select('id').eq('inbox_id', conv.inbox_id).eq('agent_id', agentId).single()
+      );
+      
+      return !memberError && !!member;
     } catch (error) {
       logger.error('Failed to check agent access', { 
         agentId, 
@@ -430,16 +424,28 @@ class ConversationAssignmentService {
    */
   async getConversationAssignment(conversationId) {
     try {
-      const sql = `
-        SELECT c.id, c.assigned_agent_id, c.inbox_id,
-          a.name as assigned_agent_name, a.availability as assigned_agent_availability
-        FROM conversations c
-        LEFT JOIN agents a ON c.assigned_agent_id = a.id
-        WHERE c.id = ?
-      `;
+      const { data: conv, error: convError } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.select('id, assigned_agent_id, inbox_id').eq('id', conversationId).single()
+      );
       
-      const { rows } = await this.db.query(sql, [conversationId]);
-      return rows[0] || null;
+      if (convError || !conv) {
+        return null;
+      }
+      
+      // Get agent info if assigned
+      if (conv.assigned_agent_id) {
+        const { data: agent } = await SupabaseService.queryAsAdmin('agents', (query) =>
+          query.select('name, availability').eq('id', conv.assigned_agent_id).single()
+        );
+        
+        return {
+          ...conv,
+          assigned_agent_name: agent?.name,
+          assigned_agent_availability: agent?.availability
+        };
+      }
+      
+      return conv;
     } catch (error) {
       logger.error('Failed to get conversation assignment', { 
         conversationId, 
@@ -457,27 +463,48 @@ class ConversationAssignmentService {
    */
   async getTransferableAgents(inboxId, excludeAgentId = null) {
     try {
-      let sql = `
-        SELECT a.id, a.name, a.avatar_url, a.availability,
-          (SELECT COUNT(*) FROM conversations c 
-           WHERE c.assigned_agent_id = a.id AND c.status = 'open') as conversation_count
-        FROM agents a
-        INNER JOIN inbox_members im ON a.id = im.agent_id
-        WHERE im.inbox_id = ?
-          AND a.status = 'active'
-      `;
+      // Get inbox members
+      const { data: members, error: membersError } = await SupabaseService.queryAsAdmin('inbox_members', (query) =>
+        query.select('agent_id').eq('inbox_id', inboxId)
+      );
       
-      const params = [inboxId];
-      
-      if (excludeAgentId) {
-        sql += ` AND a.id != ?`;
-        params.push(excludeAgentId);
+      if (membersError || !members || members.length === 0) {
+        return [];
       }
       
-      sql += ` ORDER BY a.name`;
+      let agentIds = members.map(m => m.agent_id);
       
-      const { rows } = await this.db.query(sql, params);
-      return rows;
+      // Exclude current assignee if specified
+      if (excludeAgentId) {
+        agentIds = agentIds.filter(id => id !== excludeAgentId);
+      }
+      
+      if (agentIds.length === 0) {
+        return [];
+      }
+      
+      // Get active agents
+      const { data: agents, error: agentsError } = await SupabaseService.queryAsAdmin('agents', (query) =>
+        query.select('id, name, avatar_url, availability')
+          .in('id', agentIds)
+          .eq('status', 'active')
+          .order('name')
+      );
+      
+      if (agentsError || !agents) {
+        return [];
+      }
+      
+      // Get conversation counts for each agent
+      const agentsWithCounts = await Promise.all(agents.map(async (agent) => {
+        const { count } = await SupabaseService.count('conversations', { 
+          assigned_agent_id: agent.id, 
+          status: 'open' 
+        });
+        return { ...agent, conversation_count: count || 0 };
+      }));
+      
+      return agentsWithCounts;
     } catch (error) {
       logger.error('Failed to get transferable agents', { 
         inboxId, 
