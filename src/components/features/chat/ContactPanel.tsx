@@ -276,7 +276,8 @@ export function ContactPanel({ conversation, onClose, onNavigateToConversation }
   ) || []
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    // Task 5.3: Applied max-w-[320px] to container
+    <div className="flex flex-col h-full max-w-[320px] bg-background">
       {/* Header */}
       <div className="flex items-center justify-between px-4 h-14 border-b">
         <h3 className="text-sm font-semibold">Detalhes do contato</h3>
@@ -286,48 +287,50 @@ export function ContactPanel({ conversation, onClose, onNavigateToConversation }
       </div>
 
       <ScrollArea className="flex-1">
-        {/* Contact Header */}
-        <div className="p-4 border-b">
-          <div className="flex flex-col items-center text-center">
-            <div className="relative">
-              <Avatar className="h-20 w-20 mb-3">
-                <AvatarImage src={avatarUrl || undefined} />
-                <AvatarFallback className="text-2xl">{initials}</AvatarFallback>
-              </Avatar>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-background border shadow-sm"
-                onClick={handleFetchAvatar}
-                disabled={isLoadingAvatar}
-                title="Atualizar foto do perfil"
-              >
-                <RefreshCw className={cn("h-3 w-3", isLoadingAvatar && "animate-spin")} />
-              </Button>
-            </div>
-            <div className="flex items-center gap-1">
-              <h4 className="text-lg font-medium">{displayName}</h4>
-              {/* Verified badge placeholder - would need API support */}
-            </div>
-            <div className="flex items-center gap-2 mt-1">
-              <Phone className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">{phoneNumber}</span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6"
-                onClick={handleCopyPhone}
-              >
-                <Copy className="h-3 w-3" />
-              </Button>
-            </div>
-            {isGroup && (
-              <Badge variant="secondary" className="mt-2">
-                <Users className="h-3 w-3 mr-1" />
-                Grupo
-              </Badge>
-            )}
+        {/* Task 5.1: Reorganized Contact Header with larger avatar */}
+        <div className="p-6 border-b text-center">
+          <div className="relative inline-block">
+            {/* Task 5.1: Avatar increased to 80px with ring-4 */}
+            <Avatar className="h-20 w-20 ring-4 ring-muted mx-auto">
+              <AvatarImage src={avatarUrl || undefined} loading="lazy" />
+              <AvatarFallback className="text-2xl">{initials}</AvatarFallback>
+            </Avatar>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-background border shadow-sm"
+              onClick={handleFetchAvatar}
+              disabled={isLoadingAvatar}
+              title="Atualizar foto do perfil"
+            >
+              <RefreshCw className={cn("h-3 w-3", isLoadingAvatar && "animate-spin")} />
+            </Button>
           </div>
+          
+          {/* Task 5.1: Centered name and phone */}
+          <h4 className="mt-4 text-lg font-semibold">{displayName}</h4>
+          
+          {/* Task 5.1: Phone with copy button */}
+          <div className="flex items-center justify-center gap-2 mt-1 text-muted-foreground">
+            <Phone className="h-4 w-4" />
+            <span className="text-sm">{phoneNumber}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={handleCopyPhone}
+              title="Copiar número"
+            >
+              <Copy className="h-3 w-3" />
+            </Button>
+          </div>
+          
+          {isGroup && (
+            <Badge variant="secondary" className="mt-2">
+              <Users className="h-3 w-3 mr-1" />
+              Grupo
+            </Badge>
+          )}
         </div>
 
         {/* Collapsible Sections */}
@@ -442,7 +445,7 @@ export function ContactPanel({ conversation, onClose, onNavigateToConversation }
                     return (
                       <div className="flex items-center gap-2">
                         <Avatar className="h-8 w-8">
-                          <AvatarImage src={assignedBot.avatarUrl || undefined} />
+                          <AvatarImage src={assignedBot.avatarUrl || undefined} loading="lazy" />
                           <AvatarFallback className="text-xs">
                             {assignedBot.name.slice(0, 2).toUpperCase()}
                           </AvatarFallback>
@@ -485,7 +488,7 @@ export function ContactPanel({ conversation, onClose, onNavigateToConversation }
                         className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-muted transition-colors"
                       >
                         <Avatar className="h-8 w-8">
-                          <AvatarImage src={bot.avatarUrl || undefined} />
+                          <AvatarImage src={bot.avatarUrl || undefined} loading="lazy" />
                           <AvatarFallback className="text-xs">
                             {bot.name.slice(0, 2).toUpperCase()}
                           </AvatarFallback>

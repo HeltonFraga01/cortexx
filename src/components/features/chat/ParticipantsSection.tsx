@@ -65,7 +65,7 @@ export function ParticipantsSection({ conversationId, isGroup }: ParticipantsSec
           className="flex items-center gap-2 p-2 rounded-lg hover:bg-muted/50 transition-colors"
         >
           <Avatar className="h-8 w-8">
-            <AvatarImage src={participant.avatarUrl || undefined} />
+            <AvatarImage src={participant.avatarUrl || undefined} loading="lazy" />
             <AvatarFallback className="text-xs">
               {getInitials(participant.name || formatPhone(participant.jid))}
             </AvatarFallback>

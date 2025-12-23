@@ -61,58 +61,59 @@
   }
 
   .dark {
-    /* Base Colors - Dark Mode (Deep Blue) */
-    --background: 224 71% 4%;
-    --foreground: 213 31% 91%;
+    /* Task 9.1: Base Colors - Dark Mode (Deep Blue-Gray instead of pure black) */
+    /* Using slate-900 (#0f172a) as base, slate-800 (#1e293b) for cards */
+    --background: 222.2 47.4% 11.2%;
+    --foreground: 210 40% 96%;
 
-    /* Cards and Surfaces (slightly lighter) */
-    --card: 224 71% 6%;
-    --card-foreground: 213 31% 91%;
+    /* Task 9.1: Cards and Surfaces (slate-800 for better layering) */
+    --card: 217.2 32.6% 17.5%;
+    --card-foreground: 210 40% 96%;
 
-    --popover: 224 71% 6%;
-    --popover-foreground: 213 31% 91%;
+    --popover: 217.2 32.6% 17.5%;
+    --popover-foreground: 210 40% 96%;
 
     /* Primary Colors - Default blue, overridden by branding */
     --primary: 217 91% 60%;
     --primary-foreground: 222.2 47.4% 11.2%;
 
     /* Secondary Colors */
-    --secondary: 222 47% 11%;
+    --secondary: 217.2 32.6% 17.5%;
     --secondary-foreground: 210 40% 98%;
 
-    /* States */
-    --muted: 223 47% 11%;
-    --muted-foreground: 215 20% 65%;
+    /* States - Task 8.3: Improved contrast for WCAG AA compliance */
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20% 70%;
 
-    --accent: 222 47% 11%;
+    --accent: 217.2 32.6% 17.5%;
     --accent-foreground: 210 40% 98%;
 
     --destructive: 0 63% 31%;
     --destructive-foreground: 210 40% 98%;
 
     /* Borders and Inputs */
-    --border: 216 34% 24%;
-    --input: 216 34% 24%;
+    --border: 217.2 32.6% 24%;
+    --input: 217.2 32.6% 24%;
     /* Ring uses primary color - will be overridden by branding */
     --ring: 217 91% 60%;
 
-    /* Sidebar - Dark Mode - uses primary from branding */
-    --sidebar-background: 224 71% 6%;
-    --sidebar-foreground: 213 31% 91%;
+    /* Task 9.1: Sidebar - Dark Mode - uses deep blue-gray */
+    --sidebar-background: 222.2 47.4% 11.2%;
+    --sidebar-foreground: 210 40% 96%;
     --sidebar-primary: 217 91% 60%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 222 47% 11%;
-    --sidebar-accent-foreground: 213 31% 91%;
-    --sidebar-border: 216 34% 17%;
+    --sidebar-accent: 217.2 32.6% 17.5%;
+    --sidebar-accent-foreground: 210 40% 96%;
+    --sidebar-border: 217.2 32.6% 24%;
     --sidebar-ring: 217 91% 60%;
 
-    /* Dialog - Dark Mode */
-    --dialog-background: 224 71% 6%;
-    --dialog-foreground: 213 31% 91%;
-    --dialog-muted: 215 20% 65%;
-    --dialog-border: 216 34% 17%;
-    --dialog-close-button: 222 47% 11%;
-    --dialog-close-button-hover: 222 47% 16%;
+    /* Task 9.1: Dialog - Dark Mode - uses deep blue-gray */
+    --dialog-background: 217.2 32.6% 17.5%;
+    --dialog-foreground: 210 40% 96%;
+    --dialog-muted: 215 20% 70%;
+    --dialog-border: 217.2 32.6% 24%;
+    --dialog-close-button: 217.2 32.6% 20%;
+    --dialog-close-button-hover: 217.2 32.6% 25%;
   }
 }
 
@@ -130,7 +131,7 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 
-  /* Smooth theme transitions (Requirements 4.3) */
+  /* Task 9.3: Smooth theme transitions */
   html,
   body,
   .theme-transition,
@@ -138,12 +139,43 @@
     transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
   }
 
+  /* Task 9.3: Apply transitions to main UI elements for smooth theme switching */
+  .dark,
+  :root {
+    /* Ensure CSS variable changes trigger smooth transitions */
+    color-scheme: light dark;
+  }
+
+  /* Task 9.3: Transition colors on interactive elements */
+  button,
+  a,
+  input,
+  textarea,
+  select,
+  [role="button"],
+  .card,
+  .sidebar,
+  .popover,
+  .dialog {
+    transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+
   /* Respect reduced motion preference */
   @media (prefers-reduced-motion: reduce) {
     html,
     body,
     .theme-transition,
-    [data-theme-transition] {
+    [data-theme-transition],
+    button,
+    a,
+    input,
+    textarea,
+    select,
+    [role="button"],
+    .card,
+    .sidebar,
+    .popover,
+    .dialog {
       transition: none;
     }
   }

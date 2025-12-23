@@ -44,27 +44,56 @@ import {
   Github,
   Music2,
   Globe,
-  Trash2
+  Trash2,
+  RotateCcw  // Task 7.2: Retry icon for failed messages
 } from 'lucide-react'
 import { formatWhatsAppText, hasWhatsAppFormatting } from '@/lib/whatsapp-formatter'
 import { detectPlatform, getGenericTitle, type PlatformInfo } from '@/lib/platform-detector'
 import { fetchLinkPreview as fetchLinkPreviewFromApi } from '@/services/link-preview'
 import { truncateDescription } from '@/lib/utils'
 
+// Task 2.3: Emoji-only message detection
+function isEmojiOnlyMessage(content: string | null): boolean {
+  if (!content) return false
+  
+  // Remove spaces and check if only emojis (1-3)
+  const trimmed = content.trim()
+  // Unicode emoji regex - matches emoji presentation sequences
+  const emojiRegex = /^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F){1,3}$/u
+  return emojiRegex.test(trimmed)
+}
+
 interface MessageBubbleProps {
   message: ChatMessage
   onReply: (message: ChatMessage) => void
   onDelete?: (message: ChatMessage) => void
+  onRetry?: (message: ChatMessage) => void  // Task 7.2: Retry callback for failed messages
   searchQuery?: string
   showParticipant?: boolean // Show participant name for group messages
+  isGrouped?: boolean // Task 2.2: If part of consecutive message group
+  isFirstInGroup?: boolean // Task 2.2: First message in group
+  isLastInGroup?: boolean // Task 2.2: Last message in group
 }
 
-export function MessageBubble({ message, onReply, onDelete, searchQuery, showParticipant = false }: MessageBubbleProps) {
+export function MessageBubble({ 
+  message, 
+  onReply, 
+  onDelete,
+  onRetry,  // Task 7.2: Retry callback
+  searchQuery, 
+  showParticipant = false,
+  isGrouped = false,
+  isFirstInGroup = true,
+  isLastInGroup = true
+}: MessageBubbleProps) {
   const [showActions, setShowActions] = useState(false)
   const chatApi = useChatApi()
   const isOutgoing = message.direction === 'outgoing'
   const isPrivateNote = Boolean(message.isPrivateNote)
   const isGroupMessage = message.isGroupMessage || Boolean(message.participantJid)
+  
+  // Task 2.3: Check if emoji-only message
+  const isEmojiOnly = message.messageType === 'text' && isEmojiOnlyMessage(message.content)
 
   const handleCopy = useCallback(async () => {
     if (message.content) {
@@ -86,18 +115,99 @@ export function MessageBubble({ message, onReply, onDelete, searchQuery, showPar
     ? highlightText(message.content, searchQuery)
     : message.content
 
+  // Task 2.3: Render emoji-only messages without bubble
+  if (isEmojiOnly) {
+    return (
+      <div
+        className={cn(
+          'flex group',
+          isOutgoing ? 'justify-end' : 'justify-start',
+          isGrouped ? 'mt-0.5' : 'mt-2'
+        )}
+        onMouseEnter={() => setShowActions(true)}
+        onMouseLeave={() => setShowActions(false)}
+      >
+        <div className="relative">
+          <span className="text-4xl" data-testid="emoji-only-message">{message.content}</span>
+          
+          {/* Time and status for emoji messages */}
+          <div className={cn(
+            'flex items-center justify-end gap-1 mt-1',
+            'text-muted-foreground text-[10px]'
+          )}>
+            <span>{formattedTime}</span>
+            {isOutgoing && <MessageStatusIcon status={message.status} />}
+          </div>
+          
+          {/* Actions for emoji messages */}
+          <div
+            className={cn(
+              'absolute top-0 transition-all duration-150',
+              isOutgoing ? '-left-[72px]' : '-right-[72px]',
+              showActions ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'
+            )}
+          >
+            <div className="flex items-center bg-card border border-border/50 rounded-md shadow-sm">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 rounded-r-none hover:bg-accent/80"
+                onClick={() => onReply(message)}
+                title="Responder"
+              >
+                <Reply className="h-3 w-3 text-muted-foreground" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 rounded-l-none border-l border-border/30 hover:bg-accent/80"
+                onClick={handleCopy}
+                title="Copiar"
+              >
+                <Copy className="h-3 w-3 text-muted-foreground" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Task 2.2: Dynamic border radius based on group position
+  const getBubbleRadius = () => {
+    if (!isGrouped) return 'rounded-2xl' // Default: 16px all corners
+    
+    if (isOutgoing) {
+      return cn(
+        'rounded-2xl',
+        !isFirstInGroup && 'rounded-tr-md',
+        !isLastInGroup && 'rounded-br-md'
+      )
+    } else {
+      return cn(
+        'rounded-2xl',
+        !isFirstInGroup && 'rounded-tl-md',
+        !isLastInGroup && 'rounded-bl-md'
+      )
+    }
+  }
+
   return (
     <div
       className={cn(
         'flex group',
-        isOutgoing ? 'justify-end' : 'justify-start'
+        isOutgoing ? 'justify-end' : 'justify-start',
+        // Task 2.2: Reduced spacing for grouped messages
+        isGrouped ? 'mt-0.5' : 'mt-2'
       )}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => setShowActions(false)}
     >
       <div
         className={cn(
-          'relative max-w-[70%] rounded-lg px-3 py-2',
+          // Task 2.1: Updated base styles - rounded-2xl (16px), improved padding
+          'relative max-w-[70%] px-3 py-2',
+          getBubbleRadius(),
           isPrivateNote
             ? 'bg-yellow-100 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700'
             : isOutgoing
@@ -119,7 +229,7 @@ export function MessageBubble({ message, onReply, onDelete, searchQuery, showPar
           </div>
         )}
 
-        {/* Reply preview */}
+        {/* Reply preview - Task 8.3: Improved contrast for reply preview */}
         {message.replyToMessage && (
           <div
             className={cn(
@@ -129,12 +239,18 @@ export function MessageBubble({ message, onReply, onDelete, searchQuery, showPar
                 : 'bg-background/50 border-muted-foreground/50'
             )}
           >
-            <p className="text-xs opacity-70 mb-1">
+            <p className={cn(
+              'text-xs mb-1',
+              isOutgoing ? 'text-primary-foreground/80' : 'text-muted-foreground'
+            )}>
               {message.replyToMessage.direction === 'incoming' 
                 ? (message.replyToMessage.participantName || 'Contato')
                 : 'Você'}
             </p>
-            <p className="truncate opacity-80">
+            <p className={cn(
+              'truncate',
+              isOutgoing ? 'text-primary-foreground/90' : 'text-foreground/80'
+            )}>
               {message.replyToMessage.content || '[Mídia]'}
             </p>
           </div>
@@ -143,13 +259,13 @@ export function MessageBubble({ message, onReply, onDelete, searchQuery, showPar
         {/* Message content */}
         <MessageContent message={message} highlightedContent={highlightedContent} />
 
-        {/* Footer with time, edit indicator, and status */}
+        {/* Footer with time, edit indicator, and status - Task 8.3: Improved contrast */}
         <div className={cn(
           'flex items-center justify-end gap-1 mt-1',
-          isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'
+          isOutgoing ? 'text-primary-foreground/80' : 'text-muted-foreground'
         )}>
           {message.isEdited && (
-            <span className="text-xs opacity-70 flex items-center gap-0.5">
+            <span className="text-xs flex items-center gap-0.5">
               ✏️ editada
             </span>
           )}
@@ -158,6 +274,25 @@ export function MessageBubble({ message, onReply, onDelete, searchQuery, showPar
             <MessageStatusIcon status={message.status} />
           )}
         </div>
+
+        {/* Task 7.2: Failed message error state with retry button */}
+        {message.status === 'failed' && onRetry && (
+          <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t border-destructive/20">
+            <span className="text-xs text-destructive">Falha ao enviar</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={(e) => {
+                e.stopPropagation()
+                onRetry(message)
+              }}
+            >
+              <RotateCcw className="h-3 w-3 mr-1" />
+              Tentar novamente
+            </Button>
+          </div>
+        )}
 
         {/* Reactions */}
         {message.reactions && message.reactions.length > 0 && (
@@ -280,7 +415,7 @@ function MessageContent({ message, highlightedContent }: MessageContentProps) {
               {location?.name || 'Localização'}
             </p>
             {location && (
-              <p className="text-xs opacity-70">
+              <p className="text-xs text-muted-foreground">
                 {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
               </p>
             )}
@@ -1035,8 +1170,8 @@ function MediaAudio({ message }: { message: ChatMessage }) {
               </div>
             </div>
             
-            {/* Time display */}
-            <div className="flex justify-between text-xs opacity-70 mt-1">
+            {/* Time display - Task 8.3: Improved contrast */}
+            <div className="flex justify-between text-xs text-muted-foreground mt-1">
               <span>{formatTime(currentTime)}</span>
               <span>{formatTime(duration)}</span>
             </div>
@@ -1068,7 +1203,7 @@ function MediaAudio({ message }: { message: ChatMessage }) {
         
         <div className="flex-1">
           <div className="h-1.5 bg-muted-foreground/30 rounded-full" />
-          <p className="text-xs opacity-70 mt-2">
+          <p className="text-xs text-muted-foreground mt-2">
             {error || 'Clique para carregar'}
           </p>
         </div>
@@ -1125,7 +1260,7 @@ function MediaDocument({ message }: { message: ChatMessage }) {
         {error ? (
           <p className="text-xs text-destructive truncate">{error}</p>
         ) : message.content ? (
-          <p className="text-xs opacity-70 truncate">{message.content}</p>
+          <p className="text-xs text-muted-foreground truncate">{message.content}</p>
         ) : null}
       </div>
       <Button 
@@ -1240,15 +1375,19 @@ interface MessageStatusIconProps {
   status: MessageStatus
 }
 
+// Task 2.4: Improved MessageStatusIcon with animations
 function MessageStatusIcon({ status }: MessageStatusIconProps) {
   switch (status) {
     case 'pending':
-      return <Clock className="h-3 w-3" />
+    case 'sending':
+      // Task 2.4: Pulse animation for sending state
+      return <Clock className="h-3 w-3 animate-pulse" />
     case 'sent':
       return <Check className="h-3 w-3" />
     case 'delivered':
       return <CheckCheck className="h-3 w-3" />
     case 'read':
+      // Task 2.4: Blue color for read status
       return <CheckCheck className="h-3 w-3 text-blue-400" />
     case 'failed':
       return <AlertCircle className="h-3 w-3 text-destructive" />
@@ -1401,7 +1540,7 @@ function ChannelCommentIndicator() {
 
 function DeletedMessage() {
   return (
-    <div className="flex items-center gap-2 opacity-60 italic">
+    <div className="flex items-center gap-2 text-muted-foreground italic">
       <span>🚫</span>
       <span className="text-sm">Esta mensagem foi apagada</span>
     </div>

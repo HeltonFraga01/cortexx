@@ -233,13 +233,81 @@ export function ConversationView({
     staleTime: 10000
   })
 
-  // Send message mutation using the appropriate API
+  // Task 7.1: Send message mutation with optimistic updates
   const sendMessageMutation = useMutation({
     mutationFn: (content: string) => chatApi.sendTextMessage(conversation.id, {
       content,
       replyToMessageId: replyToMessage?.id.toString()
     }),
-    onSuccess: () => {
+    onMutate: async (content) => {
+      // Cancel outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ['messages', conversation.id] })
+      
+      // Snapshot previous messages
+      const previousMessages = queryClient.getQueryData(['messages', conversation.id, chatApi.isAgentMode])
+      
+      // Create optimistic message with 'sending' status
+      const optimisticMessage: ChatMessage = {
+        id: `temp-${Date.now()}`,
+        conversationId: conversation.id,
+        content,
+        messageType: 'text',
+        direction: 'outgoing',
+        status: 'sending',
+        timestamp: new Date().toISOString(),
+        replyToMessage: replyToMessage || undefined,
+        isEdited: false,
+        reactions: []
+      }
+      
+      // Optimistically add message to cache
+      queryClient.setQueryData(
+        ['messages', conversation.id, chatApi.isAgentMode],
+        (old: { messages: ChatMessage[] } | undefined) => {
+          if (!old) return { messages: [optimisticMessage] }
+          return { messages: [...old.messages, optimisticMessage] }
+        }
+      )
+      
+      // Scroll to bottom for new message
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      }, 50)
+      
+      return { previousMessages, optimisticMessageId: optimisticMessage.id }
+    },
+    onError: (err, content, context) => {
+      // Rollback on error - mark message as failed instead of removing
+      if (context?.optimisticMessageId) {
+        queryClient.setQueryData(
+          ['messages', conversation.id, chatApi.isAgentMode],
+          (old: { messages: ChatMessage[] } | undefined) => {
+            if (!old) return old
+            return {
+              messages: old.messages.map(msg => 
+                msg.id === context.optimisticMessageId 
+                  ? { ...msg, status: 'failed' as const }
+                  : msg
+              )
+            }
+          }
+        )
+      }
+      toast.error('Erro ao enviar mensagem', { 
+        description: 'Clique no ícone de erro para tentar novamente'
+      })
+    },
+    onSuccess: (data, content, context) => {
+      // Remove optimistic message and let the real one come from invalidation
+      queryClient.setQueryData(
+        ['messages', conversation.id, chatApi.isAgentMode],
+        (old: { messages: ChatMessage[] } | undefined) => {
+          if (!old) return old
+          return {
+            messages: old.messages.filter(msg => msg.id !== context?.optimisticMessageId)
+          }
+        }
+      )
       queryClient.invalidateQueries({ queryKey: ['messages', conversation.id] })
       queryClient.invalidateQueries({ queryKey: ['conversations'] })
       setReplyToMessage(null)
@@ -313,6 +381,24 @@ export function ConversationView({
     }
   }, [deleteMessageMutation])
 
+  // Task 7.2: Handle retry for failed messages
+  const handleRetryMessage = useCallback((message: ChatMessage) => {
+    if (message.content && message.status === 'failed') {
+      // Remove the failed message from cache
+      queryClient.setQueryData(
+        ['messages', conversation.id, chatApi.isAgentMode],
+        (old: { messages: ChatMessage[] } | undefined) => {
+          if (!old) return old
+          return {
+            messages: old.messages.filter(msg => msg.id !== message.id)
+          }
+        }
+      )
+      // Resend the message
+      sendMessageMutation.mutate(message.content)
+    }
+  }, [conversation.id, chatApi.isAgentMode, queryClient, sendMessageMutation])
+
   const cancelReply = useCallback(() => {
     setReplyToMessage(null)
   }, [])
@@ -341,7 +427,7 @@ export function ConversationView({
           )}
           
           <Avatar className="h-9 w-9">
-            <AvatarImage src={conversation.contactAvatarUrl || undefined} />
+            <AvatarImage src={conversation.contactAvatarUrl || undefined} loading="lazy" />
             <AvatarFallback>{initials}</AvatarFallback>
           </Avatar>
           
@@ -593,7 +679,7 @@ export function ConversationView({
                       {date}
                     </span>
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-0.5">
                     {dateMessages.map((message, index) => {
                       const currentGlobalIndex = globalIndex++
                       const isFirstUnread = currentGlobalIndex === firstUnreadIndex && !hasShownUnreadDivider
@@ -607,10 +693,35 @@ export function ConversationView({
                       
                       // Determine if we should show participant name
                       const previousMessage = index > 0 ? dateMessages[index - 1] : null
+                      const nextMessage = index < dateMessages.length - 1 ? dateMessages[index + 1] : null
                       const showParticipant = isGroupConversation && 
                         message.direction === 'incoming' &&
                         (previousMessage?.direction !== 'incoming' ||
                          previousMessage.participantJid !== message.participantJid)
+                      
+                      // Task 2.2: Calculate message grouping
+                      const isSameSenderAsPrevious = previousMessage && 
+                        previousMessage.direction === message.direction &&
+                        (!isGroupConversation || previousMessage.participantJid === message.participantJid)
+                      
+                      const isSameSenderAsNext = nextMessage && 
+                        nextMessage.direction === message.direction &&
+                        (!isGroupConversation || nextMessage.participantJid === message.participantJid)
+                      
+                      // Check time gap (group messages within 2 minutes)
+                      const timeDiffPrev = previousMessage 
+                        ? Math.abs(new Date(message.timestamp).getTime() - new Date(previousMessage.timestamp).getTime()) 
+                        : Infinity
+                      const timeDiffNext = nextMessage 
+                        ? Math.abs(new Date(nextMessage.timestamp).getTime() - new Date(message.timestamp).getTime()) 
+                        : Infinity
+                      
+                      const isGroupedWithPrevious = isSameSenderAsPrevious && timeDiffPrev < 120000 // 2 minutes
+                      const isGroupedWithNext = isSameSenderAsNext && timeDiffNext < 120000
+                      
+                      const isGrouped = isGroupedWithPrevious || isGroupedWithNext
+                      const isFirstInGroup = !isGroupedWithPrevious
+                      const isLastInGroup = !isGroupedWithNext
                       
                       return (
                         <div key={message.id}>
@@ -631,8 +742,12 @@ export function ConversationView({
                             message={message}
                             onReply={handleReply}
                             onDelete={handleDeleteMessage}
+                            onRetry={handleRetryMessage}
                             searchQuery={searchQuery}
                             showParticipant={showParticipant}
+                            isGrouped={isGrouped}
+                            isFirstInGroup={isFirstInGroup}
+                            isLastInGroup={isLastInGroup}
                           />
                         </div>
                       )
@@ -647,19 +762,24 @@ export function ConversationView({
         )}
       </ScrollArea>
 
-      {/* Reply preview */}
+      {/* Task 4.4: Improved Reply preview - compact with clear dismiss */}
       {replyToMessage && (
         <div className="px-4 py-2 border-t bg-muted/30">
-          <div className="flex items-center justify-between">
+          <div className="flex items-start gap-3 p-2 rounded-lg bg-background/50 border-l-2 border-primary">
             <div className="flex-1 min-w-0">
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs font-medium text-primary">
                 Respondendo a {replyToMessage.direction === 'incoming' ? displayName : 'você'}
               </p>
-              <p className="text-sm truncate">
+              <p className="text-sm text-muted-foreground truncate mt-0.5">
                 {replyToMessage.content || '[Mídia]'}
               </p>
             </div>
-            <Button variant="ghost" size="icon" onClick={cancelReply}>
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="h-6 w-6 shrink-0 hover:bg-destructive/10 hover:text-destructive"
+              onClick={cancelReply}
+            >
               <X className="h-4 w-4" />
             </Button>
           </div>
@@ -678,21 +798,52 @@ export function ConversationView({
   )
 }
 
+// Task 7.3: Improved MessagesSkeleton that simulates message layout
 function MessagesSkeleton() {
+  // Varied heights and widths to look more natural
+  const skeletonMessages = [
+    { align: 'start', width: 'w-[60%]', height: 'h-12' },
+    { align: 'start', width: 'w-[45%]', height: 'h-10' },
+    { align: 'end', width: 'w-[55%]', height: 'h-14' },
+    { align: 'start', width: 'w-[70%]', height: 'h-20' },
+    { align: 'end', width: 'w-[40%]', height: 'h-10' },
+    { align: 'end', width: 'w-[50%]', height: 'h-12' },
+    { align: 'start', width: 'w-[65%]', height: 'h-16' },
+  ]
+
   return (
-    <div className="space-y-4">
-      {Array.from({ length: 5 }).map((_, i) => (
+    <div className="space-y-3">
+      {/* Date separator skeleton */}
+      <div className="flex items-center justify-center my-4">
+        <Skeleton className="h-6 w-20 rounded-full" />
+      </div>
+      
+      {skeletonMessages.map((msg, i) => (
         <div
           key={i}
           className={cn(
             'flex',
-            i % 2 === 0 ? 'justify-start' : 'justify-end'
+            msg.align === 'start' ? 'justify-start' : 'justify-end'
           )}
         >
-          <Skeleton className={cn(
-            'h-16 rounded-lg',
-            i % 2 === 0 ? 'w-2/3' : 'w-1/2'
-          )} />
+          <div className={cn(
+            'rounded-2xl overflow-hidden',
+            msg.width,
+            msg.align === 'start' ? 'bg-muted' : 'bg-primary/20'
+          )}>
+            <Skeleton className={cn(
+              'w-full animate-pulse',
+              msg.height
+            )} />
+            {/* Footer skeleton */}
+            <div className={cn(
+              'flex items-center gap-1 px-3 pb-2',
+              msg.align === 'end' ? 'justify-end' : 'justify-start'
+            )}>
+              <Skeleton className="h-3 w-10" />
+              {msg.align === 'end' && <Skeleton className="h-3 w-3" />}
+            </div>
+          </div>
         </div>
       ))}
     </div>

@@ -4,16 +4,17 @@
  * Displays the list of conversations with search, filtering, and type tabs
  * 
  * Requirements: 1.1, 1.3, 1.5, 7.1, 10.1, 10.2, 20.5
+ * Task 11.1: Virtualization with @tanstack/react-virtual
  */
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
@@ -21,7 +22,7 @@ import { useChatInbox } from '@/hooks/useChatInbox'
 import { useChatApi } from '@/hooks/useChatApi'
 import { ConversationInboxBadge } from '@/components/features/chat/ConversationInboxBadge'
 import type { Conversation, ConversationFilters } from '@/types/chat'
-import { Search, ChevronLeft, X, User, Users, Megaphone, Newspaper, BellOff, Inbox as InboxIcon, Mail, FolderOpen, CheckCircle, Clock, Pause, Bot, UserCheck, UserX, Hand } from 'lucide-react'
+import { Search, ChevronLeft, X, User, Users, Megaphone, Newspaper, BellOff, Bell, Inbox as InboxIcon, Mail, FolderOpen, CheckCircle, Clock, Pause, Bot, UserCheck, UserX, Hand } from 'lucide-react'
 
 // Cache for avatars that have been fetched or are being fetched (to avoid re-fetching)
 const avatarFetchedCache = new Set<number>()
@@ -345,41 +346,19 @@ export function InboxSidebar({
         </div>
       </TooltipProvider>
 
-      {/* Conversation List */}
-      <ScrollArea className="flex-1" constrainWidth>
-        <div className="px-3 py-1.5 space-y-0.5">
-          {isLoadingConversations ? (
-            <ConversationListSkeleton />
-          ) : error ? (
-            <div className="p-4 text-center text-sm text-destructive">
-              Erro ao carregar conversas
-              <Button variant="link" size="sm" onClick={() => refetch()}>
-                Tentar novamente
-              </Button>
-            </div>
-          ) : displayConversations.length === 0 ? (
-            <EmptyState type={activeTab} searchQuery={searchQuery} />
-          ) : (
-            displayConversations.map((conversation) => {
-              // Find inbox name for badge
-              const inbox = conversation.inboxId 
-                ? inboxes.find(i => i.id === conversation.inboxId)
-                : null
-              
-              return (
-                <ConversationItem
-                  key={conversation.id}
-                  conversation={conversation}
-                  isSelected={conversation.id === selectedConversationId}
-                  onClick={() => onSelectConversation(conversation)}
-                  showInboxBadge={showInboxBadges}
-                  inboxName={inbox?.name}
-                />
-              )
-            })
-          )}
-        </div>
-      </ScrollArea>
+      {/* Conversation List - Task 8.2: Added ARIA labels, Task 11.1: Virtualization */}
+      <VirtualizedConversationList
+        conversations={displayConversations}
+        selectedConversationId={selectedConversationId}
+        onSelectConversation={onSelectConversation}
+        isLoading={isLoadingConversations}
+        error={error}
+        onRetry={refetch}
+        activeTab={activeTab}
+        searchQuery={searchQuery}
+        showInboxBadges={showInboxBadges}
+        inboxes={inboxes}
+      />
     </div>
   )
 }
@@ -455,6 +434,127 @@ function StatusTab({ icon: Icon, label, active, onClick }: StatusTabProps) {
   )
 }
 
+// Task 11.1: Virtualized Conversation List Component
+interface VirtualizedConversationListProps {
+  conversations: Conversation[]
+  selectedConversationId?: number
+  onSelectConversation: (conversation: Conversation) => void
+  isLoading: boolean
+  error: Error | null
+  onRetry: () => void
+  activeTab: ConversationType
+  searchQuery: string
+  showInboxBadges: boolean
+  inboxes: Array<{ id: number; name: string }>
+}
+
+function VirtualizedConversationList({
+  conversations,
+  selectedConversationId,
+  onSelectConversation,
+  isLoading,
+  error,
+  onRetry,
+  activeTab,
+  searchQuery,
+  showInboxBadges,
+  inboxes
+}: VirtualizedConversationListProps) {
+  const parentRef = useRef<HTMLDivElement>(null)
+  
+  // Fixed estimate size to avoid re-render loops
+  const ESTIMATED_ROW_HEIGHT = 88
+  
+  // Memoize getItemKey to prevent virtualizer recreation
+  const getItemKey = useCallback(
+    (index: number) => conversations[index]?.id ?? index,
+    [conversations]
+  )
+  
+  const virtualizer = useVirtualizer({
+    count: conversations.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: useCallback(() => ESTIMATED_ROW_HEIGHT, []),
+    overscan: 5,
+    getItemKey
+  })
+
+  if (isLoading) {
+    return (
+      <div className="flex-1 px-3 py-1.5">
+        <ConversationListSkeleton />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex-1 p-4 text-center text-sm text-destructive" role="alert">
+        Erro ao carregar conversas
+        <Button variant="link" size="sm" onClick={onRetry}>
+          Tentar novamente
+        </Button>
+      </div>
+    )
+  }
+
+  if (conversations.length === 0) {
+    return (
+      <div className="flex-1">
+        <EmptyState type={activeTab} searchQuery={searchQuery} />
+      </div>
+    )
+  }
+
+  return (
+    <div
+      ref={parentRef}
+      className="flex-1 overflow-auto px-3 py-1.5"
+      role="list"
+      aria-label="Lista de conversas"
+    >
+      <div
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          width: '100%',
+          position: 'relative'
+        }}
+      >
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const conversation = conversations[virtualRow.index]
+          const inbox = conversation.inboxId
+            ? inboxes.find(i => i.id === conversation.inboxId)
+            : null
+
+          return (
+            <div
+              key={virtualRow.key}
+              data-index={virtualRow.index}
+              ref={virtualizer.measureElement}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start}px)`,
+                willChange: 'transform' // Task 11.3: GPU optimization
+              }}
+            >
+              <ConversationItem
+                conversation={conversation}
+                isSelected={conversation.id === selectedConversationId}
+                onClick={() => onSelectConversation(conversation)}
+                showInboxBadge={showInboxBadges}
+                inboxName={inbox?.name}
+              />
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // Empty State Component
 interface EmptyStateProps {
   type: ConversationType
@@ -476,16 +576,107 @@ function EmptyState({ type, searchQuery }: EmptyStateProps) {
   )
 }
 
-// Conversation Item Component
+// Task 1.3: QuickActions Component for conversation item hover
+interface QuickActionsProps {
+  conversationId: number
+  isMuted?: boolean
+  onMarkRead?: () => void
+  onMute?: () => void
+  onArchive?: () => void
+}
+
+function QuickActions({ conversationId, isMuted, onMarkRead, onMute, onArchive }: QuickActionsProps) {
+  return (
+    <div className="flex items-center gap-0.5 bg-card border border-border/50 rounded-md shadow-sm p-0.5">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 hover:bg-accent/80"
+            onClick={(e) => {
+              e.stopPropagation()
+              onMarkRead?.()
+            }}
+          >
+            <Mail className="h-3 w-3 text-muted-foreground" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-xs">
+          Marcar como lida
+        </TooltipContent>
+      </Tooltip>
+      
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 hover:bg-accent/80"
+            onClick={(e) => {
+              e.stopPropagation()
+              onMute?.()
+            }}
+          >
+            {isMuted ? (
+              <Bell className="h-3 w-3 text-muted-foreground" />
+            ) : (
+              <BellOff className="h-3 w-3 text-muted-foreground" />
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-xs">
+          {isMuted ? 'Ativar notificações' : 'Silenciar'}
+        </TooltipContent>
+      </Tooltip>
+      
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 hover:bg-accent/80"
+            onClick={(e) => {
+              e.stopPropagation()
+              onArchive?.()
+            }}
+          >
+            <CheckCircle className="h-3 w-3 text-muted-foreground" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-xs">
+          Resolver
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  )
+}
+
+// Typing Indicator Component - Task 1.2, Task 11.3: GPU-optimized animation
+function TypingIndicator() {
+  return (
+    <div className="flex items-center gap-1 text-sm text-primary">
+      <span className="italic">digitando</span>
+      <span className="flex gap-0.5">
+        <span className="w-1 h-1 rounded-full bg-primary animate-bounce [animation-delay:-0.3s] will-change-transform" />
+        <span className="w-1 h-1 rounded-full bg-primary animate-bounce [animation-delay:-0.15s] will-change-transform" />
+        <span className="w-1 h-1 rounded-full bg-primary animate-bounce will-change-transform" />
+      </span>
+    </div>
+  )
+}
+
+// Conversation Item Component - Task 1.1: Updated layout with new visual hierarchy
 interface ConversationItemProps {
   conversation: Conversation
   isSelected: boolean
   onClick: () => void
   showInboxBadge?: boolean
   inboxName?: string
+  isTyping?: boolean
 }
 
-function ConversationItem({ conversation, isSelected, onClick, showInboxBadge, inboxName }: ConversationItemProps) {
+function ConversationItem({ conversation, isSelected, onClick, showInboxBadge, inboxName, isTyping = false }: ConversationItemProps) {
   const initials = conversation.contactName
     ? conversation.contactName.slice(0, 2).toUpperCase()
     : conversation.contactJid.slice(0, 2).toUpperCase()
@@ -510,28 +701,46 @@ function ConversationItem({ conversation, isSelected, onClick, showInboxBadge, i
   const isMuted = conversation.isMuted || false
   const hasUnread = conversation.unreadCount > 0
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onClick()
+    }
+  }
+
   return (
-    <button
+    <div
       onClick={onClick}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
       className={cn(
-        'w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left transition-colors',
+        'group relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 cursor-pointer',
         isSelected
-          ? 'bg-primary/15'
+          ? 'bg-primary/10 border-l-2 border-primary'
           : hasUnread 
-            ? 'bg-muted/40 hover:bg-muted/60' 
-            : 'hover:bg-muted/50'
+            ? 'bg-muted/60 hover:bg-muted/80' 
+            : 'hover:bg-muted/80'
       )}
     >
-      <Avatar className="h-9 w-9 flex-shrink-0">
-        <AvatarImage src={conversation.contactAvatarUrl || undefined} />
-        <AvatarFallback className="text-xs">
-          {isGroup ? <Users className="h-4 w-4" /> : 
-           isBroadcast ? <Megaphone className="h-4 w-4" /> :
-           isNewsletter ? <Newspaper className="h-4 w-4" /> :
-           initials}
-        </AvatarFallback>
-      </Avatar>
+      {/* Avatar with status indicator - Task 1.1: Increased to 44px (h-11 w-11) with ring */}
+      <div className="relative flex-shrink-0">
+        <Avatar className="h-11 w-11 ring-2 ring-background">
+          <AvatarImage src={conversation.contactAvatarUrl || undefined} loading="lazy" />
+          <AvatarFallback className="text-sm">
+            {isGroup ? <Users className="h-5 w-5" /> : 
+             isBroadcast ? <Megaphone className="h-5 w-5" /> :
+             isNewsletter ? <Newspaper className="h-5 w-5" /> :
+             initials}
+          </AvatarFallback>
+        </Avatar>
+        {/* Online status indicator */}
+        {conversation.isOnline && (
+          <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 ring-2 ring-background" />
+        )}
+      </div>
 
+      {/* Main content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-2">
           <span className={cn(
@@ -545,13 +754,19 @@ function ConversationItem({ conversation, isSelected, onClick, showInboxBadge, i
           </span>
         </div>
 
-        <div className="flex items-center justify-between gap-2 mt-1">
-          <p className={cn(
-            "text-sm truncate",
-            hasUnread ? "text-foreground/80" : "text-muted-foreground"
-          )}>
-            {conversation.lastMessagePreview || 'Sem mensagens'}
-          </p>
+        <div className="flex items-center justify-between gap-2 mt-0.5">
+          {/* Task 1.2: Show typing indicator when isTyping is true */}
+          {isTyping ? (
+            <TypingIndicator />
+          ) : (
+            <p className={cn(
+              "text-sm truncate",
+              hasUnread ? "text-foreground/80" : "text-muted-foreground"
+            )}>
+              {conversation.lastMessagePreview || 'Sem mensagens'}
+            </p>
+          )}
+          
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {/* Assignment indicator - Requirements: 2.2, 3.2 */}
             {!conversation.assignedAgentId && (
@@ -587,10 +802,14 @@ function ConversationItem({ conversation, isSelected, onClick, showInboxBadge, i
             {isMuted && (
               <BellOff className="h-3.5 w-3.5 text-muted-foreground" title="Silenciada" />
             )}
+            {/* Unread badge - Task 1.1: Improved styling */}
             {hasUnread && (
-              <span className="h-5 min-w-5 px-1.5 flex items-center justify-center text-xs font-medium bg-green-500 text-white rounded-full">
+              <Badge 
+                className="h-5 min-w-5 px-1.5 bg-primary text-primary-foreground"
+                data-testid="unread-badge"
+              >
                 {conversation.unreadCount > 999 ? '999+' : conversation.unreadCount}
-              </span>
+              </Badge>
             )}
           </div>
         </div>
@@ -605,14 +824,18 @@ function ConversationItem({ conversation, isSelected, onClick, showInboxBadge, i
           </div>
         )}
 
-        {/* Labels */}
+        {/* Labels - Task 5.4: Improved label display as colored chips */}
         {conversation.labels && conversation.labels.length > 0 && (
           <div className="flex gap-1 mt-2 flex-wrap">
             {conversation.labels.slice(0, 3).map((label) => (
               <span
                 key={label.id}
-                className="px-2 py-0.5 text-xs rounded-full"
-                style={{ backgroundColor: label.color + '20', color: label.color }}
+                className="px-2 py-0.5 text-xs rounded-full transition-colors hover:opacity-80"
+                style={{ 
+                  backgroundColor: label.color + '20', 
+                  color: label.color,
+                  borderColor: label.color + '40'
+                }}
               >
                 {label.name}
               </span>
@@ -625,7 +848,15 @@ function ConversationItem({ conversation, isSelected, onClick, showInboxBadge, i
           </div>
         )}
       </div>
-    </button>
+      
+      {/* Task 1.3: QuickActions on hover */}
+      <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+        <QuickActions 
+          conversationId={conversation.id} 
+          isMuted={isMuted}
+        />
+      </div>
+    </div>
   )
 }
 

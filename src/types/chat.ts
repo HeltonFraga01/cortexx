@@ -27,6 +27,7 @@ export type MessageType =
   | 'system'
 
 export type MessageStatus = 
+  | 'sending'  // Task 7.1: Optimistic update status
   | 'pending' 
   | 'sent' 
   | 'delivered' 

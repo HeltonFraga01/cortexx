@@ -2,13 +2,14 @@
  * CollapsibleSection Component
  * 
  * Reusable accordion section for the contact panel
+ * Task 5.2: Added smooth animations for expand/collapse
  * 
  * Requirements: 7.1, 7.2, 7.3, 7.4
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { cn } from '@/lib/utils'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 
 interface CollapsibleSectionProps {
   id: string
@@ -52,6 +53,7 @@ export function CollapsibleSection({
     const saved = getSavedState()
     return saved[id] !== undefined ? saved[id] : defaultExpanded
   })
+  const contentRef = useRef<HTMLDivElement>(null)
 
   // Save state when it changes
   useEffect(() => {
@@ -73,7 +75,7 @@ export function CollapsibleSection({
         aria-expanded={isExpanded}
         aria-controls={`section-${id}`}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           {icon && <span className="text-muted-foreground">{icon}</span>}
           <span className="text-sm font-medium">{title}</span>
           {count !== undefined && count > 0 && (
@@ -82,18 +84,28 @@ export function CollapsibleSection({
             </span>
           )}
         </div>
-        {isExpanded ? (
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-        )}
+        {/* Task 5.2: Rotating chevron icon */}
+        <ChevronDown 
+          className={cn(
+            "h-4 w-4 text-muted-foreground transition-transform duration-200",
+            isExpanded && "rotate-180"
+          )} 
+        />
       </button>
       
-      {isExpanded && (
-        <div id={`section-${id}`} className="px-4 pb-4">
+      {/* Task 5.2: Animated content with max-height and opacity transition */}
+      <div 
+        ref={contentRef}
+        id={`section-${id}`}
+        className={cn(
+          "overflow-hidden transition-all duration-200 ease-in-out",
+          isExpanded ? "max-h-96 opacity-100" : "max-h-0 opacity-0"
+        )}
+      >
+        <div className="px-4 pb-4">
           {children}
         </div>
-      )}
+      </div>
     </div>
   )
 }

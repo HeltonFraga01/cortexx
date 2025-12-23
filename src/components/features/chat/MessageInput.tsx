@@ -627,15 +627,22 @@ export function MessageInput({ onSend, isLoading, conversationId, onTyping, onPr
             </PopoverContent>
           </Popover>
 
-          {/* Text input */}
-          <div className="flex-1 relative">
+          {/* Task 4.2: Improved input container with rounded-2xl and focus ring */}
+          <div className={cn(
+            "flex-1 relative rounded-2xl border bg-muted/50 transition-all duration-200",
+            "focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary"
+          )}>
+            {/* Task 4.1: Auto-expanding textarea */}
             <Textarea
               ref={textareaRef}
               value={content}
               onChange={(e) => handleContentChange(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Digite uma mensagem... (/ para respostas rápidas)"
-              className="min-h-[40px] max-h-[150px] resize-none pr-10"
+              className={cn(
+                "min-h-[44px] max-h-[96px] resize-none border-0 bg-transparent px-4 py-3 text-sm",
+                "placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
+              )}
               rows={1}
               disabled={isLoading || isSendingMedia}
             />
@@ -646,7 +653,7 @@ export function MessageInput({ onSend, isLoading, conversationId, onTyping, onPr
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="absolute right-1 bottom-1 h-8 w-8"
+                  className="absolute right-2 bottom-1.5 h-8 w-8"
                   type="button"
                 >
                   <Smile className="h-5 w-5 text-muted-foreground" />
@@ -671,39 +678,35 @@ export function MessageInput({ onSend, isLoading, conversationId, onTyping, onPr
             </Popover>
           </div>
 
-          {/* Send/Record button */}
-          {content.trim() ? (
-            <Button
-              onClick={handleSend}
-              disabled={isLoading || isSendingMedia}
-              size="icon"
-              className="flex-shrink-0"
-            >
-              {isLoading ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <Send className="h-5 w-5" />
-              )}
-            </Button>
-          ) : (
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="flex-shrink-0"
-              onClick={startRecording}
-              disabled={isSendingMedia}
-            >
-              <Mic className="h-5 w-5" />
-            </Button>
-          )}
+          {/* Task 4.3: Animated send button - shows only when content exists */}
+          {/* Task 8.3: Improved contrast - removed opacity-70 */}
+          <Button
+            onClick={handleSend}
+            disabled={!content.trim() || isLoading || isSendingMedia}
+            size="icon"
+            className={cn(
+              "flex-shrink-0 rounded-full transition-all duration-200",
+              content.trim() 
+                ? "bg-primary text-primary-foreground scale-100" 
+                : "bg-muted text-muted-foreground scale-90"
+            )}
+          >
+            {isLoading ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : content.trim() ? (
+              <Send className="h-5 w-5" />
+            ) : (
+              <Mic className="h-5 w-5" onClick={(e) => { e.stopPropagation(); startRecording(); }} />
+            )}
+          </Button>
         </div>
       )}
 
-      {/* Keyboard shortcut hint */}
+      {/* Keyboard shortcut hint - Task 4: Improved styling */}
       {!isRecording && (
-        <p className="text-xs text-muted-foreground mt-2 text-center">
-          Pressione <kbd className="px-1 py-0.5 bg-muted rounded text-xs">Enter</kbd> para enviar ou{' '}
-          <kbd className="px-1 py-0.5 bg-muted rounded text-xs">Shift+Enter</kbd> para nova linha
+        <p className="text-[10px] text-muted-foreground mt-1.5 text-center">
+          <kbd className="px-1 py-0.5 bg-muted rounded text-[9px]">Enter</kbd> para enviar • 
+          <kbd className="px-1 py-0.5 bg-muted rounded text-[9px] ml-1">Shift+Enter</kbd> para nova linha
         </p>
       )}
     </div>

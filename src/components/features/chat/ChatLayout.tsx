@@ -20,11 +20,13 @@ import { getAgentToken } from '@/services/agent-auth'
 import { InboxSidebar } from './InboxSidebar'
 import { ConversationView } from './ConversationView'
 import { ContactPanel } from './ContactPanel'
+import { ConnectionStatusBanner } from './ConnectionStatusBanner'
 import { useChatSocket } from '@/hooks/useChatSocket'
 import { useSupabaseRealtime } from '@/hooks/useSupabaseRealtime'
 import { useChatKeyboardShortcuts } from '@/hooks/useChatKeyboardShortcuts'
 import { useAudioNotification } from '@/hooks/useAudioNotification'
 import { useChatApi } from '@/hooks/useChatApi'
+import { useIsMobile, useIsTablet } from '@/hooks/useMediaQuery'
 import type { Conversation, ChatMessage, PresenceState, ConversationsResponse } from '@/types/chat'
 
 // Feature flag for realtime provider
@@ -43,6 +45,7 @@ export function ChatLayout({ className, isAgentMode = false }: ChatLayoutProps) 
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
   const [isContactPanelOpen, setIsContactPanelOpen] = useState(true)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false) // Task 12.1: Mobile sidebar drawer
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [presenceStates, setPresenceStates] = useState<Record<number, PresenceState>>({})
   const [typingIndicators, setTypingIndicators] = useState<Record<number, boolean>>({})
@@ -299,66 +302,112 @@ export function ChatLayout({ className, isAgentMode = false }: ChatLayoutProps) 
     setIsSidebarCollapsed(prev => !prev)
   }, [])
 
+  // Task 12.1, 12.2: Responsive breakpoints
+  const isMobile = useIsMobile()
+  const isTablet = useIsTablet()
+
+  // Task 12.1: Toggle mobile sidebar drawer
+  const toggleMobileSidebar = useCallback(() => {
+    setIsMobileSidebarOpen(prev => !prev)
+  }, [])
+
+  // Task 12.1: Close mobile sidebar when selecting a conversation
+  const handleSelectConversationResponsive = useCallback((conversation: Conversation) => {
+    handleSelectConversation(conversation)
+    if (isMobile) {
+      setIsMobileSidebarOpen(false)
+    }
+  }, [handleSelectConversation, isMobile])
+
+  // Task 12.2: Auto-hide contact panel on tablet
+  useEffect(() => {
+    if (isTablet) {
+      setIsContactPanelOpen(false)
+    }
+  }, [isTablet])
+
   return (
-    <div className={cn('flex h-full bg-background', className)}>
-      {/* Inbox Sidebar */}
-      <div
-        className={cn(
-          'flex-shrink-0 border-r transition-all duration-300',
-          isSidebarCollapsed ? 'w-0 overflow-hidden' : 'w-80'
-        )}
-      >
-        <InboxSidebar
-          selectedConversationId={selectedConversation?.id}
-          onSelectConversation={handleSelectConversation}
-          onCollapse={toggleSidebar}
-          isSearchOpen={isSearchOpen}
-          onSearchOpenChange={setIsSearchOpen}
-          searchInputRef={searchInputRef}
-          isConnected={isConnected}
-        />
-      </div>
-
-      {/* Conversation View */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {selectedConversation ? (
-          <ConversationView
-            conversation={selectedConversation}
-            onClose={handleCloseConversation}
-            onToggleContactPanel={toggleContactPanel}
-            isContactPanelOpen={isContactPanelOpen}
-            isSidebarCollapsed={isSidebarCollapsed}
-            onToggleSidebar={toggleSidebar}
-            presence={presenceStates[selectedConversation.id]}
-            isTyping={typingIndicators[selectedConversation.id]}
-            onTyping={(isTyping) => sendTypingIndicator(selectedConversation.id, isTyping)}
-            onPresence={(state) => sendPresence(selectedConversation.id, state)}
-            isConnected={isConnected}
-          />
-        ) : (
-          <EmptyState 
-            onToggleSidebar={toggleSidebar} 
-            isSidebarCollapsed={isSidebarCollapsed}
-            isLoading={isLoadingFromUrl}
-            error={urlLoadError}
+    <div className={cn('flex flex-col h-full bg-background', className)}>
+      {/* Task 11.4: Connection Status Banner */}
+      <ConnectionStatusBanner isConnected={isConnected} />
+      
+      {/* Main Chat Layout */}
+      <div className="flex flex-1 min-h-0 relative">
+        {/* Task 12.1: Mobile Sidebar Overlay */}
+        {isMobile && isMobileSidebarOpen && (
+          <div 
+            className="fixed inset-0 bg-black/50 z-40 md:hidden"
+            onClick={() => setIsMobileSidebarOpen(false)}
           />
         )}
-      </div>
 
-      {/* Contact Panel */}
-      {selectedConversation && (
+        {/* Inbox Sidebar - Task 12.1: Mobile drawer, Task 12.2: Tablet width */}
         <div
           className={cn(
-            'flex-shrink-0 border-l transition-all duration-300',
-            isContactPanelOpen ? 'w-80' : 'w-0 overflow-hidden'
+            'flex-shrink-0 border-r transition-all duration-300 bg-background',
+            // Mobile: Fixed drawer
+            isMobile && 'fixed inset-y-0 left-0 z-50 w-80',
+            isMobile && !isMobileSidebarOpen && '-translate-x-full',
+            isMobile && isMobileSidebarOpen && 'translate-x-0',
+            // Tablet: Narrower width
+            !isMobile && isTablet && (isSidebarCollapsed ? 'w-0 overflow-hidden' : 'w-[280px]'),
+            // Desktop: Normal width
+            !isMobile && !isTablet && (isSidebarCollapsed ? 'w-0 overflow-hidden' : 'w-80')
           )}
         >
-          <ContactPanel
-            conversation={selectedConversation}
-            onClose={toggleContactPanel}
+          <InboxSidebar
+            selectedConversationId={selectedConversation?.id}
+            onSelectConversation={handleSelectConversationResponsive}
+            onCollapse={isMobile ? toggleMobileSidebar : toggleSidebar}
+            isSearchOpen={isSearchOpen}
+            onSearchOpenChange={setIsSearchOpen}
+            searchInputRef={searchInputRef}
+            isConnected={isConnected}
           />
         </div>
-      )}
+
+        {/* Conversation View */}
+        <div className="flex-1 flex flex-col min-w-0">
+          {selectedConversation ? (
+            <ConversationView
+              conversation={selectedConversation}
+              onClose={handleCloseConversation}
+              onToggleContactPanel={toggleContactPanel}
+              isContactPanelOpen={isContactPanelOpen}
+              isSidebarCollapsed={isMobile ? !isMobileSidebarOpen : isSidebarCollapsed}
+              onToggleSidebar={isMobile ? toggleMobileSidebar : toggleSidebar}
+              presence={presenceStates[selectedConversation.id]}
+              isTyping={typingIndicators[selectedConversation.id]}
+              onTyping={(isTyping) => sendTypingIndicator(selectedConversation.id, isTyping)}
+              onPresence={(state) => sendPresence(selectedConversation.id, state)}
+              isConnected={isConnected}
+            />
+          ) : (
+            <EmptyState 
+              onToggleSidebar={isMobile ? toggleMobileSidebar : toggleSidebar} 
+              isSidebarCollapsed={isMobile ? !isMobileSidebarOpen : isSidebarCollapsed}
+              isLoading={isLoadingFromUrl}
+              error={urlLoadError}
+              isMobile={isMobile}
+            />
+          )}
+        </div>
+
+        {/* Contact Panel - Task 12.2: Hidden by default on tablet */}
+        {selectedConversation && !isMobile && (
+          <div
+            className={cn(
+              'flex-shrink-0 border-l transition-all duration-300',
+              isContactPanelOpen ? 'w-80' : 'w-0 overflow-hidden'
+            )}
+          >
+            <ContactPanel
+              conversation={selectedConversation}
+              onClose={toggleContactPanel}
+            />
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -368,9 +417,10 @@ interface EmptyStateProps {
   isSidebarCollapsed: boolean
   isLoading?: boolean
   error?: string | null
+  isMobile?: boolean
 }
 
-function EmptyState({ onToggleSidebar, isSidebarCollapsed, isLoading, error }: EmptyStateProps) {
+function EmptyState({ onToggleSidebar, isSidebarCollapsed, isLoading, error, isMobile }: EmptyStateProps) {
   // Show loading state when loading conversation from URL
   if (isLoading) {
     return (
@@ -383,15 +433,18 @@ function EmptyState({ onToggleSidebar, isSidebarCollapsed, isLoading, error }: E
     )
   }
 
+  // Task 12.1: Show button to open sidebar on mobile or when collapsed
+  const showSidebarButton = isMobile || isSidebarCollapsed
+
   return (
     <div className="flex-1 flex items-center justify-center bg-muted/30">
-      <div className="text-center space-y-4">
-        {isSidebarCollapsed && (
+      <div className="text-center space-y-4 px-4">
+        {showSidebarButton && (
           <button
             onClick={onToggleSidebar}
             className="mb-4 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
           >
-            Mostrar conversas
+            {isMobile ? 'Ver conversas' : 'Mostrar conversas'}
           </button>
         )}
         <div className="w-16 h-16 mx-auto rounded-full bg-muted flex items-center justify-center">
