@@ -7,6 +7,7 @@
  * - Right: Contact panel with details
  * 
  * Requirements: 10.1, 10.2, 10.3, 11.1, 14.1, 14.2
+ * Updated for: REQ-1.1, REQ-3.1 (chat-api-realtime-migration) - Supabase Realtime support
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
@@ -20,10 +21,14 @@ import { InboxSidebar } from './InboxSidebar'
 import { ConversationView } from './ConversationView'
 import { ContactPanel } from './ContactPanel'
 import { useChatSocket } from '@/hooks/useChatSocket'
+import { useSupabaseRealtime } from '@/hooks/useSupabaseRealtime'
 import { useChatKeyboardShortcuts } from '@/hooks/useChatKeyboardShortcuts'
 import { useAudioNotification } from '@/hooks/useAudioNotification'
 import { useChatApi } from '@/hooks/useChatApi'
 import type { Conversation, ChatMessage, PresenceState, ConversationsResponse } from '@/types/chat'
+
+// Feature flag for realtime provider
+const REALTIME_PROVIDER = import.meta.env.VITE_CHAT_REALTIME_PROVIDER || 'socketio'
 
 interface ChatLayoutProps {
   className?: string
@@ -165,27 +170,79 @@ export function ChatLayout({ className, isAgentMode = false }: ChatLayoutProps) 
     }
   }, [playNotification])
 
-  const handlePresenceUpdate = useCallback(({ conversationId, state }: { conversationId: number; state: PresenceState }) => {
-    setPresenceStates(prev => ({ ...prev, [conversationId]: state }))
+  const handlePresenceUpdate = useCallback(({ conversationId, state }: { conversationId: number | string; state: PresenceState }) => {
+    const convId = typeof conversationId === 'string' ? parseInt(conversationId, 10) : conversationId
+    setPresenceStates(prev => ({ ...prev, [convId]: state }))
   }, [])
 
-  const handleTypingIndicator = useCallback(({ conversationId, isTyping }: { conversationId: number; isTyping: boolean }) => {
-    setTypingIndicators(prev => ({ ...prev, [conversationId]: isTyping }))
+  const handleTypingIndicator = useCallback(({ conversationId, isTyping }: { conversationId: number | string; isTyping: boolean }) => {
+    const convId = typeof conversationId === 'string' ? parseInt(conversationId, 10) : conversationId
+    setTypingIndicators(prev => ({ ...prev, [convId]: isTyping }))
   }, [])
 
-  // WebSocket connection
-  const {
-    isConnected,
-    joinConversation,
-    leaveConversation,
-    sendTypingIndicator,
-    sendPresence
-  } = useChatSocket({
+  // Get user ID for Supabase Realtime
+  const userId = useMemo(() => {
+    return user?.id || ''
+  }, [user?.id])
+
+  // Socket.IO connection (legacy provider)
+  const socketIoHook = useChatSocket({
     userToken,
     onNewMessage: handleNewMessage,
-    onPresenceUpdate: handlePresenceUpdate,
-    onTypingIndicator: handleTypingIndicator
+    onPresenceUpdate: handlePresenceUpdate as (data: { conversationId: number; state: PresenceState }) => void,
+    onTypingIndicator: handleTypingIndicator as (data: { conversationId: number; isTyping: boolean }) => void
   })
+
+  // Supabase Realtime connection (new provider)
+  const supabaseHook = useSupabaseRealtime({
+    userId,
+    userToken,
+    onNewMessage: handleNewMessage,
+    onPresenceUpdate: handlePresenceUpdate as (data: { conversationId: string; state: PresenceState }) => void,
+    onTypingIndicator: handleTypingIndicator as (data: { conversationId: string; isTyping: boolean; userId: string }) => void
+  })
+
+  // Select the active provider based on feature flag
+  const {
+    isConnected,
+    joinConversation: joinConv,
+    leaveConversation: leaveConv,
+    sendTypingIndicator: sendTyping,
+    sendPresence: sendPres
+  } = REALTIME_PROVIDER === 'supabase' ? supabaseHook : socketIoHook
+
+  // Wrapper functions to handle type differences between providers
+  const joinConversation = useCallback((conversationId: number) => {
+    if (REALTIME_PROVIDER === 'supabase') {
+      (joinConv as (id: string) => void)(String(conversationId))
+    } else {
+      (joinConv as (id: number) => void)(conversationId)
+    }
+  }, [joinConv])
+
+  const leaveConversation = useCallback((conversationId: number) => {
+    if (REALTIME_PROVIDER === 'supabase') {
+      (leaveConv as (id: string) => void)(String(conversationId))
+    } else {
+      (leaveConv as (id: number) => void)(conversationId)
+    }
+  }, [leaveConv])
+
+  const sendTypingIndicator = useCallback((conversationId: number, isTyping: boolean) => {
+    if (REALTIME_PROVIDER === 'supabase') {
+      (sendTyping as (id: string, typing: boolean) => void)(String(conversationId), isTyping)
+    } else {
+      (sendTyping as (id: number, typing: boolean) => void)(conversationId, isTyping)
+    }
+  }, [sendTyping])
+
+  const sendPresence = useCallback((conversationId: number, state: PresenceState) => {
+    if (REALTIME_PROVIDER === 'supabase') {
+      (sendPres as (id: string, state: PresenceState) => void)(String(conversationId), state)
+    } else {
+      (sendPres as (id: number, state: PresenceState) => void)(conversationId, state)
+    }
+  }, [sendPres])
 
   // Keyboard shortcuts
   useChatKeyboardShortcuts({

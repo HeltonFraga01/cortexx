@@ -1200,7 +1200,7 @@ class ChatService {
    * Delete a conversation and all its messages
    * @param {string} userId - User ID (WUZAPI token or UUID)
    * @param {string} conversationId - Conversation ID (UUID)
-   * @param {string} [token] - User JWT token for RLS
+   * @param {string} [token] - User JWT token for RLS (optional, not used - we use queryAsAdmin with account_id filter)
    * @returns {Promise<void>}
    */
   async deleteConversation(userId, conversationId, token = null) {
@@ -1208,14 +1208,38 @@ class ChatService {
       // Convert WUZAPI token to account UUID if needed
       const accountId = await this.getAccountIdFromToken(userId);
       if (!accountId) {
+        logger.error('Failed to resolve account ID for delete', { 
+          userId: userId?.substring(0, 10),
+          conversationId 
+        });
         throw new Error('Account not found for the provided token');
       }
 
-      // Verify user owns this conversation
-      const conversation = await this.getConversationById(conversationId, userId, token);
-      if (!conversation) {
+      logger.debug('Attempting to delete conversation', {
+        conversationId,
+        accountId: accountId?.substring(0, 8) + '...',
+        userIdType: userId?.length > 30 ? 'uuid' : 'wuzapi_token'
+      });
+
+      // Verify user owns this conversation using queryAsAdmin with account_id filter
+      // We don't use queryAsUser because the token parameter is often a WUZAPI token, not a Supabase JWT
+      const { data: conversation, error: fetchError } = await supabaseService.queryAsAdmin('conversations', (query) =>
+        query.select('id, account_id, inbox_id').eq('id', conversationId).eq('account_id', accountId).single()
+      );
+
+      if (fetchError || !conversation) {
+        logger.warn('Conversation not found for delete', {
+          conversationId,
+          accountId: accountId?.substring(0, 8) + '...',
+          error: fetchError?.message
+        });
         throw new Error('Conversation not found or unauthorized');
       }
+
+      logger.debug('Conversation found, proceeding with delete', {
+        conversationId,
+        inboxId: conversation.inbox_id?.substring(0, 8) + '...'
+      });
 
       // Delete conversation labels first
       await supabaseService.queryAsAdmin('conversation_labels', (query) =>
@@ -1248,9 +1272,9 @@ class ChatService {
         throw error;
       }
 
-      logger.info('Conversation deleted', { userId, conversationId, accountId });
+      logger.info('Conversation deleted', { userId: userId?.substring(0, 10), conversationId, accountId: accountId?.substring(0, 8) });
     } catch (error) {
-      logger.error('Failed to delete conversation', { userId, conversationId, error: error.message });
+      logger.error('Failed to delete conversation', { userId: userId?.substring(0, 10), conversationId, error: error.message });
       throw error;
     }
   }

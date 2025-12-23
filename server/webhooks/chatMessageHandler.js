@@ -7,6 +7,7 @@
  * - ChatPresence events (typing indicators)
  * 
  * Requirements: 11.1, 11.2, 11.3
+ * Updated for: REQ-1.2 (chat-api-realtime-migration) - Dual-write to Socket.IO and Supabase Realtime
  */
 
 const { logger } = require('../utils/logger')
@@ -18,6 +19,8 @@ const BotService = require('../services/BotService')
 const GroupNameResolver = require('../services/GroupNameResolver')
 const { resolveLidToPhone } = require('../utils/phoneUtils')
 const SupabaseService = require('../services/SupabaseService')
+const RealtimeService = require('../services/RealtimeService')
+const ExternalWebhookService = require('../services/ExternalWebhookService')
 
 /**
  * Convert timestamp to Brazil timezone (America/Sao_Paulo)
@@ -420,7 +423,7 @@ class ChatMessageHandler {
     
     // Broadcast name update via WebSocket if the name was updated
     // Requirements: 3.5
-    if (isGroupMessage && nameResolution && nameResolution.updated && this.chatHandler) {
+    if (isGroupMessage && nameResolution && nameResolution.updated) {
       const broadcastData = {
         id: conversation.id,
         contact_name: contactName,
@@ -428,7 +431,14 @@ class ChatMessageHandler {
         name_updated_at: nameResolution.timestamp
       }
       
-      this.chatHandler.broadcastConversationUpdate(broadcastData)
+      // Socket.IO broadcast (legacy)
+      if (this.chatHandler) {
+        this.chatHandler.broadcastConversationUpdate(broadcastData)
+      }
+      
+      // Supabase Realtime broadcast (new)
+      // Requirements: REQ-1.2 (chat-api-realtime-migration)
+      await RealtimeService.broadcastConversationUpdate(broadcastData)
       
       logger.info('Broadcasted group name update via WebSocket', {
         conversationId: conversation.id,
@@ -590,7 +600,7 @@ class ChatMessageHandler {
       interactiveData: parsedMessage.interactiveData || null
     })
 
-    // Broadcast via WebSocket
+    // Broadcast via WebSocket (Socket.IO - legacy)
     // Requirements: 3.1 (websocket-data-transformation-fix) - use toBoolean for consistent boolean conversion
     if (this.chatHandler) {
       this.chatHandler.broadcastNewMessage(conversation.id, message, { 
@@ -603,6 +613,18 @@ class ChatMessageHandler {
         unread_count: (conversation.unread_count || 0) + 1
       })
     }
+
+    // Broadcast via Supabase Realtime (new)
+    // Requirements: REQ-1.2 (chat-api-realtime-migration) - dual-write to both providers
+    await RealtimeService.broadcastNewMessage(conversation.id, message, {
+      isMuted: toBoolean(conversation.is_muted)
+    })
+    await RealtimeService.broadcastConversationUpdate({
+      ...conversation,
+      last_message_at: new Date().toISOString(),
+      last_message_preview: parsedMessage.content || '[Media]',
+      unread_count: (conversation.unread_count || 0) + 1
+    })
 
     logger.info('Incoming message processed', { 
       conversationId: conversation.id, 
@@ -626,7 +648,19 @@ class ChatMessageHandler {
         timestamp: toBrazilTimestamp(timestamp)
       }
       
+      // Send to internal outgoing webhooks (legacy)
       await this.outgoingWebhookService.sendWebhookEvent(userId, eventType, wuzapiPayload)
+      
+      // Send to external webhooks (Chat API v1)
+      // Requirements: REQ-2.3 (chat-api-realtime-migration)
+      await ExternalWebhookService.sendEvent(userId, eventType, {
+        conversationId: conversation.id,
+        message: message,
+        contact: {
+          jid: contactJid,
+          name: contactName
+        }
+      })
     } catch (webhookError) {
       // Don't fail the message processing if webhook fails
       logger.error('Failed to send outgoing webhook', { 
@@ -1192,7 +1226,7 @@ class ChatMessageHandler {
     })
 
     // Broadcast name update via WebSocket if the name was updated
-    if (nameResolution.updated && this.chatHandler) {
+    if (nameResolution.updated) {
       const broadcastData = {
         id: conversation.id,
         contact_name: nameResolution.name,
@@ -1200,7 +1234,14 @@ class ChatMessageHandler {
         name_updated_at: nameResolution.timestamp
       }
       
-      this.chatHandler.broadcastConversationUpdate(broadcastData)
+      // Socket.IO broadcast (legacy)
+      if (this.chatHandler) {
+        this.chatHandler.broadcastConversationUpdate(broadcastData)
+      }
+      
+      // Supabase Realtime broadcast (new)
+      // Requirements: REQ-1.2 (chat-api-realtime-migration)
+      await RealtimeService.broadcastConversationUpdate(broadcastData)
 
       logger.info('Broadcasted GroupInfo name update via WebSocket', {
         conversationId: conversation.id,
@@ -1325,7 +1366,7 @@ class ChatMessageHandler {
     })
 
     // Broadcast name update via WebSocket if the name was updated
-    if (nameResolution.updated && this.chatHandler) {
+    if (nameResolution.updated) {
       const broadcastData = {
         id: conversation.id,
         contact_name: nameResolution.name,
@@ -1333,7 +1374,14 @@ class ChatMessageHandler {
         name_updated_at: nameResolution.timestamp
       }
       
-      this.chatHandler.broadcastConversationUpdate(broadcastData)
+      // Socket.IO broadcast (legacy)
+      if (this.chatHandler) {
+        this.chatHandler.broadcastConversationUpdate(broadcastData)
+      }
+      
+      // Supabase Realtime broadcast (new)
+      // Requirements: REQ-1.2 (chat-api-realtime-migration)
+      await RealtimeService.broadcastConversationUpdate(broadcastData)
 
       logger.info('Broadcasted JoinedGroup name update via WebSocket', {
         conversationId: conversation.id,

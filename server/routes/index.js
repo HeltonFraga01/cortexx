@@ -31,6 +31,11 @@ const mediaRoutes = require('./mediaRoutes');
 const botProxyRoutes = require('./botProxyRoutes');
 const linkPreviewRoutes = require('./linkPreviewRoutes');
 
+// Chat API v1 Routes (external API)
+const chatApiV1Routes = require('./api/v1/chatRoutes');
+const webhookApiV1Routes = require('./api/v1/webhookRoutes');
+const apiKeyRoutes = require('./api/v1/apiKeyRoutes');
+
 // User Account Routes (subscription, quotas, features)
 const userSubscriptionRoutes = require('./userSubscriptionRoutes');
 const userBillingRoutes = require('./userBillingRoutes');
@@ -179,6 +184,12 @@ function setupRoutes(app) {
   app.use('/api/media', mediaRoutes);
   app.use('/api/bot', botProxyRoutes);
   app.use('/api/link-preview', linkPreviewRoutes);
+  
+  // Chat API v1 (external API with API key auth)
+  // Requirements: REQ-2.1, REQ-2.2 (chat-api-realtime-migration)
+  app.use('/api/v1/chat', chatApiV1Routes);
+  app.use('/api/v1/webhooks', webhookApiV1Routes);
+  app.use('/api/v1/api-keys', apiKeyRoutes);
   
   // Stripe Webhook (no auth - uses signature verification)
   app.use('/api/webhooks/stripe', stripeWebhookRoutes);

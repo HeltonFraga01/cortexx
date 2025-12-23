@@ -307,8 +307,19 @@ router.delete('/conversations', verifyUserToken, async (req, res) => {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
+    // Use accountId from middleware context (already resolved) instead of userToken
+    const accountId = req.accountId || req.context?.accountId
+    
+    if (!accountId) {
+      logger.warn('No accountId available for delete all conversations', {
+        hasContext: !!req.context,
+        hasUserToken: !!req.userToken
+      })
+      return res.status(401).json({ success: false, error: 'Account context not available' })
+    }
+
     const chatService = new ChatService()
-    const result = await chatService.deleteAllConversations(req.userToken, req.userToken)
+    const result = await chatService.deleteAllConversations(accountId, null)
 
     res.json({ success: true, message: `${result.deleted} conversas excluídas com sucesso`, deleted: result.deleted })
   } catch (error) {
@@ -330,36 +341,32 @@ router.delete('/conversations/:id', verifyUserToken, async (req, res) => {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
+    // Use accountId from middleware context (already resolved) instead of userToken
+    // This fixes the "Conversation not found or unauthorized" error when user has multiple inboxes
+    const accountId = req.accountId || req.context?.accountId
+    
+    if (!accountId) {
+      logger.warn('No accountId available for delete conversation', {
+        conversationId: id,
+        hasContext: !!req.context,
+        hasUserToken: !!req.userToken
+      })
+      return res.status(401).json({ success: false, error: 'Account context not available' })
+    }
+
+    logger.debug('Deleting conversation', {
+      conversationId: id,
+      accountId: accountId?.substring(0, 8) + '...',
+      inboxId: req.inboxId?.substring(0, 8) + '...'
+    })
+
     const chatService = new ChatService()
-    await chatService.deleteConversation(req.userToken, id, req.userToken)
+    // Pass accountId directly instead of userToken to avoid token lookup issues
+    await chatService.deleteConversation(accountId, id, null)
 
     res.json({ success: true, message: 'Conversa excluída com sucesso' })
   } catch (error) {
     logger.error('Error deleting conversation', { error: error.message, conversationId: req.params.id })
-    res.status(500).json({ success: false, error: error.message })
-  }
-})
-
-/**
- * DELETE /api/chat/inbox/conversations
- * Delete ALL conversations for the authenticated user
- */
-router.delete('/conversations', verifyUserToken, async (req, res) => {
-  try {
-    if (!supabaseService) {
-      return res.status(500).json({ success: false, error: 'Database not available' })
-    }
-
-    const chatService = new ChatService()
-    const result = await chatService.deleteAllConversations(req.userToken, req.userToken)
-
-    res.json({ 
-      success: true, 
-      message: `${result.deleted} conversas excluídas com sucesso`,
-      deleted: result.deleted
-    })
-  } catch (error) {
-    logger.error('Error deleting all conversations', { error: error.message })
     res.status(500).json({ success: false, error: error.message })
   }
 })
