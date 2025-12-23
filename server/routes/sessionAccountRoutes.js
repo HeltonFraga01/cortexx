@@ -39,13 +39,37 @@ function initServices(db) {
 
 /**
  * Get or create account for the current session user
+ * 
+ * This function handles two authentication scenarios:
+ * 1. Login via WUZAPI token: session.userId = hashToken(token) (32-char hash)
+ * 2. Login via Supabase auth: session.userId = Supabase UUID
+ * 
+ * To support both, we first try to find account by owner_user_id,
+ * then fallback to finding by wuzapi_token if userToken is provided.
  */
 async function getOrCreateAccount(db, userId, userToken) {
   initServices(db);
   
   logger.debug('getOrCreateAccount called', { userId, hasToken: !!userToken });
   
+  // First, try to find account by owner_user_id
   let account = await accountService.getAccountByOwnerUserId(userId);
+  
+  // If not found and we have a userToken, try to find by wuzapi_token
+  // This handles the case where account was created with Supabase UUID
+  // but user is logging in via WUZAPI token (which generates a different userId)
+  if (!account && userToken) {
+    logger.debug('Account not found by owner_user_id, trying wuzapi_token', { userId });
+    account = await accountService.getAccountByWuzapiToken(userToken);
+    
+    if (account) {
+      logger.info('Account found by wuzapi_token fallback', { 
+        accountId: account.id, 
+        sessionUserId: userId,
+        accountOwnerUserId: account.ownerUserId
+      });
+    }
+  }
   
   if (!account) {
     logger.info('No account found for user, creating new account', { userId });
@@ -724,17 +748,33 @@ router.delete('/teams/:id/members/:agentId', requireAuth, async (req, res) => {
 /**
  * GET /api/session/inboxes
  * List all inboxes in the account
+ * 
+ * Supports both authentication methods:
+ * 1. Session-based: Uses req.session.userId
+ * 2. JWT-based: Uses req.user.id from Supabase token
  */
 router.get('/inboxes', requireAuth, async (req, res) => {
   try {
     const db = req.app.locals.db;
     initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    // Determine user ID from JWT or session
+    const userId = req.user?.id || req.session?.userId;
+    const userToken = req.session?.userToken || null;
+    
+    if (!userId) {
+      return res.status(401).json({
+        error: 'Usuário não autenticado',
+        code: 'AUTH_REQUIRED'
+      });
+    }
+    
+    const account = await getOrCreateAccount(db, userId, userToken);
     
     logger.debug('Listing inboxes for account', { 
       accountId: account.id, 
-      userId: req.session.userId 
+      userId,
+      authMethod: req.user?.id ? 'jwt' : 'session'
     });
     
     const inboxes = await inboxService.listInboxesWithStats(account.id);
@@ -749,7 +789,7 @@ router.get('/inboxes', requireAuth, async (req, res) => {
       data: inboxes
     });
   } catch (error) {
-    logger.error('List inboxes failed', { error: error.message, userId: req.session?.userId });
+    logger.error('List inboxes failed', { error: error.message, userId: req.user?.id || req.session?.userId });
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });
@@ -1128,13 +1168,28 @@ router.get('/inboxes/:id/qrcode', requireAuth, async (req, res) => {
 /**
  * GET /api/session/inboxes/:id/status
  * Get WhatsApp connection status for inbox
+ * 
+ * Supports both:
+ * 1. Session-based: Uses req.session.userId
+ * 2. JWT-based: Uses req.user.id from Supabase token
  */
 router.get('/inboxes/:id/status', requireAuth, async (req, res) => {
   try {
     const db = req.app.locals.db;
     initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
+    // Support both JWT (req.user.id) and session (req.session.userId) authentication
+    const userId = req.user?.id || req.session?.userId;
+    const userToken = req.user?.user_metadata?.userToken || req.session?.userToken;
+    
+    if (!userId) {
+      return res.status(401).json({
+        error: 'Autenticação necessária',
+        code: 'AUTH_REQUIRED'
+      });
+    }
+    
+    const account = await getOrCreateAccount(db, userId, userToken);
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1190,10 +1245,11 @@ router.get('/inboxes/:id/status', requireAuth, async (req, res) => {
     
     // Update inbox connection status if changed
     if (inbox.wuzapiConnected !== loggedIn) {
-      await db.query(
-        'UPDATE inboxes SET wuzapi_connected = ?, updated_at = ? WHERE id = ?',
-        [loggedIn ? 1 : 0, new Date().toISOString(), inbox.id]
-      );
+      const SupabaseService = require('../services/SupabaseService');
+      await SupabaseService.update('inboxes', inbox.id, {
+        wuzapi_connected: loggedIn,
+        updated_at: new Date().toISOString()
+      });
     }
     
     res.json({
@@ -1631,6 +1687,10 @@ router.post('/account-debug/migrate-inboxes', requireAuth, async (req, res) => {
  * Create or get the default inbox using user's WUZAPI token
  * This inbox represents the user's main WhatsApp connection
  * 
+ * Supports both authentication methods:
+ * 1. Session-based: Uses req.session.userToken (WUZAPI token)
+ * 2. JWT-based: Uses InboxContextService to get token from inboxes table
+ * 
  * Note: Uses unique constraint on (account_id, wuzapi_token) to prevent race conditions
  */
 router.post('/inboxes/default', requireAuth, async (req, res) => {
@@ -1638,14 +1698,71 @@ router.post('/inboxes/default', requireAuth, async (req, res) => {
     const db = req.app.locals.db;
     initServices(db);
     
-    const account = await getOrCreateAccount(db, req.session.userId, req.session.userToken);
-    const userToken = req.session.userToken;
-    const userName = req.session.userName || 'Principal';
+    // Determine user ID from JWT or session
+    const userId = req.user?.id || req.session?.userId;
     
+    if (!userId) {
+      return res.status(401).json({
+        error: 'Usuário não autenticado',
+        code: 'AUTH_REQUIRED'
+      });
+    }
+    
+    // Try to get userToken from session first (legacy flow)
+    let userToken = req.session?.userToken;
+    let userName = req.session?.userName || 'Principal';
+    
+    // If no session token, try to get from InboxContextService (JWT flow)
+    if (!userToken && req.user?.id) {
+      try {
+        const InboxContextService = require('../services/InboxContextService');
+        const context = await InboxContextService.getUserInboxContext(req.user.id);
+        
+        if (context && context.wuzapiToken) {
+          // User already has an inbox with token - return it
+          const existingInboxes = await inboxService.listInboxes(context.accountId);
+          const existingInbox = existingInboxes.find(inbox => inbox.id === context.inboxId);
+          
+          if (existingInbox) {
+            return res.json({
+              success: true,
+              data: existingInbox,
+              isNew: false
+            });
+          }
+        }
+      } catch (contextError) {
+        // NO_INBOX is expected if user has no inboxes yet
+        if (contextError.code !== 'NO_INBOX' && contextError.code !== 'NO_ACCOUNT') {
+          logger.debug('InboxContext lookup failed, continuing with account creation', {
+            userId,
+            error: contextError.message
+          });
+        }
+      }
+    }
+    
+    // Get or create account for this user
+    const account = await getOrCreateAccount(db, userId, userToken);
+    
+    // If still no token, check if user has any existing inboxes
     if (!userToken) {
+      const existingInboxes = await inboxService.listInboxes(account.id);
+      
+      if (existingInboxes.length > 0) {
+        // Return the first inbox (primary)
+        const primaryInbox = existingInboxes.find(i => i.isPrimary) || existingInboxes[0];
+        return res.json({
+          success: true,
+          data: primaryInbox,
+          isNew: false
+        });
+      }
+      
+      // No existing inboxes and no token - user needs to create an inbox manually
       return res.status(400).json({
-        error: 'Token de usuário não encontrado na sessão',
-        code: 'NO_USER_TOKEN'
+        error: 'Nenhuma caixa de entrada encontrada. Crie uma nova caixa de entrada.',
+        code: 'NO_INBOX_FOUND'
       });
     }
     
@@ -1673,13 +1790,13 @@ router.post('/inboxes/default', requireAuth, async (req, res) => {
         greetingEnabled: false,
         greetingMessage: null,
         wuzapiToken: userToken,
-        wuzapiUserId: req.session.userId
+        wuzapiUserId: userId
       });
       
       logger.info('Default inbox created for user', { 
         inboxId: inbox.id, 
         accountId: account.id, 
-        userId: req.session.userId 
+        userId
       });
       
       res.status(201).json({
@@ -1693,7 +1810,7 @@ router.post('/inboxes/default', requireAuth, async (req, res) => {
       if (createError.message?.includes('duplicate') || createError.code === '23505') {
         logger.info('Default inbox creation race condition detected, fetching existing', {
           accountId: account.id,
-          userId: req.session.userId
+          userId
         });
         
         const inboxesAfterRace = await inboxService.listInboxes(account.id);
@@ -1712,7 +1829,7 @@ router.post('/inboxes/default', requireAuth, async (req, res) => {
       throw createError;
     }
   } catch (error) {
-    logger.error('Create default inbox failed', { error: error.message, userId: req.session?.userId });
+    logger.error('Create default inbox failed', { error: error.message, userId: req.user?.id || req.session?.userId });
     res.status(500).json({ error: error.message || 'Erro interno do servidor' });
   }
 });

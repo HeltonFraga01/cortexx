@@ -17,6 +17,7 @@ export interface ContactFilters {
   search: string;
   tags: string[];
   hasName: boolean | null;
+  sourceInboxId: string | null;
 }
 
 export interface ContactStats {
@@ -60,6 +61,18 @@ class ContactsService {
       filtered = filtered.filter(contact => {
         const hasName = contact.name && contact.name.trim().length > 0;
         return filters.hasName ? hasName : !hasName;
+      });
+    }
+
+    // Filtro por origem (inbox)
+    if (filters.sourceInboxId !== null) {
+      filtered = filtered.filter(contact => {
+        // Se sourceInboxId é null no filtro, mostrar apenas contatos manuais (sem sourceInboxId)
+        if (filters.sourceInboxId === null) {
+          return !contact.sourceInboxId;
+        }
+        // Caso contrário, filtrar pelo inbox específico
+        return contact.sourceInboxId === filters.sourceInboxId;
       });
     }
 

@@ -33,6 +33,45 @@ class Database {
     }
   }
 
+  /**
+   * Get account ID from WUZAPI token (supports both inbox and account tokens)
+   * @param {string} userToken - WUZAPI token (can be from inbox or account)
+   * @returns {Promise<string|null>} Account UUID or null
+   */
+  async getAccountIdFromToken(userToken) {
+    try {
+      // Check if userToken is already a UUID
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(userToken)) {
+        return userToken;
+      }
+
+      // First, try to look up inbox by wuzapi_token (new multi-inbox system)
+      const { data: inboxData, error: inboxError } = await SupabaseService.queryAsAdmin('inboxes', (query) =>
+        query.select('account_id').eq('wuzapi_token', userToken).single()
+      );
+
+      if (!inboxError && inboxData?.account_id) {
+        return inboxData.account_id;
+      }
+
+      // Fallback: Look up account by wuzapi_token (legacy single-account system)
+      const { data, error } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+        query.select('id').eq('wuzapi_token', userToken).single()
+      );
+
+      if (error || !data) {
+        logger.warn('Account not found for token', { token: userToken?.substring(0, 10) });
+        return null;
+      }
+
+      return data.id;
+    } catch (error) {
+      logger.error('Failed to get account ID from token', { error: error.message });
+      return null;
+    }
+  }
+
   async query(sql, params = []) {
     // For simple health check queries, use Supabase healthCheck
     if (sql.trim().toLowerCase() === 'select 1 as test') {
@@ -692,17 +731,13 @@ class Database {
   // Message history methods
   async getMessageHistory(userToken, limit = 50, offset = 0) {
     try {
-      // First, get the account_id for this user token
-      const { data: accountData, error: accountError } = await SupabaseService.queryAsAdmin('accounts', (query) =>
-        query.select('id').eq('wuzapi_token', userToken).single()
-      );
+      // Get the account_id for this user token (supports inbox and account tokens)
+      const accountId = await this.getAccountIdFromToken(userToken);
 
-      if (accountError || !accountData) {
+      if (!accountId) {
         logger.warn('Account not found for user token:', userToken.substring(0, 8) + '...');
         return [];
       }
-
-      const accountId = accountData.id;
 
       // Fetch messages for this account
       const { data, error } = await SupabaseService.queryAsAdmin('sent_messages', (query) =>
@@ -727,17 +762,13 @@ class Database {
 
   async getMessageCount(userToken, period = 'all') {
     try {
-      // First, get the account_id for this user token
-      const { data: accountData, error: accountError } = await SupabaseService.queryAsAdmin('accounts', (query) =>
-        query.select('id').eq('wuzapi_token', userToken).single()
-      );
+      // Get the account_id for this user token (supports inbox and account tokens)
+      const accountId = await this.getAccountIdFromToken(userToken);
 
-      if (accountError || !accountData) {
+      if (!accountId) {
         logger.warn('Account not found for user token in getMessageCount:', userToken.substring(0, 8) + '...');
         return 0;
       }
-
-      const accountId = accountData.id;
 
       // Build query based on period
       let queryBuilder;
@@ -788,17 +819,13 @@ class Database {
    */
   async deleteMessages(userToken, messageIds = null) {
     try {
-      // First, get the account_id for this user token
-      const { data: accountData, error: accountError } = await SupabaseService.queryAsAdmin('accounts', (query) =>
-        query.select('id').eq('wuzapi_token', userToken).single()
-      );
+      // Get the account_id for this user token (supports inbox and account tokens)
+      const accountId = await this.getAccountIdFromToken(userToken);
 
-      if (accountError || !accountData) {
+      if (!accountId) {
         logger.warn('Account not found for user token in deleteMessages:', userToken.substring(0, 8) + '...');
         throw new Error('Account not found for the provided token');
       }
-
-      const accountId = accountData.id;
 
       let deleteQuery;
       if (messageIds && messageIds.length > 0) {

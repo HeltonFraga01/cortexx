@@ -24,11 +24,13 @@ import {
   UpdateGroupData,
   LocalStorageData,
   MigrationResult,
-  ContactStats
+  ContactStats,
+  DuplicateSet,
+  MergeResult
 } from '@/services/contactsApiService';
 
 // Re-export types for consumers
-export type { Contact, Tag, ContactGroup, ContactsQueryOptions, PaginatedResponse, ContactStats };
+export type { Contact, Tag, ContactGroup, ContactsQueryOptions, PaginatedResponse, ContactStats, DuplicateSet, MergeResult };
 
 // localStorage keys for migration detection
 const STORAGE_KEYS = {
@@ -48,6 +50,7 @@ interface UseContactsReturn {
   tags: Tag[];
   groups: ContactGroup[];
   stats: ContactStats;
+  inboxes: Array<{ id: string; name: string; phoneNumber?: string }>;
   
   // Pagination
   total: number;
@@ -73,6 +76,13 @@ interface UseContactsReturn {
   // Import
   importContacts: (contacts: Array<{ phone: string; name?: string; avatarUrl?: string; whatsappJid?: string }>) => Promise<void>;
   
+  // Duplicates
+  duplicates: DuplicateSet[];
+  duplicatesLoading: boolean;
+  loadDuplicates: () => Promise<void>;
+  dismissDuplicate: (contactId1: string, contactId2: string) => Promise<void>;
+  mergeContacts: (contactIds: string[], mergeData: MergeResult) => Promise<Contact>;
+  
   // Tags
   loadTags: () => Promise<void>;
   addTag: (data: CreateTagData) => Promise<Tag>;
@@ -87,6 +97,9 @@ interface UseContactsReturn {
   deleteGroup: (groupId: string) => Promise<void>;
   addContactsToGroup: (groupId: string, contactIds: string[]) => Promise<void>;
   removeContactsFromGroup: (groupId: string, contactIds: string[]) => Promise<void>;
+  
+  // Inboxes
+  loadInboxes: () => Promise<void>;
   
   // Stats
   loadStats: () => Promise<void>;
@@ -181,12 +194,17 @@ export function useContacts(options: UseContactsOptions = {}): UseContactsReturn
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [groups, setGroups] = useState<ContactGroup[]>([]);
+  const [inboxes, setInboxes] = useState<Array<{ id: string; name: string; phoneNumber?: string }>>([]);
   const [stats, setStats] = useState<ContactStats>({
     total: 0,
     withName: 0,
     withoutName: 0,
     totalTags: 0
   });
+
+  // Duplicates state
+  const [duplicates, setDuplicates] = useState<DuplicateSet[]>([]);
+  const [duplicatesLoading, setDuplicatesLoading] = useState(false);
 
   // Pagination state
   const [total, setTotal] = useState(0);
@@ -261,6 +279,17 @@ export function useContacts(options: UseContactsOptions = {}): UseContactsReturn
     }
   }, []);
 
+  // Load inboxes from API
+  const loadInboxes = useCallback(async () => {
+    try {
+      const data = await contactsApi.getInboxes();
+      setInboxes(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao carregar inboxes';
+      toast.error('Erro ao carregar inboxes', { description: message });
+    }
+  }, []);
+
   // Load stats from API
   const loadStats = useCallback(async () => {
     try {
@@ -272,6 +301,67 @@ export function useContacts(options: UseContactsOptions = {}): UseContactsReturn
     }
   }, []);
 
+  // Load duplicates from API
+  const loadDuplicates = useCallback(async () => {
+    try {
+      setDuplicatesLoading(true);
+      const data = await contactsApi.getDuplicates();
+      setDuplicates(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao carregar duplicados';
+      toast.error('Erro ao carregar duplicados', { description: message });
+    } finally {
+      setDuplicatesLoading(false);
+    }
+  }, []);
+
+  // Dismiss duplicate pair
+  const dismissDuplicate = useCallback(async (contactId1: string, contactId2: string): Promise<void> => {
+    try {
+      await contactsApi.dismissDuplicate(contactId1, contactId2);
+      // Remove the dismissed pair from duplicates
+      setDuplicates(prev => prev.filter(set => 
+        !(set.contacts.some(c => c.id === contactId1) && set.contacts.some(c => c.id === contactId2))
+      ));
+      toast.success('Duplicado dispensado');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao dispensar duplicado';
+      toast.error('Erro ao dispensar duplicado', { description: message });
+      throw err;
+    }
+  }, []);
+
+  // Merge contacts
+  const mergeContacts = useCallback(async (contactIds: string[], mergeData: MergeResult): Promise<Contact> => {
+    try {
+      setLoading(true);
+      const mergedContact = await contactsApi.mergeContacts(contactIds, mergeData);
+      
+      // Remove merged contacts from list and add the new one
+      setContacts(prev => {
+        const filtered = prev.filter(c => !contactIds.includes(c.id));
+        return [mergedContact, ...filtered];
+      });
+      
+      // Remove the merged set from duplicates
+      setDuplicates(prev => prev.filter(set => 
+        !set.contacts.some(c => contactIds.includes(c.id))
+      ));
+      
+      // Update total count (merged contacts reduce total)
+      setTotal(prev => prev - (contactIds.length - 1));
+      
+      toast.success(`${contactIds.length} contatos mesclados com sucesso`);
+      return mergedContact;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao mesclar contatos';
+      toast.error('Erro ao mesclar contatos', { description: message });
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   // Initial load
   useEffect(() => {
     if (autoLoad && !initialLoadDone.current) {
@@ -279,9 +369,10 @@ export function useContacts(options: UseContactsOptions = {}): UseContactsReturn
       loadContacts();
       loadTags();
       loadGroups();
+      loadInboxes();
       loadStats();
     }
-  }, [autoLoad, loadContacts, loadTags, loadGroups, loadStats]);
+  }, [autoLoad, loadContacts, loadTags, loadGroups, loadInboxes, loadStats]);
 
   // Create contact
   const createContact = useCallback(async (data: CreateContactData): Promise<Contact> => {
@@ -556,6 +647,7 @@ export function useContacts(options: UseContactsOptions = {}): UseContactsReturn
     contacts,
     tags,
     groups,
+    inboxes,
     stats,
 
     // Pagination
@@ -582,6 +674,13 @@ export function useContacts(options: UseContactsOptions = {}): UseContactsReturn
     // Import
     importContacts,
 
+    // Duplicates
+    duplicates,
+    duplicatesLoading,
+    loadDuplicates,
+    dismissDuplicate,
+    mergeContacts,
+
     // Tags
     loadTags,
     addTag,
@@ -596,6 +695,9 @@ export function useContacts(options: UseContactsOptions = {}): UseContactsReturn
     deleteGroup,
     addContactsToGroup,
     removeContactsFromGroup,
+
+    // Inboxes
+    loadInboxes,
 
     // Stats
     loadStats,

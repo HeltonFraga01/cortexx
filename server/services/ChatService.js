@@ -19,7 +19,7 @@ const supabaseService = require('./SupabaseService');
 class ChatService {
   /**
    * Get account ID (UUID) from WUZAPI token
-   * @param {string} userToken - WUZAPI token
+   * @param {string} userToken - WUZAPI token (can be from account or inbox)
    * @returns {Promise<string|null>} Account UUID or null
    */
   async getAccountIdFromToken(userToken) {
@@ -30,7 +30,20 @@ class ChatService {
         return userToken;
       }
 
-      // Look up account by wuzapi_token
+      // First, try to look up inbox by wuzapi_token (new multi-inbox system)
+      const { data: inboxData, error: inboxError } = await supabaseService.queryAsAdmin('inboxes', (query) =>
+        query.select('account_id').eq('wuzapi_token', userToken).single()
+      );
+
+      if (!inboxError && inboxData?.account_id) {
+        logger.debug('Account found via inbox token', { 
+          token: userToken?.substring(0, 10),
+          accountId: inboxData.account_id?.substring(0, 8)
+        });
+        return inboxData.account_id;
+      }
+
+      // Fallback: Look up account by wuzapi_token (legacy single-account system)
       const { data, error } = await supabaseService.queryAsAdmin('accounts', (query) =>
         query.select('id').eq('wuzapi_token', userToken).single()
       );
@@ -59,7 +72,7 @@ class ChatService {
    */
   async getConversations(userId, filters = {}, pagination = {}, token = null) {
     const { limit = 20, cursor = null } = pagination;
-    const { status = null, hasUnread = false, search = null, inboxId = null, assignedAgentId = null } = filters;
+    const { status = null, hasUnread = false, search = null, inboxId = null, inboxIds = null, assignedAgentId = null } = filters;
 
     try {
       // Convert WUZAPI token to account UUID if needed
@@ -93,7 +106,10 @@ class ChatService {
           q = q.or(`contact_name.ilike.%${search}%,contact_jid.ilike.%${search}%`);
         }
 
-        if (inboxId) {
+        // Support both single inboxId and array of inboxIds
+        if (inboxIds && Array.isArray(inboxIds) && inboxIds.length > 0) {
+          q = q.in('inbox_id', inboxIds);
+        } else if (inboxId) {
           q = q.eq('inbox_id', inboxId);
         }
 
@@ -318,7 +334,8 @@ class ChatService {
         : await supabaseService.queryAsAdmin('conversations', queryFn);
 
       if (error) {
-        if (error.code === 'ROW_NOT_FOUND') {
+        // PGRST116 is returned when .single() finds 0 rows (or multiple rows)
+        if (error.code === 'PGRST116' || error.code === 'ROW_NOT_FOUND') {
           return null;
         }
         throw error;
@@ -327,6 +344,10 @@ class ChatService {
       // Format the conversation to use camelCase consistently
       return data ? this.formatConversation(data) : null;
     } catch (error) {
+      // Don't log as error if it's just a not-found case
+      if (error.code === 'PGRST116' || error.code === 'ROW_NOT_FOUND') {
+        return null;
+      }
       logger.error('Failed to get conversation', { conversationId, error: error.message });
       return null;
     }
@@ -369,7 +390,8 @@ class ChatService {
         : await supabaseService.queryAsAdmin('conversations', queryFn);
 
       if (error) {
-        if (error.code === 'ROW_NOT_FOUND') {
+        // PGRST116 is returned when .single() finds 0 rows (or multiple rows)
+        if (error.code === 'PGRST116' || error.code === 'ROW_NOT_FOUND') {
           return null;
         }
         throw error;
@@ -378,6 +400,7 @@ class ChatService {
       // Format the conversation to use camelCase consistently
       return data ? this.formatConversation(data) : null;
     } catch (error) {
+      // Silently return null for not-found cases
       return null;
     }
   }

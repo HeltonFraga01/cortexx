@@ -90,7 +90,7 @@ class ReportGenerator {
    * Busca dados da campanha
    */
   async getCampaignData(campaignId) {
-    const sql = 'SELECT * FROM campaigns WHERE id = ?';
+    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ?';
     const { rows } = await this.db.query(sql, [campaignId]);
     return rows[0] || null;
   }
@@ -503,7 +503,7 @@ class ReportGenerator {
           c.started_at,
           c.completed_at
         FROM campaign_reports cr
-        JOIN campaigns c ON cr.campaign_id = c.id
+        JOIN bulk_campaigns c ON cr.campaign_id = c.id
         WHERE 1=1
       `;
       

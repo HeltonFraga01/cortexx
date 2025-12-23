@@ -21,6 +21,12 @@ export interface Contact {
   avatarUrl: string | null;
   whatsappJid: string | null;
   source: 'whatsapp' | 'manual' | 'import';
+  sourceInboxId: string | null;
+  sourceInbox?: {
+    id: string;
+    name: string;
+    phoneNumber?: string;
+  } | null;
   linkedUserId: string | null;
   metadata: Record<string, unknown>;
   lastImportAt: string | null;
@@ -55,6 +61,33 @@ export interface ContactGroup {
   updatedAt: string;
 }
 
+export interface InboxOption {
+  id: string;
+  name: string;
+  phoneNumber: string;
+  isConnected: boolean;
+  lastImportAt: string | null;
+}
+
+export interface DuplicateSet {
+  id: string;
+  type: 'exact_phone' | 'similar_phone' | 'similar_name';
+  contacts: Contact[];
+  similarity: number;
+  phone?: string;
+  baseName?: string;
+}
+
+export interface MergeResult {
+  primaryContactId: string;
+  name: string;
+  phone: string;
+  avatarUrl: string | null;
+  metadata: Record<string, unknown>;
+  preserveTags: boolean;
+  preserveGroups: boolean;
+}
+
 export interface ContactsQueryOptions {
   page?: number;
   pageSize?: number;
@@ -62,6 +95,7 @@ export interface ContactsQueryOptions {
   tagIds?: string[];
   groupId?: string;
   hasName?: boolean;
+  sourceInboxId?: string;
   sortBy?: 'name' | 'phone' | 'created_at' | 'updated_at';
   sortOrder?: 'asc' | 'desc';
 }
@@ -345,6 +379,36 @@ export async function deleteContacts(ids: string[]): Promise<void> {
   }
 }
 
+// ==================== INBOX SELECTION API ====================
+
+/**
+ * Get available inboxes for import
+ */
+export async function getInboxes(): Promise<InboxOption[]> {
+  const response = await apiFetch<InboxOption[]>('/inboxes');
+
+  if (!response.success) {
+    throw new Error(response.error || 'Failed to fetch inboxes');
+  }
+
+  return response.data || [];
+}
+
+/**
+ * Import contacts from a specific inbox
+ */
+export async function importFromInbox(inboxId: string): Promise<ImportResult> {
+  const response = await apiFetch<ImportResult>(`/import/${inboxId}`, {
+    method: 'POST'
+  });
+
+  if (!response.success) {
+    throw new Error(response.error || 'Failed to import from inbox');
+  }
+
+  return response.data || { added: 0, updated: 0, unchanged: 0 };
+}
+
 // ==================== IMPORT & MIGRATION API ====================
 
 /**
@@ -386,6 +450,58 @@ export async function migrateFromLocalStorage(
   }
 
   return response.data || { contacts: 0, tags: 0, groups: 0, errors: [] };
+}
+
+// ==================== DUPLICATES API ====================
+
+/**
+ * Get duplicate contact sets
+ */
+export async function getDuplicates(): Promise<DuplicateSet[]> {
+  const response = await apiFetch<DuplicateSet[]>('/duplicates');
+
+  if (!response.success) {
+    throw new Error(response.error || 'Failed to fetch duplicates');
+  }
+
+  return response.data || [];
+}
+
+/**
+ * Dismiss a duplicate pair as false positive
+ */
+export async function dismissDuplicate(contactId1: string, contactId2: string): Promise<void> {
+  const response = await apiFetch<void>('/duplicates/dismiss', {
+    method: 'POST',
+    body: JSON.stringify({ contactId1, contactId2 })
+  });
+
+  if (!response.success) {
+    throw new Error(response.error || 'Failed to dismiss duplicate');
+  }
+}
+
+/**
+ * Merge duplicate contacts
+ */
+export async function mergeContacts(
+  contactIds: string[],
+  mergeData: MergeResult
+): Promise<Contact> {
+  const response = await apiFetch<Contact>('/merge', {
+    method: 'POST',
+    body: JSON.stringify({ contactIds, mergeData })
+  });
+
+  if (!response.success) {
+    throw new Error(response.error || 'Failed to merge contacts');
+  }
+
+  if (!response.data) {
+    throw new Error('No merged contact data returned');
+  }
+
+  return response.data;
 }
 
 // ==================== TAGS API ====================
@@ -626,9 +742,18 @@ export const contactsApi = {
   // Stats
   getStats,
   
+  // Inbox Selection
+  getInboxes,
+  importFromInbox,
+  
   // Import & Migration
   importFromWhatsApp,
   migrateFromLocalStorage,
+  
+  // Duplicates
+  getDuplicates,
+  dismissDuplicate,
+  mergeContacts,
   
   // Tags
   getTags,

@@ -19,9 +19,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 
 import { useChatInbox } from '@/hooks/useChatInbox'
 import { useChatApi } from '@/hooks/useChatApi'
-import { InboxSelector } from '@/components/user/InboxSelector'
+import { ConversationInboxBadge } from '@/components/features/chat/ConversationInboxBadge'
 import type { Conversation, ConversationFilters } from '@/types/chat'
-import type { InboxWithStats } from '@/types/multi-user'
 import { Search, ChevronLeft, X, User, Users, Megaphone, Newspaper, BellOff, Inbox as InboxIcon, Mail, FolderOpen, CheckCircle, Clock, Pause, Bot, UserCheck, UserX, Hand } from 'lucide-react'
 
 // Cache for avatars that have been fetched or are being fetched (to avoid re-fetching)
@@ -60,24 +59,27 @@ export function InboxSidebar({
   const queryClient = useQueryClient()
   
   // Inbox context for filtering by inbox (works with both user and agent contexts)
-  const { currentInbox, setCurrentInbox, inboxes } = useChatInbox()
+  const { inboxes, selectedInboxIds, isAllSelected, getSelectedCount } = useChatInbox()
+  
+  // Determine if we should show inbox badges (when multiple inboxes are selected)
+  const showInboxBadges = useMemo(() => {
+    return getSelectedCount() > 1 || isAllSelected
+  }, [getSelectedCount, isAllSelected])
   
   // Get the appropriate chat API based on context (user or agent)
   const chatApi = useChatApi()
 
-  // Handle inbox selection
-  const handleInboxSelect = useCallback((inbox: InboxWithStats | null) => {
-    setCurrentInbox(inbox)
-  }, [setCurrentInbox])
-
-  // Merge inbox filter with other filters
+  // Merge inbox filter with other filters - now uses unified context
   const effectiveFilters = useMemo(() => {
     const merged: ConversationFilters = { ...filters }
-    if (currentInbox) {
-      merged.inboxId = currentInbox.id
+    // Pass selected inbox IDs to filter conversations
+    // When all are selected, don't pass filter (backend returns all)
+    // When specific inboxes selected, pass their IDs
+    if (!isAllSelected && selectedInboxIds.length > 0) {
+      merged.inboxIds = selectedInboxIds
     }
     return merged
-  }, [filters, currentInbox])
+  }, [filters, isAllSelected, selectedInboxIds])
 
   // Fetch conversations using the appropriate API (user or agent)
   const {
@@ -245,17 +247,6 @@ export function InboxSidebar({
         </Button>
       </div>
 
-      {/* Inbox Selector - Requirements: 10.1, 10.2 */}
-      {inboxes.length > 0 && (
-        <div className="px-3 pt-2 pb-1">
-          <InboxSelector
-            currentInbox={currentInbox as InboxWithStats | null}
-            onSelect={handleInboxSelect}
-            showAllOption={true}
-          />
-        </div>
-      )}
-
       {/* Search */}
       <div className="px-3 pt-3 pb-1.5">
         <div className="relative">
@@ -369,14 +360,23 @@ export function InboxSidebar({
           ) : displayConversations.length === 0 ? (
             <EmptyState type={activeTab} searchQuery={searchQuery} />
           ) : (
-            displayConversations.map((conversation) => (
-              <ConversationItem
-                key={conversation.id}
-                conversation={conversation}
-                isSelected={conversation.id === selectedConversationId}
-                onClick={() => onSelectConversation(conversation)}
-              />
-            ))
+            displayConversations.map((conversation) => {
+              // Find inbox name for badge
+              const inbox = conversation.inboxId 
+                ? inboxes.find(i => i.id === conversation.inboxId)
+                : null
+              
+              return (
+                <ConversationItem
+                  key={conversation.id}
+                  conversation={conversation}
+                  isSelected={conversation.id === selectedConversationId}
+                  onClick={() => onSelectConversation(conversation)}
+                  showInboxBadge={showInboxBadges}
+                  inboxName={inbox?.name}
+                />
+              )
+            })
           )}
         </div>
       </ScrollArea>
@@ -481,9 +481,11 @@ interface ConversationItemProps {
   conversation: Conversation
   isSelected: boolean
   onClick: () => void
+  showInboxBadge?: boolean
+  inboxName?: string
 }
 
-function ConversationItem({ conversation, isSelected, onClick }: ConversationItemProps) {
+function ConversationItem({ conversation, isSelected, onClick, showInboxBadge, inboxName }: ConversationItemProps) {
   const initials = conversation.contactName
     ? conversation.contactName.slice(0, 2).toUpperCase()
     : conversation.contactJid.slice(0, 2).toUpperCase()
@@ -592,6 +594,16 @@ function ConversationItem({ conversation, isSelected, onClick }: ConversationIte
             )}
           </div>
         </div>
+
+        {/* Inbox Badge - shown when multiple inboxes selected */}
+        {showInboxBadge && conversation.inboxId && (
+          <div className="mt-1.5">
+            <ConversationInboxBadge 
+              inboxId={conversation.inboxId} 
+              inboxName={inboxName}
+            />
+          </div>
+        )}
 
         {/* Labels */}
         {conversation.labels && conversation.labels.length > 0 && (

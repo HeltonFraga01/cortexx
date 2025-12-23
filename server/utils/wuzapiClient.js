@@ -409,6 +409,81 @@ class WuzAPIClient {
       timeout: this.timeout
     };
   }
+
+  /**
+   * Obtém a lista de contatos do WhatsApp
+   * @param {string} userToken - Token do usuário WUZAPI
+   * @returns {Promise<Array>} Lista de contatos normalizada
+   */
+  async getContacts(userToken) {
+    try {
+      await this._ensureConfig();
+      
+      const response = await this.client.get('/user/contacts', {
+        headers: {
+          'token': userToken
+        },
+        timeout: 30000
+      });
+
+      const wuzapiResponse = response.data;
+
+      if (!wuzapiResponse || !wuzapiResponse.data) {
+        logger.warn('Invalid WUZAPI contacts response', { 
+          hasResponse: !!wuzapiResponse,
+          hasData: !!wuzapiResponse?.data 
+        });
+        return [];
+      }
+
+      const wuzapiContacts = wuzapiResponse.data;
+
+      // Transform contacts object to array
+      const contacts = Object.entries(wuzapiContacts)
+        .filter(([jid, contact]) => jid && jid.includes('@') && contact.Found)
+        .map(([jid, contact]) => {
+          const phone = jid.split('@')[0];
+          const normalizedPhone = phone.replace(/\D/g, '');
+          const name = contact.FullName || contact.PushName || contact.BusinessName || null;
+
+          return {
+            phone: normalizedPhone,
+            name: name,
+            jid: jid,
+            avatarUrl: contact.ProfilePictureUrl || null,
+            valid: normalizedPhone.length >= 8
+          };
+        })
+        .filter(contact => contact.valid);
+
+      logger.info('Contacts fetched from WUZAPI', {
+        totalEntries: Object.keys(wuzapiContacts).length,
+        validContacts: contacts.length
+      });
+
+      return contacts;
+    } catch (error) {
+      logger.error('Failed to fetch contacts from WUZAPI', {
+        error: error.message,
+        status: error.response?.status
+      });
+
+      if (error.response?.status === 401) {
+        throw new Error('Token WUZAPI inválido ou expirado');
+      }
+      if (error.response?.status === 404) {
+        throw new Error('Instância WhatsApp não encontrada');
+      }
+      if (error.code === 'ECONNREFUSED') {
+        throw new Error('Serviço WUZAPI indisponível');
+      }
+      if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+        throw new Error('Tempo limite excedido ao conectar com WUZAPI');
+      }
+
+      throw error;
+    }
+  }
 }
 
 // Exportar instância singleton

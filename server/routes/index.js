@@ -77,6 +77,9 @@ const adminUserManagementRoutes = require('./adminUserManagementRoutes');
 // Public Routes
 const publicRoutes = require('./publicRoutes');
 
+// Inbox Context Routes (Supabase Auth)
+const inboxContextRoutes = require('./inboxContextRoutes');
+
 logger.debug('contactImportRoutes loaded', { 
   type: typeof contactImportRoutes, 
   routeCount: contactImportRoutes.stack ? contactImportRoutes.stack.length : 0 
@@ -155,6 +158,8 @@ function setupRoutes(app) {
   app.use('/api/user', userBillingRoutes); // Stripe billing routes
   app.use('/api/reseller', resellerRoutes); // Reseller/Connect routes
   app.use('/api/user/drafts', userDraftRoutes);
+  // Inbox Context Routes (Supabase Auth user inbox binding)
+  app.use('/api/user', inboxContextRoutes);
   // IMPORTANT: userBotTestRoutes MUST come BEFORE userBotRoutes
   // because userBotRoutes has a /:id catch-all route that would intercept test routes
   app.use('/api/user/bots', userBotTestRoutes); // Bot test chat routes

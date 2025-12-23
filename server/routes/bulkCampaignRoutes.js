@@ -1,4 +1,5 @@
 const express = require('express');
+const { v4: uuidv4 } = require('uuid');
 const { logger } = require('../utils/logger');
 const ReportGenerator = require('../services/ReportGenerator');
 const AuditLogger = require('../services/AuditLogger');
@@ -18,6 +19,8 @@ const {
 } = require('../middleware/campaignRateLimiter');
 const { featureMiddleware } = require('../middleware/featureEnforcement');
 const { quotaMiddleware } = require('../middleware/quotaEnforcement');
+const { validateSupabaseToken } = require('../middleware/supabaseAuth');
+const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
 
 const router = express.Router();
 
@@ -35,10 +38,86 @@ function getAuditLogger(req) {
 /**
  * Bulk Campaign Routes
  * Handles bulk message campaign operations
+ * 
+ * UPDATED: Now uses inboxContextMiddleware to get wuzapiToken from the active inbox
+ * instead of the accounts table. This ensures the correct token is used when
+ * users have multiple inboxes.
+ * 
+ * Requirements: 8.3 (Update Envio de Mensagens to use InboxContext)
  */
 
-// Use global verifyUserToken middleware for consistent user identification
-const verifyUserToken = require('../middleware/verifyUserToken');
+/**
+ * Middleware para verificar token do usuário usando InboxContext
+ * Usa o token da inbox ativa em vez do token da account
+ */
+const verifyUserTokenWithInbox = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      await new Promise((resolve, reject) => {
+        validateSupabaseToken(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      await new Promise((resolve, reject) => {
+        inboxContextMiddleware({ required: false, useCache: true })(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      if (req.context?.wuzapiToken) {
+        req.userToken = req.context.wuzapiToken;
+        req.userId = req.user?.id;
+        req.inboxId = req.context.inboxId;
+        
+        logger.debug('WUZAPI token obtained from inbox context for bulk campaign', {
+          userId: req.userId?.substring(0, 8) + '...',
+          inboxId: req.inboxId?.substring(0, 8) + '...',
+          hasToken: true
+        });
+        
+        return next();
+      }
+      
+      if (req.user?.id) {
+        logger.warn('No inbox context available for bulk campaign user', {
+          userId: req.user.id.substring(0, 8) + '...',
+          path: req.path
+        });
+      }
+    } catch (error) {
+      logger.debug('JWT/InboxContext validation failed for bulk campaign, trying other methods', { 
+        error: error.message,
+        path: req.path
+      });
+    }
+  }
+  
+  const tokenHeader = req.headers.token;
+  if (tokenHeader) {
+    req.userToken = tokenHeader;
+    return next();
+  }
+  
+  if (req.session?.userToken) {
+    req.userToken = req.session.userToken;
+    return next();
+  }
+  
+  return res.status(401).json({
+    success: false,
+    error: {
+      code: 'NO_TOKEN',
+      message: 'Token não fornecido. Use Authorization Bearer, header token ou sessão ativa.'
+    }
+  });
+};
+
+const verifyUserToken = verifyUserTokenWithInbox;
 
 // POST /api/user/bulk-campaigns - Criar nova campanha
 // Rate limited: 10 requests per minute per user
@@ -100,12 +179,12 @@ router.post('/', campaignCreationLimiter, verifyUserToken, featureMiddleware.bul
     const db = req.app.locals.db;
     const scheduler = req.app.locals.campaignScheduler;
 
-    // Gerar ID único para campanha
-    const campaignId = `campaign-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    // Gerar ID único para campanha (UUID)
+    const campaignId = uuidv4();
 
     // Criar campanha no banco
     const insertCampaignSql = `
-      INSERT INTO campaigns (
+      INSERT INTO bulk_campaigns (
         id, name, instance, user_token, status, message_type, message_content,
         media_url, media_type, media_file_name, delay_min, delay_max,
         randomize_order, is_scheduled, scheduled_at, total_contacts,
@@ -229,7 +308,7 @@ router.get('/active', verifyUserToken, async (req, res) => {
     const scheduler = req.app.locals.campaignScheduler;
 
     let sql = `
-      SELECT * FROM campaigns 
+      SELECT * FROM bulk_campaigns 
       WHERE user_token = ? 
       AND status IN ('scheduled', 'running', 'paused')
     `;
@@ -314,7 +393,7 @@ router.get('/:id/progress', verifyUserToken, async (req, res) => {
     const scheduler = req.app.locals.campaignScheduler;
 
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM campaigns WHERE id = ? AND user_token = ?';
+    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
     const { rows } = await db.query(sql, [id, userToken]);
 
     if (rows.length === 0) {
@@ -421,7 +500,7 @@ router.post('/:id/pause', verifyUserToken, async (req, res) => {
     const scheduler = req.app.locals.campaignScheduler;
 
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM campaigns WHERE id = ? AND user_token = ?';
+    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
     const { rows } = await db.query(sql, [id, userToken]);
 
     if (rows.length === 0) {
@@ -495,7 +574,7 @@ router.patch('/:id/config', verifyUserToken, async (req, res) => {
     const scheduler = req.app.locals.campaignScheduler;
 
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM campaigns WHERE id = ? AND user_token = ?';
+    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
     const { rows } = await db.query(sql, [id, userToken]);
 
     if (rows.length === 0) {
@@ -586,7 +665,7 @@ router.post('/:id/resume', verifyUserToken, async (req, res) => {
     const scheduler = req.app.locals.campaignScheduler;
 
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM campaigns WHERE id = ? AND user_token = ?';
+    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
     const { rows } = await db.query(sql, [id, userToken]);
 
     if (rows.length === 0) {
@@ -695,7 +774,7 @@ router.post('/:id/cancel', verifyUserToken, async (req, res) => {
     const scheduler = req.app.locals.campaignScheduler;
 
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM campaigns WHERE id = ? AND user_token = ?';
+    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
     const { rows } = await db.query(sql, [id, userToken]);
 
     if (rows.length === 0) {
@@ -741,7 +820,7 @@ router.post('/:id/cancel', verifyUserToken, async (req, res) => {
     }
 
     // SEMPRE atualizar status no banco (independente do scheduler)
-    const updateSql = 'UPDATE campaigns SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?';
+    const updateSql = 'UPDATE bulk_campaigns SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?';
     await db.query(updateSql, ['cancelled', id]);
 
     logger.info('Campanha cancelada via API', { campaignId: id });
@@ -896,7 +975,7 @@ router.get('/:id/report', verifyUserToken, async (req, res) => {
     const db = req.app.locals.db;
 
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM campaigns WHERE id = ? AND user_token = ?';
+    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
     const { rows } = await db.query(sql, [id, userToken]);
 
     if (rows.length === 0) {
@@ -931,7 +1010,7 @@ router.get('/:id/report/export', verifyUserToken, async (req, res) => {
     const db = req.app.locals.db;
 
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM campaigns WHERE id = ? AND user_token = ?';
+    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
     const { rows } = await db.query(sql, [id, userToken]);
 
     if (rows.length === 0) {
@@ -977,7 +1056,7 @@ router.post('/compare', verifyUserToken, async (req, res) => {
 
     // Verificar se todas as campanhas pertencem ao usuário
     const placeholders = campaignIds.map(() => '?').join(',');
-    const sql = `SELECT id FROM campaigns WHERE id IN (${placeholders}) AND user_token = ?`;
+    const sql = `SELECT id FROM bulk_campaigns WHERE id IN (${placeholders}) AND user_token = ?`;
     const { rows } = await db.query(sql, [...campaignIds, userToken]);
 
     if (rows.length !== campaignIds.length) {
@@ -1022,7 +1101,7 @@ router.delete('/:id', verifyUserToken, async (req, res) => {
     const db = req.app.locals.db;
 
     // Verificar se campanha pertence ao usuário
-    const sql = 'SELECT * FROM campaigns WHERE id = ? AND user_token = ?';
+    const sql = 'SELECT * FROM bulk_campaigns WHERE id = ? AND user_token = ?';
     const { rows } = await db.query(sql, [id, userToken]);
 
     if (rows.length === 0) {
@@ -1045,7 +1124,7 @@ router.delete('/:id', verifyUserToken, async (req, res) => {
     await db.query('DELETE FROM campaign_contacts WHERE campaign_id = ?', [id]);
 
     // Excluir campanha
-    await db.query('DELETE FROM campaigns WHERE id = ?', [id]);
+    await db.query('DELETE FROM bulk_campaigns WHERE id = ?', [id]);
 
     logger.info('Campanha excluída', {
       campaignId: id,

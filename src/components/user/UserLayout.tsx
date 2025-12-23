@@ -4,6 +4,9 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBrandingConfig } from '@/hooks/useBranding';
 import { SidebarSupportButton, MobileSupportButton } from '@/components/shared/SupportButton';
+import { UnifiedInboxSelector } from '@/components/shared/UnifiedInboxSelector';
+import { ConnectionStatus } from '@/components/shared/ConnectionStatus';
+import { useSupabaseInboxOptional } from '@/contexts/SupabaseInboxContext';
 import ThemeToggle from '@/components/ui-custom/ThemeToggle';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -72,6 +75,9 @@ const UserLayout = ({ children }: UserLayoutProps) => {
   const brandingConfig = useBrandingConfig();
   const location = useLocation();
   const navigate = useNavigate();
+  
+  // Inbox context (optional - may not be available)
+  const inboxContext = useSupabaseInboxOptional();
 
   // Save collapsed state to localStorage
   useEffect(() => {
@@ -780,6 +786,13 @@ const UserLayout = ({ children }: UserLayoutProps) => {
               )}
             </div>
             <div className="flex items-center gap-1">
+              {/* Inbox selector and connection status */}
+              {inboxContext && inboxContext.context && (
+                <>
+                  <ConnectionStatus showLabel={false} showReconnect={false} size="sm" />
+                  <UnifiedInboxSelector size="sm" variant="ghost" />
+                </>
+              )}
               <MobileSupportButton />
               <ThemeToggle />
               <Button
@@ -789,6 +802,25 @@ const UserLayout = ({ children }: UserLayoutProps) => {
               >
                 <LogOut className="h-4 w-4" />
               </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* Desktop top bar with inbox context */}
+        <div className="hidden lg:block sticky top-0 z-40 bg-background border-b">
+          <div className="flex items-center justify-between px-6 py-3">
+            <div className="flex items-center gap-4">
+              {/* Inbox selector */}
+              {inboxContext && inboxContext.context && (
+                <UnifiedInboxSelector variant="outline" size="default" />
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              {/* Connection status */}
+              {inboxContext && inboxContext.context && (
+                <ConnectionStatus showLabel={true} showReconnect={true} size="default" />
+              )}
+              <ThemeToggle />
             </div>
           </div>
         </div>

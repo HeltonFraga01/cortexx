@@ -183,6 +183,7 @@ app.use((req, res, next) => {
     '/api/superadmin/login', // Superadmin login endpoint (public)
     '/api/superadmin/tenants/validate-subdomain', // Subdomain validation (read-only)
     '/api/admin/supabase', // Rotas de gerenciamento de usuários Supabase (conflito com CSRF + JWT)
+    '/api/user/inbox-context', // Inbox context routes use JWT auth (Supabase Auth), inherently CSRF-safe
   ];
 
   // Verificar se a rota atual está na lista de exceções
@@ -575,6 +576,9 @@ app.use('/api/user/custom-themes', userCustomThemesRoutes);
 app.use('/api/user/plans', userPlanRoutes); // Available plans for upgrade - MUST come BEFORE generic user routes
 app.use('/api/user', userSubscriptionRoutes);
 app.use('/api/user', userBillingRoutes); // Stripe billing routes
+
+// Inbox Context Routes (Supabase Auth user inbox binding)
+app.use('/api/user', require('./routes/inboxContextRoutes'));
 
 // Rotas de Teste (desenvolvimento)
 if (process.env.NODE_ENV !== 'production') {

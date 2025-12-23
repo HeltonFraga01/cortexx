@@ -2,15 +2,75 @@
  * Report Routes
  * Handles campaign report operations with filtering and export
  * 
+ * UPDATED: Now uses inboxContextMiddleware to get wuzapiToken from the active inbox
+ * 
  * Requirements: 3.1, 3.2, 3.3, 3.4
  */
 
 const express = require('express');
 const { logger } = require('../utils/logger');
-const verifyUserToken = require('../middleware/verifyUserToken');
+const { validateSupabaseToken } = require('../middleware/supabaseAuth');
+const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
 const { featureMiddleware } = require('../middleware/featureEnforcement');
 
 const router = express.Router();
+
+/**
+ * Middleware para verificar token do usuário usando InboxContext
+ */
+const verifyUserTokenWithInbox = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      await new Promise((resolve, reject) => {
+        validateSupabaseToken(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      await new Promise((resolve, reject) => {
+        inboxContextMiddleware({ required: false, useCache: true })(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      if (req.context?.wuzapiToken) {
+        req.userToken = req.context.wuzapiToken;
+        req.userId = req.user?.id;
+        req.inboxId = req.context.inboxId;
+        return next();
+      }
+      
+      if (req.user?.id) {
+        req.userId = req.user.id;
+        return next();
+      }
+    } catch (error) {
+      logger.debug('JWT/InboxContext validation failed for reports', { error: error.message });
+    }
+  }
+  
+  const tokenHeader = req.headers.token;
+  if (tokenHeader) {
+    req.userToken = tokenHeader;
+    return next();
+  }
+  
+  if (req.session?.userToken) {
+    req.userToken = req.session.userToken;
+    return next();
+  }
+  
+  return res.status(401).json({
+    success: false,
+    error: { code: 'NO_TOKEN', message: 'Token não fornecido.' }
+  });
+};
+
+const verifyUserToken = verifyUserTokenWithInbox;
 
 // Apply advanced_reports feature check to all routes
 router.use(verifyUserToken);
@@ -64,7 +124,7 @@ router.get('/', async (req, res) => {
     }
 
     // Get total count
-    const countSql = `SELECT COUNT(*) as total FROM campaigns ${whereClause}`;
+    const countSql = `SELECT COUNT(*) as total FROM bulk_campaigns ${whereClause}`;
     const countResult = await db.query(countSql, params);
     const total = countResult.rows[0]?.total || 0;
 
@@ -74,7 +134,7 @@ router.get('/', async (req, res) => {
         id, name, instance, status, message_type,
         total_contacts, sent_count, failed_count,
         created_at, started_at, completed_at
-      FROM campaigns 
+      FROM bulk_campaigns 
       ${whereClause}
       ORDER BY created_at DESC
       LIMIT ? OFFSET ?
@@ -139,7 +199,7 @@ router.get('/:campaignId', async (req, res) => {
         id, name, instance, status, message_type,
         total_contacts, sent_count, failed_count,
         created_at, started_at, completed_at
-      FROM campaigns 
+      FROM bulk_campaigns 
       WHERE id = ? AND user_token = ?
     `;
     const campaignResult = await db.query(campaignSql, [campaignId, userToken]);
@@ -259,7 +319,7 @@ router.get('/:campaignId/export', async (req, res) => {
     const db = req.app.locals.db;
 
     // Verify campaign ownership
-    const checkSql = 'SELECT id, name FROM campaigns WHERE id = ? AND user_token = ?';
+    const checkSql = 'SELECT id, name FROM bulk_campaigns WHERE id = ? AND user_token = ?';
     const checkResult = await db.query(checkSql, [campaignId, userToken]);
 
     if (!checkResult.rows || checkResult.rows.length === 0) {

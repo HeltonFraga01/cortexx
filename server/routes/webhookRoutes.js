@@ -2,54 +2,38 @@ const express = require('express');
 const axios = require('axios');
 const { logger } = require('../utils/logger');
 const { validateSupabaseToken } = require('../middleware/supabaseAuth');
-const { getUserToken, getWuzapiTokenFromAccount } = require('../middleware/auth');
+const { inboxContextMiddleware, invalidateContextCache } = require('../middleware/inboxContextMiddleware');
 
 const router = express.Router();
 
 /**
  * Webhook Routes
  * Handles webhook configuration and management
+ * 
+ * UPDATED: Now uses inboxContextMiddleware to get wuzapiToken from the active inbox
+ * instead of the accounts table. This ensures the correct token is used when
+ * users have multiple inboxes.
+ * 
+ * Requirements: 5.1, 5.2, 5.3 (Use wuzapiToken from Session_Context)
  */
-
-// Cache para WUZAPI tokens (evita chamadas repetidas ao banco)
-const wuzapiTokenCache = new Map();
-const WUZAPI_CACHE_TTL = 5 * 60 * 1000; // 5 minutos
 
 /**
- * Get WUZAPI token from cache or database
- * @param {string} userId - Supabase user ID
- * @param {string} wuzapiId - Optional WUZAPI user ID from JWT metadata
+ * Middleware para verificar token do usuário usando InboxContext
+ * Usa o token da inbox ativa em vez do token da account
+ * 
+ * Fluxo:
+ * 1. Valida JWT do Supabase
+ * 2. Carrega contexto da inbox (via inboxContextMiddleware)
+ * 3. Usa wuzapiToken da inbox ativa
+ * 4. Fallback para header 'token' (legacy) ou sessão
  */
-async function getCachedWuzapiToken(userId, wuzapiId = null) {
-  if (!userId) return null;
-  
-  // Check cache first
-  const cached = wuzapiTokenCache.get(userId);
-  if (cached && Date.now() - cached.timestamp < WUZAPI_CACHE_TTL) {
-    logger.debug('WUZAPI token obtained from cache (webhookRoutes)', { userId: userId.substring(0, 8) + '...' });
-    return cached.token;
-  }
-  
-  // Fetch from database (and potentially from WUZAPI API if wuzapiId is provided)
-  const token = await getWuzapiTokenFromAccount(userId, wuzapiId);
-  if (token) {
-    wuzapiTokenCache.set(userId, { token, timestamp: Date.now() });
-    logger.debug('WUZAPI token obtained from database (webhookRoutes)', { userId: userId.substring(0, 8) + '...' });
-  }
-  
-  return token;
-}
-
-// Middleware para verificar token do usuário (via JWT Supabase, header ou sessão)
-const verifyUserToken = async (req, res, next) => {
-  let userToken = null;
-  
-  // Tentar obter token do header Authorization (JWT Supabase)
+const verifyUserTokenWithInbox = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   
+  // Se tem JWT, usar inboxContextMiddleware para obter token da inbox correta
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
-      // Validate Supabase JWT and extract user data
+      // Validar JWT do Supabase
       await new Promise((resolve, reject) => {
         validateSupabaseToken(req, res, (err) => {
           if (err) reject(err);
@@ -57,60 +41,69 @@ const verifyUserToken = async (req, res, next) => {
         });
       });
       
-      // Get userId and wuzapiId from validated JWT
-      const userId = req.user?.id;
-      const wuzapiId = req.user?.user_metadata?.wuzapi_id;
+      // Carregar contexto da inbox
+      await new Promise((resolve, reject) => {
+        inboxContextMiddleware({ required: false, useCache: true })(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
       
-      if (userId) {
-        // First try to get token from JWT metadata
-        userToken = getUserToken(req);
+      // Se temos contexto, usar o token da inbox ativa
+      if (req.context?.wuzapiToken) {
+        req.userToken = req.context.wuzapiToken;
+        req.userId = req.user?.id;
+        req.inboxId = req.context.inboxId;
         
-        // If not in metadata, fetch from accounts table (passing wuzapiId for auto-correction)
-        if (!userToken) {
-          userToken = await getCachedWuzapiToken(userId, wuzapiId);
-          
-          if (userToken) {
-            logger.debug('WUZAPI token fetched from accounts table', { 
-              userId: userId.substring(0, 8) + '...',
-              hasToken: true 
-            });
-          } else {
-            logger.warn('No WUZAPI token found for user in accounts table', { 
-              userId: userId.substring(0, 8) + '...' 
-            });
-          }
-        }
-      }
-      
-      if (userToken) {
-        req.userToken = userToken;
-        req.userId = userId;
+        logger.debug('WUZAPI token obtained from inbox context', {
+          userId: req.userId?.substring(0, 8) + '...',
+          inboxId: req.inboxId?.substring(0, 8) + '...',
+          hasToken: true
+        });
+        
         return next();
       }
+      
+      // Se não tem contexto mas tem usuário, tentar continuar (alguns endpoints podem não precisar de token)
+      if (req.user?.id) {
+        logger.warn('No inbox context available for user', {
+          userId: req.user.id.substring(0, 8) + '...',
+          path: req.path
+        });
+      }
     } catch (error) {
-      logger.debug('JWT validation failed, trying other methods', { error: error.message });
+      logger.debug('JWT/InboxContext validation failed, trying other methods', { 
+        error: error.message,
+        path: req.path
+      });
     }
   }
   
-  // Tentar obter token do header 'token' (legacy)
+  // Fallback: Tentar obter token do header 'token' (legacy)
   const tokenHeader = req.headers.token;
   if (tokenHeader) {
-    userToken = tokenHeader;
-  } else if (req.session?.userToken) {
-    // Fallback para token da sessão
-    userToken = req.session.userToken;
+    req.userToken = tokenHeader;
+    return next();
   }
   
-  if (!userToken) {
-    return res.status(401).json({
-      error: 'Token não fornecido',
-      message: 'Header Authorization com Bearer token, header token ou sessão ativa é obrigatório'
-    });
+  // Fallback: Token da sessão
+  if (req.session?.userToken) {
+    req.userToken = req.session.userToken;
+    return next();
   }
   
-  req.userToken = userToken;
-  next();
+  // Nenhum token encontrado
+  return res.status(401).json({
+    success: false,
+    error: {
+      code: 'NO_TOKEN',
+      message: 'Token não fornecido. Use Authorization Bearer, header token ou sessão ativa.'
+    }
+  });
 };
+
+// Alias para compatibilidade
+const verifyUserToken = verifyUserTokenWithInbox;
 
 // GET /api/webhook - Buscar configuração de webhook do usuário
 router.get('/', verifyUserToken, async (req, res) => {

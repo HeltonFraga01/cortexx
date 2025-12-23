@@ -147,6 +147,46 @@ class AccountService {
   }
 
   /**
+   * Get account by WUZAPI token
+   * Used as fallback when owner_user_id doesn't match (e.g., login via WUZAPI token vs Supabase UUID)
+   * @param {string} wuzapiToken - WUZAPI token
+   * @param {string} [token] - User JWT token for RLS
+   * @returns {Promise<Object|null>} Account or null if not found
+   */
+  async getAccountByWuzapiToken(wuzapiToken, token = null) {
+    try {
+      if (!wuzapiToken) {
+        return null;
+      }
+
+      const { data: accounts, error } = await supabaseService.getMany(
+        'accounts',
+        { wuzapi_token: wuzapiToken },
+        { limit: 1 },
+        token
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      if (!accounts || accounts.length === 0) {
+        return null;
+      }
+
+      logger.debug('Account found by wuzapi_token', { 
+        accountId: accounts[0].id, 
+        wuzapiToken: wuzapiToken.substring(0, 8) + '...' 
+      });
+
+      return this.formatAccount(accounts[0]);
+    } catch (error) {
+      logger.error('Failed to get account by wuzapi_token', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
    * Update account
    * @param {string} accountId - Account ID (UUID)
    * @param {Object} data - Update data

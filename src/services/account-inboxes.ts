@@ -11,6 +11,7 @@ import type {
   CreateInboxDTO,
   UpdateInboxDTO
 } from '@/types/multi-user'
+import { supabase } from '@/lib/supabase'
 
 const API_BASE = ''
 
@@ -33,15 +34,30 @@ async function getCsrfToken(): Promise<string | null> {
   }
 }
 
-function getRequestOptions(): RequestInit {
-  return { credentials: 'include' as RequestCredentials }
+/**
+ * Helper para obter o token de acesso Supabase
+ */
+async function getAccessToken(): Promise<string | null> {
+  const { data: { session } } = await supabase.auth.getSession()
+  return session?.access_token || null
+}
+
+async function getRequestOptions(): Promise<RequestInit> {
+  const token = await getAccessToken()
+  return { 
+    credentials: 'include' as RequestCredentials,
+    headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+  }
 }
 
 async function getRequestOptionsWithCsrf(): Promise<RequestInit> {
-  const token = await getCsrfToken()
+  const [csrf, token] = await Promise.all([getCsrfToken(), getAccessToken()])
+  const headers: Record<string, string> = {}
+  if (csrf) headers['CSRF-Token'] = csrf
+  if (token) headers['Authorization'] = `Bearer ${token}`
   return {
     credentials: 'include' as RequestCredentials,
-    headers: token ? { 'CSRF-Token': token } : {}
+    headers
   }
 }
 
@@ -49,7 +65,8 @@ async function getRequestOptionsWithCsrf(): Promise<RequestInit> {
  * List inboxes with stats
  */
 export async function listInboxes(): Promise<InboxWithStats[]> {
-  const response = await fetch(`${API_BASE}/api/session/inboxes`, getRequestOptions())
+  const options = await getRequestOptions()
+  const response = await fetch(`${API_BASE}/api/session/inboxes`, options)
   const result = await response.json()
   if (!response.ok) throw new Error(result.error || 'Failed to list inboxes')
   return result.data
@@ -59,7 +76,8 @@ export async function listInboxes(): Promise<InboxWithStats[]> {
  * List inboxes for current agent (same as listInboxes for session-based auth)
  */
 export async function listMyInboxes(): Promise<Inbox[]> {
-  const response = await fetch(`${API_BASE}/api/session/inboxes`, getRequestOptions())
+  const options = await getRequestOptions()
+  const response = await fetch(`${API_BASE}/api/session/inboxes`, options)
   const result = await response.json()
   if (!response.ok) throw new Error(result.error || 'Failed to list my inboxes')
   return result.data
@@ -69,7 +87,8 @@ export async function listMyInboxes(): Promise<Inbox[]> {
  * Get inbox by ID with members
  */
 export async function getInbox(id: string): Promise<InboxWithMembers> {
-  const response = await fetch(`${API_BASE}/api/session/inboxes/${id}`, getRequestOptions())
+  const options = await getRequestOptions()
+  const response = await fetch(`${API_BASE}/api/session/inboxes/${id}`, options)
   const result = await response.json()
   if (!response.ok) throw new Error(result.error || 'Failed to get inbox')
   return result.data
@@ -132,7 +151,8 @@ export async function deleteInbox(id: string): Promise<void> {
  * Get inbox members
  */
 export async function getInboxMembers(inboxId: string): Promise<any[]> {
-  const response = await fetch(`${API_BASE}/api/session/inboxes/${inboxId}/members`, getRequestOptions())
+  const options = await getRequestOptions()
+  const response = await fetch(`${API_BASE}/api/session/inboxes/${inboxId}/members`, options)
   const result = await response.json()
   if (!response.ok) throw new Error(result.error || 'Failed to get inbox members')
   return result.data
@@ -183,7 +203,8 @@ export async function removeAgentFromInbox(inboxId: string, agentId: string): Pr
  * Get QR code for WhatsApp inbox
  */
 export async function getInboxQRCode(inboxId: string): Promise<{ qrCode: string | null; connected: boolean }> {
-  const response = await fetch(`${API_BASE}/api/session/inboxes/${inboxId}/qrcode`, getRequestOptions())
+  const options = await getRequestOptions()
+  const response = await fetch(`${API_BASE}/api/session/inboxes/${inboxId}/qrcode`, options)
   const result = await response.json()
   if (!response.ok) throw new Error(result.error || 'Failed to get QR code')
   return result.data
@@ -198,7 +219,8 @@ export async function getInboxStatus(inboxId: string): Promise<{
   status: 'connected' | 'connecting' | 'disconnected' | 'not_configured'
   details?: Record<string, unknown>
 }> {
-  const response = await fetch(`${API_BASE}/api/session/inboxes/${inboxId}/status`, getRequestOptions())
+  const options = await getRequestOptions()
+  const response = await fetch(`${API_BASE}/api/session/inboxes/${inboxId}/status`, options)
   const result = await response.json()
   if (!response.ok) throw new Error(result.error || 'Failed to get inbox status')
   return result.data

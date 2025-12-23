@@ -12,6 +12,7 @@ const { logger } = require('../utils/logger');
 const UserService = require('../services/UserService');
 const UserSessionService = require('../services/UserSessionService');
 const { skipCsrf } = require('../middleware/csrf');
+const { regenerateSession } = require('../utils/sessionHelper');
 
 /**
  * POST /api/auth/user-login
@@ -61,11 +62,42 @@ router.post('/user-login', skipCsrf, async (req, res) => {
     
     const { user } = authResult;
     
-    // Create session
-    const session = await UserSessionService.createSession({
+    // Create token-based session (for API calls with Bearer token)
+    const tokenSession = await UserSessionService.createSession({
       userId: user.id,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent')
+    });
+    
+    // CRITICAL FIX: Also configure HTTP session for routes using requireAuth/requireUser
+    // This ensures routes like /api/session/inboxes work correctly
+    // Get user's WUZAPI token from their primary inbox if available
+    let userWuzapiToken = tokenSession.sessionToken; // Default to session token
+    try {
+      const primaryInbox = await UserService.getPrimaryInbox(user.id);
+      // Check both snake_case (from DB) and camelCase (if transformed)
+      const inboxToken = primaryInbox?.wuzapi_token || primaryInbox?.wuzapiToken;
+      if (inboxToken) {
+        userWuzapiToken = inboxToken;
+        logger.debug('Using WUZAPI token from primary inbox', { 
+          userId: user.id,
+          inboxId: primaryInbox.id
+        });
+      }
+    } catch (inboxError) {
+      logger.debug('Could not get primary inbox for WUZAPI token', { 
+        userId: user.id, 
+        error: inboxError.message 
+      });
+    }
+    
+    await regenerateSession(req, {
+      userId: user.id,
+      role: 'user',
+      userToken: userWuzapiToken,
+      userName: user.name || user.email,
+      userEmail: user.email,
+      tenantId: user.tenantId
     });
     
     // Update last login
@@ -84,8 +116,8 @@ router.post('/user-login', skipCsrf, async (req, res) => {
     res.json({
       success: true,
       data: {
-        token: session.sessionToken,
-        expiresAt: session.expiresAt,
+        token: tokenSession.sessionToken,
+        expiresAt: tokenSession.expiresAt,
         user: {
           id: user.id,
           email: user.email,

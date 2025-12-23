@@ -4,6 +4,8 @@
  * Handles bot testing functionality for users.
  * Allows testing bot webhooks with simulated conversations.
  * 
+ * UPDATED: Now uses inboxContextMiddleware to get wuzapiToken from the active inbox
+ * 
  * Requirements: 1.1, 1.2, 1.3, 1.5, 2.1, 2.2, 3.1, 6.4
  */
 
@@ -13,11 +15,69 @@ const { logger } = require('../utils/logger');
 const TestConversationService = require('../services/TestConversationService');
 const BotService = require('../services/BotService');
 const QuotaService = require('../services/QuotaService');
-const verifyUserToken = require('../middleware/verifyUserToken');
+const { validateSupabaseToken } = require('../middleware/supabaseAuth');
+const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
 const { resolveUserId } = require('../middleware/quotaEnforcement');
 
 // Webhook timeout in milliseconds
 const WEBHOOK_TIMEOUT = 30000;
+
+/**
+ * Middleware para verificar token do usuário usando InboxContext
+ */
+const verifyUserTokenWithInbox = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      await new Promise((resolve, reject) => {
+        validateSupabaseToken(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      await new Promise((resolve, reject) => {
+        inboxContextMiddleware({ required: false, useCache: true })(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      if (req.context?.wuzapiToken) {
+        req.userToken = req.context.wuzapiToken;
+        req.userId = req.user?.id;
+        req.inboxId = req.context.inboxId;
+        return next();
+      }
+      
+      if (req.user?.id) {
+        req.userId = req.user.id;
+        return next();
+      }
+    } catch (error) {
+      logger.debug('JWT/InboxContext validation failed for bot test', { error: error.message });
+    }
+  }
+  
+  const tokenHeader = req.headers.token;
+  if (tokenHeader) {
+    req.userToken = tokenHeader;
+    return next();
+  }
+  
+  if (req.session?.userToken) {
+    req.userToken = req.session.userToken;
+    return next();
+  }
+  
+  return res.status(401).json({
+    success: false,
+    error: { code: 'NO_TOKEN', message: 'Token não fornecido.' }
+  });
+};
+
+const verifyUserToken = verifyUserTokenWithInbox;
 
 /**
  * Helper to get consistent userId for bot operations

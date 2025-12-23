@@ -32,6 +32,7 @@ class ContactsService {
         tagIds = [],
         groupId = null,
         hasName = null,
+        sourceInboxId = null,
         sortBy = 'created_at',
         sortOrder = 'desc'
       } = options;
@@ -42,7 +43,11 @@ class ContactsService {
       // Build query
       const queryFn = (query) => {
         let q = query
-          .select('*, contact_tag_members(tag_id)', { count: 'exact' })
+          .select(`
+            *, 
+            contact_tag_members(tag_id),
+            source_inbox:inboxes(id, name, phone_number)
+          `, { count: 'exact' })
           .eq('account_id', accountId);
 
         // Search filter
@@ -55,6 +60,17 @@ class ContactsService {
           q = q.not('name', 'is', null);
         } else if (hasName === false) {
           q = q.is('name', null);
+        }
+
+        // Source inbox filter
+        if (sourceInboxId !== null) {
+          if (sourceInboxId === 'null' || sourceInboxId === '') {
+            // Filter for manual contacts (no source inbox)
+            q = q.is('source_inbox_id', null);
+          } else {
+            // Filter for specific inbox
+            q = q.eq('source_inbox_id', sourceInboxId);
+          }
         }
 
         // Sort
@@ -332,7 +348,13 @@ class ContactsService {
           phone,
           name: contact.name || null,
           whatsappJid: contact.jid || null,
-          avatarUrl: contact.avatarUrl || null
+          avatarUrl: contact.avatarUrl || null,
+          importHash: this.generateImportHash({
+            phone,
+            name: contact.name || null,
+            whatsappJid: contact.jid || null,
+            avatarUrl: contact.avatarUrl || null
+          })
         });
       }
 
@@ -347,7 +369,7 @@ class ContactsService {
 
       // Step 2: Fetch all existing contacts for this account in one query
       const existingQueryFn = (query) => query
-        .select('id, phone, name, whatsapp_jid, avatar_url')
+        .select('id, phone, name, whatsapp_jid, avatar_url, import_hash')
         .eq('account_id', accountId);
 
       const { data: existingContacts, error: fetchError } = await supabaseService.queryAsAdmin('contacts', existingQueryFn);
@@ -363,28 +385,31 @@ class ContactsService {
         existingCount: existingByPhone.size 
       });
 
-      // Step 3: Separate contacts into new and updates
+      // Step 3: Separate contacts into new, updated, and unchanged
       const toInsert = [];
       const toUpdate = [];
+      let unchanged = 0;
       const now = new Date().toISOString();
 
       for (const contact of normalizedContacts) {
         const existing = existingByPhone.get(contact.phone);
 
         if (existing) {
-          // Only update if name is newer/better
-          if (contact.name && (!existing.name || contact.name !== existing.name)) {
+          // Check if data has changed using import hash
+          if (existing.import_hash !== contact.importHash) {
             toUpdate.push({
               id: existing.id,
               name: contact.name,
               whatsapp_jid: contact.whatsappJid || existing.whatsapp_jid,
               avatar_url: contact.avatarUrl || existing.avatar_url,
+              import_hash: contact.importHash,
+              last_import_at: now,
               updated_at: now,
               updated_by: createdBy.id,
               updated_by_type: createdBy.type
             });
           } else {
-            skipped++;
+            unchanged++;
           }
         } else {
           toInsert.push({
@@ -395,10 +420,11 @@ class ContactsService {
             whatsapp_jid: contact.whatsappJid,
             avatar_url: contact.avatarUrl,
             source: 'whatsapp',
+            import_hash: contact.importHash,
+            last_import_at: now,
             metadata: { importedAt: now },
             created_by: createdBy.id,
-            created_by_type: createdBy.type,
-            last_import_at: now
+            created_by_type: createdBy.type
           });
         }
       }
@@ -406,7 +432,7 @@ class ContactsService {
       logger.info('Contacts categorized', { 
         toInsert: toInsert.length, 
         toUpdate: toUpdate.length, 
-        skipped 
+        unchanged 
       });
 
       // Step 4: Batch insert new contacts
@@ -463,13 +489,13 @@ class ContactsService {
 
       logger.info('WhatsApp import completed', { 
         accountId, 
-        imported, 
+        added: imported, 
         updated, 
-        skipped,
+        unchanged,
         totalProcessed: normalizedContacts.length
       });
 
-      return { imported, updated, skipped };
+      return { added: imported, updated, unchanged: skipped };
     } catch (error) {
       logger.error('Failed to import from WhatsApp', { error: error.message, accountId });
       throw error;
@@ -1210,6 +1236,12 @@ class ContactsService {
       avatarUrl: row.avatar_url,
       whatsappJid: row.whatsapp_jid,
       source: row.source,
+      sourceInboxId: row.source_inbox_id,
+      sourceInbox: row.source_inbox ? {
+        id: row.source_inbox.id,
+        name: row.source_inbox.name,
+        phoneNumber: row.source_inbox.phone_number
+      } : null,
       linkedUserId: row.linked_user_id,
       metadata: row.metadata || {},
       lastImportAt: row.last_import_at,
@@ -1283,6 +1315,598 @@ class ContactsService {
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
+  }
+
+  /**
+   * Import contacts from a specific inbox
+   * @param {string} accountId - Account UUID
+   * @param {string} tenantId - Tenant UUID
+   * @param {string} inboxId - Inbox UUID to import from
+   * @param {Object} createdBy - Creator info { id, type: 'account'|'agent' }
+   * @returns {Promise<{added: number, updated: number, unchanged: number}>}
+   */
+  async importFromInbox(accountId, tenantId, inboxId, createdBy) {
+    try {
+      logger.info('Starting inbox import', { 
+        accountId, 
+        inboxId 
+      });
+
+      // Step 1: Validate inbox belongs to account and is connected
+      const { data: inbox, error: inboxError } = await supabaseService.getById('inboxes', inboxId);
+      
+      if (inboxError || !inbox) {
+        throw new Error('INBOX_NOT_FOUND');
+      }
+
+      if (inbox.account_id !== accountId) {
+        throw new Error('INBOX_ACCESS_DENIED');
+      }
+
+      if (!inbox.wuzapi_connected) {
+        throw new Error('INBOX_NOT_CONNECTED');
+      }
+
+      // Step 2: Fetch contacts from WUZAPI using inbox token
+      const wuzapiClient = require('../utils/wuzapiClient');
+      const wuzapiContacts = await wuzapiClient.getContacts(inbox.wuzapi_token);
+
+      logger.info('Contacts fetched from WUZAPI', { 
+        inboxId,
+        totalContacts: wuzapiContacts.length 
+      });
+
+      // Step 3: Normalize and validate contacts with import hash
+      const normalizedContacts = [];
+      let skipped = 0;
+
+      for (const contact of wuzapiContacts) {
+        const phone = this.normalizePhone(contact.phone || contact.jid);
+        
+        // Skip invalid phones
+        if (!phone || phone.length < 8 || phone.length > 15) {
+          skipped++;
+          continue;
+        }
+
+        const contactData = {
+          phone,
+          name: contact.name || null,
+          whatsappJid: contact.jid || null,
+          avatarUrl: contact.avatarUrl || null
+        };
+
+        // Generate import hash for change detection
+        const importHash = this.generateImportHash(contactData);
+
+        normalizedContacts.push({
+          ...contactData,
+          importHash
+        });
+      }
+
+      logger.info('Contacts normalized', { 
+        valid: normalizedContacts.length, 
+        skipped 
+      });
+
+      if (normalizedContacts.length === 0) {
+        return { added: 0, updated: 0, unchanged: 0 };
+      }
+
+      // Step 4: Fetch existing contacts for this account
+      const existingQueryFn = (query) => query
+        .select('id, phone, name, whatsapp_jid, avatar_url, import_hash, source_inbox_id')
+        .eq('account_id', accountId);
+
+      const { data: existingContacts, error: fetchError } = await supabaseService.queryAsAdmin('contacts', existingQueryFn);
+
+      if (fetchError) {
+        throw fetchError;
+      }
+
+      const existingByPhone = new Map((existingContacts || []).map(c => [c.phone, c]));
+
+      // Step 5: Categorize contacts (new, updated, unchanged)
+      const toInsert = [];
+      const toUpdate = [];
+      let unchanged = 0;
+      const now = new Date().toISOString();
+
+      for (const contact of normalizedContacts) {
+        const existing = existingByPhone.get(contact.phone);
+
+        if (existing) {
+          // Check if data has changed using import hash
+          if (existing.import_hash !== contact.importHash) {
+            toUpdate.push({
+              id: existing.id,
+              name: contact.name,
+              whatsapp_jid: contact.whatsappJid || existing.whatsapp_jid,
+              avatar_url: contact.avatarUrl || existing.avatar_url,
+              import_hash: contact.importHash,
+              source_inbox_id: inboxId,
+              last_import_at: now,
+              updated_at: now,
+              updated_by: createdBy.id,
+              updated_by_type: createdBy.type
+            });
+          } else {
+            unchanged++;
+          }
+        } else {
+          toInsert.push({
+            tenant_id: tenantId,
+            account_id: accountId,
+            phone: contact.phone,
+            name: contact.name,
+            whatsapp_jid: contact.whatsappJid,
+            avatar_url: contact.avatarUrl,
+            source: 'whatsapp',
+            source_inbox_id: inboxId,
+            import_hash: contact.importHash,
+            last_import_at: now,
+            metadata: { importedAt: now, inboxId },
+            created_by: createdBy.id,
+            created_by_type: createdBy.type
+          });
+        }
+      }
+
+      logger.info('Contacts categorized', { 
+        toInsert: toInsert.length, 
+        toUpdate: toUpdate.length, 
+        unchanged 
+      });
+
+      // Step 6: Batch insert new contacts
+      let added = 0;
+      if (toInsert.length > 0) {
+        const BATCH_SIZE = 100;
+        for (let i = 0; i < toInsert.length; i += BATCH_SIZE) {
+          const batch = toInsert.slice(i, i + BATCH_SIZE);
+          
+          const insertQueryFn = (query) => query
+            .insert(batch)
+            .select('id');
+
+          const { data: insertedData, error: insertError } = await supabaseService.queryAsAdmin('contacts', insertQueryFn);
+
+          if (insertError) {
+            logger.warn('Batch insert error', { 
+              error: insertError.message, 
+              batchIndex: i / BATCH_SIZE,
+              batchSize: batch.length
+            });
+          } else {
+            added += (insertedData || []).length;
+          }
+        }
+      }
+
+      // Step 7: Batch update existing contacts
+      let updated = 0;
+      if (toUpdate.length > 0) {
+        for (const updateData of toUpdate) {
+          const { id, ...updates } = updateData;
+          const { error: updateError } = await supabaseService.update('contacts', id, updates);
+          
+          if (!updateError) {
+            updated++;
+          } else {
+            logger.warn('Contact update error', { 
+              error: updateError.message, 
+              contactId: id 
+            });
+          }
+        }
+      }
+
+      logger.info('Inbox import completed', { 
+        accountId, 
+        inboxId,
+        added, 
+        updated, 
+        unchanged,
+        totalProcessed: normalizedContacts.length
+      });
+
+      return { added, updated, unchanged };
+    } catch (error) {
+      logger.error('Failed to import from inbox', { 
+        error: error.message, 
+        accountId, 
+        inboxId 
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Generate import hash for change detection
+   * @param {Object} contactData - Contact data
+   * @returns {string} - SHA-256 hash
+   */
+  generateImportHash(contactData) {
+    const crypto = require('crypto');
+    const hashData = {
+      phone: contactData.phone,
+      name: contactData.name || '',
+      whatsappJid: contactData.whatsappJid || '',
+      avatarUrl: contactData.avatarUrl || ''
+    };
+    
+    const hashString = JSON.stringify(hashData);
+    return crypto.createHash('sha256').update(hashString).digest('hex').substring(0, 64);
+  }
+
+  /**
+   * Merge duplicate contacts into a single contact
+   * @param {string} accountId - Account UUID
+   * @param {string[]} contactIds - Array of contact IDs to merge
+   * @param {Object} mergeData - Merge configuration
+   * @param {Object} mergedBy - User who performed the merge
+   * @returns {Promise<Object>} - Merged contact
+   */
+  async mergeContactsForDuplicates(accountId, contactIds, mergeData, mergedBy) {
+    try {
+      logger.info('Starting contact merge', { 
+        accountId, 
+        contactIds, 
+        mergedBy: mergedBy.id 
+      });
+
+      if (!contactIds || contactIds.length < 2) {
+        throw new Error('At least 2 contacts required for merge');
+      }
+
+      // Start transaction
+      const { data: contacts, error: fetchError } = await supabaseService.queryAsAdmin(
+        'contacts',
+        (query) => query
+          .select(`
+            *,
+            contact_tag_members(tag_id),
+            contact_group_members(group_id)
+          `)
+          .in('id', contactIds)
+          .eq('account_id', accountId)
+      );
+
+      if (fetchError) throw fetchError;
+
+      if (!contacts || contacts.length !== contactIds.length) {
+        throw new Error('One or more contacts not found or access denied');
+      }
+
+      // Determine primary contact (first in the list or specified)
+      const primaryContactId = mergeData.primaryContactId || contactIds[0];
+      const primaryContact = contacts.find(c => c.id === primaryContactId);
+      
+      if (!primaryContact) {
+        throw new Error('Primary contact not found');
+      }
+
+      // Collect all tags and groups from all contacts
+      const allTagIds = new Set();
+      const allGroupIds = new Set();
+
+      contacts.forEach(contact => {
+        (contact.contact_tag_members || []).forEach(tm => allTagIds.add(tm.tag_id));
+        (contact.contact_group_members || []).forEach(gm => allGroupIds.add(gm.group_id));
+      });
+
+      // Prepare merged contact data
+      const mergedContactData = {
+        name: mergeData.name || primaryContact.name,
+        phone: mergeData.phone || primaryContact.phone,
+        avatar_url: mergeData.avatarUrl || primaryContact.avatar_url,
+        whatsapp_jid: mergeData.whatsappJid || primaryContact.whatsapp_jid,
+        metadata: {
+          ...primaryContact.metadata,
+          ...mergeData.metadata,
+          mergedAt: new Date().toISOString(),
+          mergedFrom: contactIds.filter(id => id !== primaryContactId)
+        },
+        updated_at: new Date().toISOString(),
+        updated_by: mergedBy.id,
+        updated_by_type: mergedBy.type
+      };
+
+      // Update primary contact with merged data
+      const { data: updatedContact, error: updateError } = await supabaseService.update(
+        'contacts', 
+        primaryContactId, 
+        mergedContactData
+      );
+
+      if (updateError) throw updateError;
+
+      // Add all tags to primary contact (if preserveTags is true)
+      if (mergeData.preserveTags !== false && allTagIds.size > 0) {
+        // Remove existing tag memberships for primary contact
+        await supabaseService.queryAsAdmin(
+          'contact_tag_members',
+          (query) => query.delete().eq('contact_id', primaryContactId)
+        );
+
+        // Add all collected tags
+        const tagMemberships = Array.from(allTagIds).map(tagId => ({
+          contact_id: primaryContactId,
+          tag_id: tagId
+        }));
+
+        if (tagMemberships.length > 0) {
+          await supabaseService.queryAsAdmin(
+            'contact_tag_members',
+            (query) => query.insert(tagMemberships)
+          );
+        }
+      }
+
+      // Add all groups to primary contact (if preserveGroups is true)
+      if (mergeData.preserveGroups !== false && allGroupIds.size > 0) {
+        // Remove existing group memberships for primary contact
+        await supabaseService.queryAsAdmin(
+          'contact_group_members',
+          (query) => query.delete().eq('contact_id', primaryContactId)
+        );
+
+        // Add all collected groups
+        const groupMemberships = Array.from(allGroupIds).map(groupId => ({
+          contact_id: primaryContactId,
+          group_id: groupId
+        }));
+
+        if (groupMemberships.length > 0) {
+          await supabaseService.queryAsAdmin(
+            'contact_group_members',
+            (query) => query.insert(groupMemberships)
+          );
+        }
+      }
+
+      // Create audit log entry
+      const auditData = {
+        account_id: accountId,
+        merged_contact_id: primaryContactId,
+        source_contact_ids: contactIds,
+        merge_data: {
+          mergeConfiguration: mergeData,
+          originalContacts: contacts.map(c => ({
+            id: c.id,
+            name: c.name,
+            phone: c.phone,
+            avatar_url: c.avatar_url,
+            tags: (c.contact_tag_members || []).map(tm => tm.tag_id),
+            groups: (c.contact_group_members || []).map(gm => gm.group_id)
+          }))
+        },
+        merged_by: mergedBy.id
+      };
+
+      const { error: auditError } = await supabaseService.insert('contact_merge_audit', auditData);
+      if (auditError) {
+        logger.warn('Failed to create audit log', { error: auditError.message });
+      }
+
+      // Delete source contacts (except primary)
+      const contactsToDelete = contactIds.filter(id => id !== primaryContactId);
+      if (contactsToDelete.length > 0) {
+        const { error: deleteError } = await supabaseService.queryAsAdmin(
+          'contacts',
+          (query) => query.delete().in('id', contactsToDelete)
+        );
+
+        if (deleteError) throw deleteError;
+      }
+
+      logger.info('Contact merge completed', { 
+        accountId, 
+        mergedContactId: primaryContactId,
+        deletedContacts: contactsToDelete.length,
+        preservedTags: allTagIds.size,
+        preservedGroups: allGroupIds.size
+      });
+
+      // Return the merged contact with relations
+      return this.getContactById(accountId, primaryContactId);
+    } catch (error) {
+      logger.error('Failed to merge contacts', { 
+        error: error.message, 
+        accountId, 
+        contactIds 
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Dismiss a duplicate pair (mark as false positive)
+   * @param {string} accountId - Account UUID
+   * @param {string} contactId1 - First contact ID
+   * @param {string} contactId2 - Second contact ID
+   * @param {Object} dismissedBy - User who dismissed the duplicate
+   * @returns {Promise<void>}
+   */
+  async dismissDuplicate(accountId, contactId1, contactId2, dismissedBy) {
+    try {
+      logger.info('Dismissing duplicate pair', { 
+        accountId, 
+        contactId1, 
+        contactId2,
+        dismissedBy: dismissedBy.id 
+      });
+
+      // Ensure consistent ordering (smaller UUID first)
+      const orderedIds = [contactId1, contactId2].sort();
+      
+      // Verify both contacts belong to the account
+      const { data: contacts, error: fetchError } = await supabaseService.queryAsAdmin(
+        'contacts',
+        (query) => query
+          .select('id, account_id')
+          .in('id', orderedIds)
+          .eq('account_id', accountId)
+      );
+
+      if (fetchError) throw fetchError;
+
+      if (!contacts || contacts.length !== 2) {
+        throw new Error('One or more contacts not found or access denied');
+      }
+
+      // Insert dismissal record
+      const dismissalData = {
+        account_id: accountId,
+        contact_id_1: orderedIds[0],
+        contact_id_2: orderedIds[1],
+        dismissed_by: dismissedBy.id
+      };
+
+      const { error: insertError } = await supabaseService.insert(
+        'contact_duplicate_dismissals', 
+        dismissalData
+      );
+
+      // Handle unique constraint violation (already dismissed)
+      if (insertError && insertError.code === '23505') {
+        logger.info('Duplicate pair already dismissed', { 
+          accountId, 
+          contactId1: orderedIds[0], 
+          contactId2: orderedIds[1] 
+        });
+        return; // Not an error, just already dismissed
+      }
+
+      if (insertError) throw insertError;
+
+      logger.info('Duplicate pair dismissed', { 
+        accountId, 
+        contactId1: orderedIds[0], 
+        contactId2: orderedIds[1] 
+      });
+    } catch (error) {
+      logger.error('Failed to dismiss duplicate', { 
+        error: error.message, 
+        accountId, 
+        contactId1, 
+        contactId2 
+      });
+      throw error;
+    }
+  }
+
+  // ==================== DUPLICATES & MERGE ====================
+
+  /**
+   * Get duplicate contact sets for an account
+   * @param {string} accountId - Account UUID
+   * @returns {Promise<Array>} - Array of duplicate sets
+   */
+  async getDuplicates(accountId) {
+    try {
+      logger.info('Getting duplicates', { accountId });
+
+      const DuplicateDetector = require('./DuplicateDetector');
+      
+      // Get all duplicate sets
+      const allDuplicates = await DuplicateDetector.detectAll(accountId);
+
+      // Filter out dismissed pairs
+      const { data: dismissals, error: dismissalError } = await supabaseService.queryAsAdmin(
+        'contact_duplicate_dismissals',
+        (query) => query.select('contact_id_1, contact_id_2').eq('account_id', accountId)
+      );
+
+      if (dismissalError) {
+        logger.warn('Failed to fetch dismissals', { error: dismissalError.message, accountId });
+      }
+
+      const dismissedPairs = new Set();
+      (dismissals || []).forEach(d => {
+        const key = `${d.contact_id_1}_${d.contact_id_2}`;
+        dismissedPairs.add(key);
+      });
+
+      // Filter out dismissed duplicates
+      const filteredDuplicates = allDuplicates.filter(duplicateSet => {
+        // Check if any pair in this set has been dismissed
+        for (let i = 0; i < duplicateSet.contacts.length; i++) {
+          for (let j = i + 1; j < duplicateSet.contacts.length; j++) {
+            const id1 = duplicateSet.contacts[i].id;
+            const id2 = duplicateSet.contacts[j].id;
+            const key1 = `${id1}_${id2}`;
+            const key2 = `${id2}_${id1}`;
+            
+            if (dismissedPairs.has(key1) || dismissedPairs.has(key2)) {
+              return false; // This set has been dismissed
+            }
+          }
+        }
+        return true;
+      });
+
+      logger.info('Duplicates retrieved', { 
+        accountId, 
+        totalSets: allDuplicates.length,
+        filteredSets: filteredDuplicates.length,
+        dismissedCount: allDuplicates.length - filteredDuplicates.length
+      });
+
+      return filteredDuplicates;
+    } catch (error) {
+      logger.error('Failed to get duplicates', { 
+        error: error.message, 
+        accountId 
+      });
+      throw error;
+    }
+  }
+
+  // ==================== INBOX SELECTION ====================
+
+  /**
+   * Get available inboxes for an account
+   * @param {string} accountId - Account UUID
+   * @returns {Promise<Array>} - Array of inbox options
+   */
+  async getAccountInboxes(accountId) {
+    try {
+      const queryFn = (query) => query
+        .select('id, name, phone_number, wuzapi_connected, created_at')
+        .eq('account_id', accountId)
+        .order('created_at', { ascending: true });
+
+      const { data: inboxes, error } = await supabaseService.queryAsAdmin('inboxes', queryFn);
+
+      if (error) {
+        throw error;
+      }
+
+      // Format inboxes for selection
+      const formattedInboxes = (inboxes || []).map(inbox => ({
+        id: inbox.id,
+        name: inbox.name || `Inbox ${inbox.phone_number}`,
+        phoneNumber: inbox.phone_number,
+        isConnected: inbox.wuzapi_connected || false,
+        lastImportAt: null // Will be populated from contact metadata if needed
+      }));
+
+      logger.info('Retrieved account inboxes', { 
+        accountId, 
+        inboxCount: formattedInboxes.length,
+        connectedCount: formattedInboxes.filter(i => i.isConnected).length
+      });
+
+      return formattedInboxes;
+    } catch (error) {
+      logger.error('Failed to get account inboxes', { 
+        error: error.message, 
+        accountId 
+      });
+      throw error;
+    }
   }
 }
 

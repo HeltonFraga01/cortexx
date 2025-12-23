@@ -3,7 +3,11 @@
  * 
  * Handles outgoing webhook configuration for users
  * 
- * Requirements: 16.1-16.6
+ * UPDATED: Now uses inboxContextMiddleware to get wuzapiToken from the active inbox
+ * instead of the accounts table. This ensures the correct token is used when
+ * users have multiple inboxes.
+ * 
+ * Requirements: 16.1-16.6, 8.x (InboxContext integration)
  */
 
 const express = require('express')
@@ -14,9 +18,83 @@ const SupabaseService = require('../services/SupabaseService')
 const { toBoolean } = require('../utils/responseTransformer')
 const { quotaMiddleware } = require('../middleware/quotaEnforcement')
 const { featureMiddleware } = require('../middleware/featureEnforcement')
+const { validateSupabaseToken } = require('../middleware/supabaseAuth')
+const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware')
 
-// Use global verifyUserToken middleware for consistent user identification
-const verifyUserToken = require('../middleware/verifyUserToken')
+/**
+ * Middleware para verificar token do usuário usando InboxContext
+ * Usa o token da inbox ativa em vez do token da account
+ */
+const verifyUserTokenWithInbox = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      await new Promise((resolve, reject) => {
+        validateSupabaseToken(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      await new Promise((resolve, reject) => {
+        inboxContextMiddleware({ required: false, useCache: true })(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      if (req.context?.wuzapiToken) {
+        req.userToken = req.context.wuzapiToken;
+        req.userId = req.user?.id;
+        req.inboxId = req.context.inboxId;
+        
+        logger.debug('WUZAPI token obtained from inbox context for user webhook', {
+          userId: req.userId?.substring(0, 8) + '...',
+          inboxId: req.inboxId?.substring(0, 8) + '...',
+          hasToken: true
+        });
+        
+        return next();
+      }
+      
+      if (req.user?.id) {
+        req.userId = req.user.id;
+        logger.warn('No inbox context available for user webhook', {
+          userId: req.user.id.substring(0, 8) + '...',
+          path: req.path
+        });
+        return next();
+      }
+    } catch (error) {
+      logger.debug('JWT/InboxContext validation failed for user webhook, trying other methods', { 
+        error: error.message,
+        path: req.path
+      });
+    }
+  }
+  
+  const tokenHeader = req.headers.token;
+  if (tokenHeader) {
+    req.userToken = tokenHeader;
+    return next();
+  }
+  
+  if (req.session?.userToken) {
+    req.userToken = req.session.userToken;
+    return next();
+  }
+  
+  return res.status(401).json({
+    success: false,
+    error: {
+      code: 'NO_TOKEN',
+      message: 'Token não fornecido. Use Authorization Bearer, header token ou sessão ativa.'
+    }
+  });
+};
+
+const verifyUserToken = verifyUserTokenWithInbox;
 
 /**
  * GET /api/user/outgoing-webhooks

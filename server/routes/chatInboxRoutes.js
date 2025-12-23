@@ -3,6 +3,11 @@
  * 
  * Handles conversation management, message retrieval, labels, and canned responses
  * for the chat interface.
+ * 
+ * UPDATED: Now uses inboxContextMiddleware to get wuzapiToken from the active inbox
+ * instead of using a simple token from headers/session.
+ * 
+ * Requirements: 3.1, 3.2, 3.3 (Use wuzapiToken from Session_Context for chat operations)
  */
 
 const express = require('express')
@@ -13,32 +18,91 @@ const ChatService = require('../services/ChatService')
 const QuotaService = require('../services/QuotaService')
 const { validatePhoneWithAPI } = require('../services/PhoneValidationService')
 const supabaseService = require('../services/SupabaseService')
+const { validateSupabaseToken } = require('../middleware/supabaseAuth')
+const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware')
 
-// Middleware to verify user token
+/**
+ * Middleware to verify user token using InboxContext
+ * Uses the token from the active inbox instead of account
+ * 
+ * Flow:
+ * 1. Validates Supabase JWT
+ * 2. Loads inbox context (via inboxContextMiddleware)
+ * 3. Uses wuzapiToken from active inbox
+ * 4. Fallback to header 'token' (legacy) or session
+ */
 const verifyUserToken = async (req, res, next) => {
-  let userToken = null
-  
   const authHeader = req.headers.authorization
-  const tokenHeader = req.headers.token
   
+  // If JWT present, use inboxContextMiddleware to get token from correct inbox
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    userToken = authHeader.substring(7)
-  } else if (tokenHeader) {
-    userToken = tokenHeader
-  } else if (req.session?.userToken) {
-    userToken = req.session.userToken
+    try {
+      // Validate Supabase JWT
+      await new Promise((resolve, reject) => {
+        validateSupabaseToken(req, res, (err) => {
+          if (err) reject(err)
+          else resolve()
+        })
+      })
+      
+      // Load inbox context
+      await new Promise((resolve, reject) => {
+        inboxContextMiddleware({ required: false, useCache: true })(req, res, (err) => {
+          if (err) reject(err)
+          else resolve()
+        })
+      })
+      
+      // If we have context, use the token from active inbox
+      if (req.context?.wuzapiToken) {
+        req.userToken = req.context.wuzapiToken
+        req.userId = req.user?.id
+        req.inboxId = req.context.inboxId
+        req.accountId = req.context.accountId
+        
+        logger.debug('WUZAPI token obtained from inbox context (chatInbox)', {
+          userId: req.userId?.substring(0, 8) + '...',
+          inboxId: req.inboxId?.substring(0, 8) + '...',
+          hasToken: true
+        })
+        
+        return next()
+      }
+      
+      // If no context but has user, log warning
+      if (req.user?.id) {
+        logger.warn('No inbox context available for user (chatInbox)', {
+          userId: req.user.id.substring(0, 8) + '...',
+          path: req.path
+        })
+      }
+    } catch (error) {
+      logger.debug('JWT/InboxContext validation failed, trying other methods (chatInbox)', { 
+        error: error.message,
+        path: req.path
+      })
+    }
   }
   
-  if (!userToken) {
-    return res.status(401).json({
-      success: false,
-      error: 'Token não fornecido',
-      message: 'Header Authorization com Bearer token, header token ou sessão ativa é obrigatório'
-    })
+  // Fallback: Try to get token from header 'token' (legacy)
+  const tokenHeader = req.headers.token
+  if (tokenHeader) {
+    req.userToken = tokenHeader
+    return next()
   }
   
-  req.userToken = userToken
-  next()
+  // Fallback: Token from session
+  if (req.session?.userToken) {
+    req.userToken = req.session.userToken
+    return next()
+  }
+  
+  // No token found
+  return res.status(401).json({
+    success: false,
+    error: 'Token não fornecido',
+    message: 'Header Authorization com Bearer token, header token ou sessão ativa é obrigatório'
+  })
 }
 
 // ==================== Conversation Routes ====================
@@ -46,11 +110,12 @@ const verifyUserToken = async (req, res, next) => {
 /**
  * GET /api/chat/inbox/conversations
  * List conversations with filtering and pagination
- * Requirements: 10.1, 10.2
+ * Supports both single inboxId and array of inboxIds for multi-select
+ * Requirements: 10.1, 10.2, unified-inbox-selector
  */
 router.get('/conversations', verifyUserToken, async (req, res) => {
   try {
-    const { status, hasUnread, assignedBotId, labelId, search, inboxId, limit = 50, offset = 0 } = req.query
+    const { status, hasUnread, assignedBotId, labelId, search, inboxId, inboxIds, limit = 50, offset = 0 } = req.query
     
     // Using SupabaseService directly
     if (!supabaseService) {
@@ -65,7 +130,23 @@ router.get('/conversations', verifyUserToken, async (req, res) => {
     if (assignedBotId) filters.assignedBotId = assignedBotId
     if (labelId) filters.labelId = labelId
     if (search) filters.search = search
-    if (inboxId) filters.inboxId = parseInt(inboxId, 10)
+    
+    // Support both single inboxId and array of inboxIds
+    if (inboxIds) {
+      // Parse inboxIds - can be comma-separated string or JSON array
+      let parsedInboxIds
+      try {
+        parsedInboxIds = typeof inboxIds === 'string' 
+          ? (inboxIds.startsWith('[') ? JSON.parse(inboxIds) : inboxIds.split(','))
+          : inboxIds
+        filters.inboxIds = parsedInboxIds.map(id => typeof id === 'string' ? id : String(id))
+      } catch {
+        // If parsing fails, treat as single value
+        filters.inboxIds = [inboxIds]
+      }
+    } else if (inboxId) {
+      filters.inboxId = parseInt(inboxId, 10)
+    }
 
     const result = await chatService.getConversations(req.userToken, filters, {
       limit: parseInt(limit, 10),
@@ -144,8 +225,15 @@ router.get('/conversations/:id', verifyUserToken, async (req, res) => {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
+    // Use accountId from middleware context (already resolved) instead of token lookup
+    const accountId = req.accountId || req.context?.accountId
+    
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
+    }
+
     const chatService = new ChatService()
-    const conversation = await chatService.getConversation(req.userToken, id, req.userToken)
+    const conversation = await chatService.getConversationById(id, accountId)
 
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversation not found' })
@@ -405,11 +493,35 @@ router.post('/conversations/:id/fetch-avatar', verifyUserToken, async (req, res)
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
+    // Use accountId from middleware context (already resolved) instead of token lookup
+    // This avoids the "Record not found" error when getAccountIdFromToken fails
+    const accountId = req.accountId || req.context?.accountId
+    
+    if (!accountId) {
+      logger.warn('No accountId available for fetch-avatar', {
+        conversationId: id,
+        hasContext: !!req.context,
+        hasUserToken: !!req.userToken
+      })
+      // Return gracefully - avatar fetch is optional
+      return res.json({
+        success: true,
+        data: null,
+        message: 'Account context not available'
+      })
+    }
+
     const chatService = new ChatService()
-    const conversation = await chatService.getConversation(req.userToken, id, req.userToken)
+    // Pass accountId directly instead of userToken to avoid token lookup
+    const conversation = await chatService.getConversationById(id, accountId)
     
     if (!conversation) {
-      return res.status(404).json({ success: false, error: 'Conversation not found' })
+      // Return gracefully instead of 404 - avatar fetch is optional
+      return res.json({
+        success: true,
+        data: null,
+        message: 'Conversation not found'
+      })
     }
 
     // Extract phone from JID (use camelCase since transformConversation returns camelCase)
@@ -520,11 +632,26 @@ router.post('/conversations/:id/refresh-group-name', verifyUserToken, async (req
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
+    // Use accountId from middleware context (already resolved) instead of token lookup
+    const accountId = req.accountId || req.context?.accountId
+    
+    if (!accountId) {
+      return res.json({
+        success: true,
+        data: null,
+        message: 'Account context not available'
+      })
+    }
+
     const chatService = new ChatService()
-    const conversation = await chatService.getConversation(req.userToken, id, req.userToken)
+    const conversation = await chatService.getConversationById(id, accountId)
     
     if (!conversation) {
-      return res.status(404).json({ success: false, error: 'Conversation not found' })
+      return res.json({
+        success: true,
+        data: null,
+        message: 'Conversation not found'
+      })
     }
 
     const contactJid = conversation.contactJid || conversation.contact_jid
@@ -666,24 +793,71 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
+    // Use accountId from middleware context (already resolved) instead of token lookup
+    const accountId = req.accountId || req.context?.accountId
+    
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
+    }
+
     const chatService = new ChatService()
     
-    // Get conversation to get the contact JID
-    const conversation = await chatService.getConversation(req.userToken, id, req.userToken)
+    // Get conversation to get the contact JID - use accountId directly
+    const conversation = await chatService.getConversationById(id, accountId)
     if (!conversation) {
       return res.status(404).json({ success: false, error: 'Conversation not found' })
     }
+
+    // =================================================================================
+    // CRITICAL FIX: Use WUZAPI token from conversation's inbox, NOT from active inbox
+    // When user has "Todas as Caixas" selected, req.userToken may be from a different inbox
+    // than the one the conversation belongs to. We must use the conversation's inbox token.
+    // =================================================================================
+    let wuzapiTokenToUse = req.userToken // Default to active inbox token
+    const conversationInboxId = conversation.inboxId || conversation.inbox_id
+    
+    if (conversationInboxId) {
+      // Get the WUZAPI token from the conversation's inbox
+      const { data: conversationInbox, error: inboxError } = await supabaseService.queryAsAdmin('inboxes', (query) =>
+        query.select('wuzapi_token, name').eq('id', conversationInboxId).single()
+      )
+      
+      if (!inboxError && conversationInbox?.wuzapi_token) {
+        wuzapiTokenToUse = conversationInbox.wuzapi_token
+        
+        // Log if we're using a different token than the active inbox
+        if (wuzapiTokenToUse !== req.userToken) {
+          logger.info('Using conversation inbox token instead of active inbox token', {
+            conversationId: id,
+            conversationInboxId,
+            conversationInboxName: conversationInbox.name,
+            activeInboxId: req.inboxId,
+            tokenPrefix: wuzapiTokenToUse?.substring(0, 15) + '...'
+          })
+        }
+      } else {
+        logger.warn('Could not get WUZAPI token from conversation inbox, using active inbox token', {
+          conversationId: id,
+          conversationInboxId,
+          error: inboxError?.message
+        })
+      }
+    } else {
+      logger.warn('Conversation has no inbox_id, using active inbox token', {
+        conversationId: id,
+        activeInboxId: req.inboxId
+      })
+    }
+    // =================================================================================
 
     // =================================================================================
     // CRITICAL: Quota Enforcement Check
     // Before sending, verify if the account owner has sufficient quota
     // =================================================================================
     try {
-      // 1. Get Account ID from Token
-      const accountId = await chatService.getAccountIdFromToken(req.userToken)
-      
+      // Use accountId from context instead of looking it up again
       if (accountId) {
-        // 2. Get Account Owner
+        // Get Account Owner
         // We need the owner_user_id because quotas are assigned to the owner (subscription holder)
         const { data: account, error: accountError } = await supabaseService.queryAsAdmin('accounts', (query) => 
           query.select('owner_user_id').eq('id', accountId).single()
@@ -802,7 +976,8 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
       })
     } else {
       // Validate phone number using WUZAPI API (same as working chatRoutes.js)
-      const phoneValidation = await validatePhoneWithAPI(phone, req.userToken)
+      // Use the conversation's inbox token for validation
+      const phoneValidation = await validatePhoneWithAPI(phone, wuzapiTokenToUse)
       
       if (!phoneValidation.isValid) {
         logger.warn('Invalid phone number for chat message', {
@@ -838,6 +1013,18 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
     let wuzapiResponse
     let wuzapiSuccess = false
     
+    // Log token being used for WUZAPI call
+    logger.info('Preparing WUZAPI message send', {
+      conversationId: id,
+      phone: validatedPhone,
+      messageType,
+      tokenPrefix: wuzapiTokenToUse?.substring(0, 15) + '...',
+      conversationInboxId,
+      activeInboxId: req.inboxId,
+      accountId: req.accountId,
+      wuzapiBaseUrl
+    })
+    
     try {
       if (messageType === 'text') {
         const payload = {
@@ -854,13 +1041,22 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
           }
         }
         
+        logger.debug('Sending text message to WUZAPI', { payload, url: `${wuzapiBaseUrl}/chat/send/text` })
+        
         wuzapiResponse = await axios.post(`${wuzapiBaseUrl}/chat/send/text`, payload, {
           headers: {
-            'token': req.userToken,
+            'token': wuzapiTokenToUse,
             'Content-Type': 'application/json'
           },
           timeout: 15000
         })
+        
+        logger.info('WUZAPI response received', { 
+          status: wuzapiResponse.status, 
+          data: wuzapiResponse.data,
+          conversationId: id
+        })
+        
         wuzapiSuccess = true
       } else if (messageType === 'image' && mediaUrl) {
         wuzapiResponse = await axios.post(`${wuzapiBaseUrl}/chat/send/image`, {
@@ -869,7 +1065,7 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
           Caption: content || ''
         }, {
           headers: {
-            'token': req.userToken,
+            'token': wuzapiTokenToUse,
             'Content-Type': 'application/json'
           },
           timeout: 30000
@@ -882,7 +1078,7 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
           FileName: req.body.mediaFilename || 'document'
         }, {
           headers: {
-            'token': req.userToken,
+            'token': wuzapiTokenToUse,
             'Content-Type': 'application/json'
           },
           timeout: 30000
@@ -916,7 +1112,7 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
           Audio: audioData
         }, {
           headers: {
-            'token': req.userToken,
+            'token': wuzapiTokenToUse,
             'Content-Type': 'application/json'
           },
           timeout: 30000
@@ -929,7 +1125,7 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
           Caption: content || ''
         }, {
           headers: {
-            'token': req.userToken,
+            'token': wuzapiTokenToUse,
             'Content-Type': 'application/json'
           },
           timeout: 30000
@@ -944,7 +1140,7 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
           Name: locationData.name || ''
         }, {
           headers: {
-            'token': req.userToken,
+            'token': wuzapiTokenToUse,
             'Content-Type': 'application/json'
           },
           timeout: 15000
@@ -957,7 +1153,7 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
           Name: req.body.contactName || 'Contact'
         }, {
           headers: {
-            'token': req.userToken,
+            'token': wuzapiTokenToUse,
             'Content-Type': 'application/json'
           },
           timeout: 15000
@@ -993,15 +1189,14 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
       logger.info('Message sent via WUZAPI', { 
         conversationId: id, 
         messageId: wuzapiResponse?.data?.Id,
-        phone: validatedPhone 
+        phone: validatedPhone,
+        tokenPrefix: wuzapiTokenToUse?.substring(0, 15) + '...'
       })
 
       // Track message quota usage for multi-tenant architecture
       // Requirements: 12.4 - Increment account's message quota on send
       try {
-        const chatService = new ChatService()
-        const accountId = await chatService.getAccountIdFromToken(req.userToken)
-        
+        // Use accountId from context (already resolved above)
         if (accountId) {
           // Get account owner user ID for quota tracking
           const { data: account, error: accountError } = await supabaseService.getById('accounts', accountId)
@@ -1795,23 +1990,44 @@ router.get('/messages/:messageId/media', verifyUserToken, async (req, res) => {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    // Get message with media metadata
-    // Use req.app.locals.db
-    if (!req.app?.locals?.db) {
-       return res.status(500).json({ success: false, error: 'Database connection not available' })
+    // Get accountId from middleware context
+    const accountId = req.accountId || req.context?.accountId
+    
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
     }
-    const { rows } = await req.app.locals.db.query(`
-      SELECT m.*, c.user_id, c.contact_jid
-      FROM chat_messages m
-      JOIN conversations c ON m.conversation_id = c.id
-      WHERE m.id = ? AND c.user_id = ?
-    `, [messageId, req.userToken])
 
-    if (rows.length === 0) {
+    // Get message with media metadata using Supabase
+    // First get the message
+    const { data: message, error: messageError } = await supabaseService.queryAsAdmin('chat_messages', (query) =>
+      query.select('*, conversations!inner(account_id, contact_jid, inbox_id)')
+        .eq('id', messageId)
+        .single()
+    )
+
+    if (messageError || !message) {
+      logger.debug('Message not found for media download', { messageId, error: messageError?.message })
       return res.status(404).json({ success: false, error: 'Message not found' })
     }
 
-    const message = rows[0]
+    // Verify the message belongs to the user's account
+    if (message.conversations?.account_id !== accountId) {
+      logger.warn('Unauthorized media access attempt', { messageId, accountId, messageAccountId: message.conversations?.account_id })
+      return res.status(404).json({ success: false, error: 'Message not found' })
+    }
+
+    // Get the WUZAPI token from the conversation's inbox for media download
+    let wuzapiTokenForMedia = req.userToken
+    const conversationInboxId = message.conversations?.inbox_id
+    
+    if (conversationInboxId) {
+      const { data: inbox } = await supabaseService.queryAsAdmin('inboxes', (query) =>
+        query.select('wuzapi_token').eq('id', conversationInboxId).single()
+      )
+      if (inbox?.wuzapi_token) {
+        wuzapiTokenForMedia = inbox.wuzapi_token
+      }
+    }
 
     // Check if it's a media message
     if (!['image', 'audio', 'video', 'document', 'sticker'].includes(message.message_type)) {
@@ -2021,7 +2237,7 @@ router.get('/messages/:messageId/media', verifyUserToken, async (req, res) => {
     try {
       const response = await axios.post(`${wuzapiBaseUrl}${endpoint}`, downloadPayload, {
         headers: {
-          'token': req.userToken,
+          'token': wuzapiTokenForMedia,
           'Content-Type': 'application/json'
         },
         timeout: 60000, // 60 seconds for media download
@@ -2564,43 +2780,50 @@ router.get('/contacts/:jid/conversations', verifyUserToken, async (req, res) => 
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
-    const chatService = new ChatService()
-    const userId = await chatService.getUserIdFromToken(req.userToken)
+    // Get accountId from middleware context
+    const accountId = req.accountId || req.context?.accountId
     
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Invalid user token' })
+    if (!accountId) {
+      return res.status(401).json({ success: false, error: 'Account context not available' })
     }
 
     const decodedJid = decodeURIComponent(jid)
     
-    let query = `
-      SELECT c.id, c.status, c.created_at, c.updated_at, c.last_message_preview,
-             (SELECT COUNT(*) FROM chat_messages WHERE conversation_id = c.id) as message_count
-      FROM conversations c
-      WHERE c.user_id = ? AND c.contact_jid = ?
-    `
-    const params = [userId, decodedJid]
+    // Build query using Supabase
+    let queryBuilder = supabaseService.adminClient
+      .from('conversations')
+      .select('id, status, created_at, updated_at, last_message_preview')
+      .eq('account_id', accountId)
+      .eq('contact_jid', decodedJid)
+      .order('created_at', { ascending: false })
+      .limit(20)
     
     if (excludeId) {
-      query += ' AND c.id != ?'
-      params.push(excludeId)
+      queryBuilder = queryBuilder.neq('id', excludeId)
     }
     
-    query += ' ORDER BY c.created_at DESC LIMIT 20'
-
-    if (!req.app?.locals?.db) {
-      return res.status(500).json({ success: false, error: 'Database connection not available' })
+    const { data: conversationsData, error } = await queryBuilder
+    
+    if (error) {
+      logger.error('Error fetching previous conversations', { error: error.message, jid: decodedJid })
+      return res.status(500).json({ success: false, error: error.message })
     }
 
-    const result = await req.app.locals.db.query(query, params)
-
-    const conversations = (result.rows || []).map(row => ({
-      id: row.id,
-      status: row.status,
-      message_count: row.message_count,
-      last_message_preview: row.last_message_preview,
-      created_at: row.created_at,
-      resolved_at: row.status === 'resolved' ? row.updated_at : null
+    // Get message counts for each conversation
+    const conversations = await Promise.all((conversationsData || []).map(async (conv) => {
+      const { count } = await supabaseService.adminClient
+        .from('chat_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('conversation_id', conv.id)
+      
+      return {
+        id: conv.id,
+        status: conv.status,
+        message_count: count || 0,
+        last_message_preview: conv.last_message_preview,
+        created_at: conv.created_at,
+        resolved_at: conv.status === 'resolved' ? conv.updated_at : null
+      }
     }))
 
     res.json({ success: true, data: conversations })

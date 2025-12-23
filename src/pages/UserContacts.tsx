@@ -10,14 +10,16 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, Download, FolderPlus, AlertTriangle, Database } from 'lucide-react';
+import { Users, Download, FolderPlus, AlertTriangle, Database, UserX } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CardHeaderWithIcon, EmptyState } from '@/components/ui-custom';
 import { PageHeader } from '@/components/ui/page-header';
 import { cn } from '@/lib/utils';
-import { useContacts, Contact, Tag, ContactGroup } from '@/hooks/useContacts';
+import { useContacts, Contact, Tag, ContactGroup, DuplicateSet, MergeResult } from '@/hooks/useContacts';
 import { useContactFilters } from '@/hooks/useContactFilters';
 import { useContactSelection } from '@/hooks/useContactSelection';
 import { useAuth } from '@/contexts/AuthContext';
@@ -31,6 +33,7 @@ import { ContactGroupsSidebar } from '@/components/contacts/ContactGroupsSidebar
 import { ContactGroupForm } from '@/components/contacts/ContactGroupForm';
 import { ContactImportButton } from '@/components/contacts/ContactImportButton';
 import { ContactUserCreationForm } from '@/components/contacts/ContactUserCreationForm';
+import { DuplicatesPanel } from '@/components/contacts/DuplicatesPanel';
 import { ContactsStatsSkeleton, ContactsTableSkeleton } from '@/components/contacts/ContactsSkeleton';
 import ErrorBoundary from '@/components/ErrorBoundary';
 
@@ -93,12 +96,14 @@ function UserContactsContent() {
   const [showTagsManager, setShowTagsManager] = useState(false);
   const [showGroupForm, setShowGroupForm] = useState(false);
   const [showUserCreation, setShowUserCreation] = useState(false);
+  const [activeTab, setActiveTab] = useState('contacts');
   
   // Contacts hook with API
   const {
     contacts,
     tags,
     groups,
+    inboxes,
     stats,
     total,
     page,
@@ -114,6 +119,11 @@ function UserContactsContent() {
     updateContact,
     deleteContacts,
     importContacts,
+    duplicates,
+    duplicatesLoading,
+    loadDuplicates,
+    dismissDuplicate,
+    mergeContacts,
     loadTags,
     addTag,
     removeTag,
@@ -159,6 +169,7 @@ function UserContactsContent() {
       search: filters.search || undefined,
       hasName: filters.hasName ?? undefined,
       tagIds: filters.tags.length > 0 ? filters.tags : undefined,
+      sourceInboxId: filters.sourceInboxId || undefined,
     });
   }, [loadContacts, pageSize, filters]);
 
@@ -171,9 +182,10 @@ function UserContactsContent() {
         search: filters.search || undefined,
         hasName: filters.hasName ?? undefined,
         tagIds: filters.tags.length > 0 ? filters.tags : undefined,
+        sourceInboxId: filters.sourceInboxId || undefined,
       });
     }
-  }, [filters.search, filters.hasName, filters.tags, hasActiveFilters, loadContacts, pageSize]);
+  }, [filters.search, filters.hasName, filters.tags, filters.sourceInboxId, hasActiveFilters, loadContacts, pageSize]);
 
   // Handle import from WhatsApp
   const handleImportComplete = useCallback(async (importedContacts: Array<{ phone: string; name?: string }>) => {
@@ -182,10 +194,21 @@ function UserContactsContent() {
         phone: c.phone,
         name: c.name,
       })));
+      
+      // Load duplicates after import
+      await loadDuplicates();
+      
+      // Switch to duplicates tab if duplicates found
+      if (duplicates.length > 0) {
+        setActiveTab('duplicates');
+        toast.info('Duplicados encontrados após importação', {
+          description: 'Verifique a aba Duplicados para revisar'
+        });
+      }
     } catch {
       // Error already handled in hook
     }
-  }, [importContacts]);
+  }, [importContacts, loadDuplicates, duplicates.length]);
 
   // Handle migration
   const handleMigrate = useCallback(async () => {
@@ -195,6 +218,61 @@ function UserContactsContent() {
       // Error already handled in hook
     }
   }, [migrateFromLocalStorage]);
+
+  // Handle duplicate merge
+  const handleDuplicateMerge = useCallback(async (setId: string, contactIds: string[], mergeData: MergeResult) => {
+    try {
+      await mergeContacts(contactIds, mergeData);
+    } catch {
+      // Error already handled in hook
+    }
+  }, [mergeContacts]);
+
+  // Handle duplicate dismiss
+  const handleDuplicateDismiss = useCallback(async (setId: string, contactId1: string, contactId2: string) => {
+    try {
+      await dismissDuplicate(contactId1, contactId2);
+    } catch {
+      // Error already handled in hook
+    }
+  }, [dismissDuplicate]);
+
+  // Handle bulk merge (simplified - merge first pair of each set)
+  const handleBulkMerge = useCallback(async (setIds: string[]) => {
+    try {
+      for (const setId of setIds) {
+        const duplicateSet = duplicates.find(set => set.id === setId);
+        if (duplicateSet && duplicateSet.contacts.length >= 2) {
+          // Simple merge: use first contact as primary, merge with second
+          const [primary, secondary] = duplicateSet.contacts;
+          const mergeData: MergeResult = {
+            primaryContactId: primary.id,
+            name: primary.name || secondary.name || '',
+            phone: primary.phone,
+            avatarUrl: primary.avatarUrl || secondary.avatarUrl,
+            metadata: { ...secondary.metadata, ...primary.metadata },
+            preserveTags: true,
+            preserveGroups: true
+          };
+          
+          await mergeContacts([primary.id, secondary.id], mergeData);
+        }
+      }
+      
+      toast.success(`${setIds.length} conjunto(s) de duplicados mesclados`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao mesclar duplicados';
+      toast.error('Erro ao mesclar duplicados', { description: message });
+    }
+  }, [duplicates, mergeContacts]);
+
+  // Load duplicates when switching to duplicates tab
+  const handleTabChange = useCallback((value: string) => {
+    setActiveTab(value);
+    if (value === 'duplicates' && duplicates.length === 0 && !duplicatesLoading) {
+      loadDuplicates();
+    }
+  }, [duplicates.length, duplicatesLoading, loadDuplicates]);
 
   // Handle filter apply from stats
   const handleFilterApply = useCallback((newFilters: Partial<typeof filters>) => {
@@ -463,12 +541,19 @@ function UserContactsContent() {
               iconColor="text-blue-500"
               title="Seus Contatos"
             >
-              <p className="text-sm text-muted-foreground">
-                {total > 0 
-                  ? `${total} contato(s) no total • Página ${page} de ${totalPages}`
-                  : `Importe contatos da agenda ${brandingConfig.appName} para começar`
-                }
-              </p>
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  {total > 0 
+                    ? `${total} contato(s) no total • Página ${page} de ${totalPages}`
+                    : `Importe contatos da agenda ${brandingConfig.appName} para começar`
+                  }
+                </p>
+                {duplicates.length > 0 && (
+                  <Badge variant="destructive" className="ml-2">
+                    {duplicates.length} duplicado(s)
+                  </Badge>
+                )}
+              </div>
             </CardHeaderWithIcon>
             <CardContent>
               {contacts.length === 0 && !loading ? (
@@ -481,74 +566,103 @@ function UserContactsContent() {
                   }
                 />
               ) : (
-                <div className="space-y-4">
-                  {/* Filters */}
-                  <ContactsFilters
-                    filters={filters}
-                    onFiltersChange={updateFilters}
-                    availableTags={tags}
-                    resultCount={resultCount}
-                    totalCount={total}
-                    hasActiveFilters={hasActiveFilters}
-                    onSelectAllFiltered={handleSelectAllFiltered}
-                  />
+                <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="contacts">
+                      <Users className="h-4 w-4 mr-2" />
+                      Contatos
+                    </TabsTrigger>
+                    <TabsTrigger value="duplicates" className="relative">
+                      <UserX className="h-4 w-4 mr-2" />
+                      Duplicados
+                      {duplicates.length > 0 && (
+                        <Badge variant="destructive" className="ml-2 h-5 text-xs">
+                          {duplicates.length}
+                        </Badge>
+                      )}
+                    </TabsTrigger>
+                  </TabsList>
 
-                  {/* Tags Manager inline */}
-                  {showTagsManager && (
-                    <ContactTagsManager
+                  <TabsContent value="contacts" className="space-y-4 mt-6">
+                    {/* Filters */}
+                    <ContactsFilters
+                      filters={filters}
+                      onFiltersChange={updateFilters}
                       availableTags={tags}
-                      selectedContactsCount={selectedCount}
-                      onAddTags={handleApplyTags}
-                      onCreateTag={handleCreateTag}
-                      onClose={() => setShowTagsManager(false)}
+                      availableInboxes={inboxes}
+                      resultCount={resultCount}
+                      totalCount={total}
+                      hasActiveFilters={hasActiveFilters}
+                      onSelectAllFiltered={handleSelectAllFiltered}
                     />
-                  )}
 
-                  {/* Group Form inline */}
-                  {showGroupForm && (
-                    <ContactGroupForm
-                      selectedContactsCount={selectedCount}
-                      selectedContactIds={Array.from(selectedIds)}
-                      onCreateGroup={handleCreateGroup}
-                      onClose={() => setShowGroupForm(false)}
-                    />
-                  )}
+                    {/* Tags Manager inline */}
+                    {showTagsManager && (
+                      <ContactTagsManager
+                        availableTags={tags}
+                        selectedContactsCount={selectedCount}
+                        onAddTags={handleApplyTags}
+                        onCreateTag={handleCreateTag}
+                        onClose={() => setShowTagsManager(false)}
+                      />
+                    )}
 
-                  {/* User Creation Form inline */}
-                  {showUserCreation && (
-                    <ContactUserCreationForm
-                      onSuccess={handleUserCreationSuccess}
-                      onCancel={() => setShowUserCreation(false)}
-                    />
-                  )}
+                    {/* Group Form inline */}
+                    {showGroupForm && (
+                      <ContactGroupForm
+                        selectedContactsCount={selectedCount}
+                        selectedContactIds={Array.from(selectedIds)}
+                        onCreateGroup={handleCreateGroup}
+                        onClose={() => setShowGroupForm(false)}
+                      />
+                    )}
 
-                  {/* Table */}
-                  {loading ? (
-                    <ContactsTableSkeleton rows={10} />
-                  ) : (
-                    <ContactsTable
-                      contacts={filteredContacts}
-                      tags={tags}
-                      selectedIds={selectedIds}
-                      onSelectionChange={(ids) => {
-                        const newSelection = new Set(ids);
-                        if (newSelection.size === 0) {
-                          clearSelection();
-                        } else {
-                          selectAll(Array.from(newSelection));
-                        }
-                      }}
-                      onContactUpdate={handleContactUpdate}
-                      onContactDelete={handleContactDelete}
-                      onAddTagsToContact={handleAddTagsToContact}
-                      onRemoveTagFromContact={handleRemoveTagFromContact}
-                      page={page}
-                      pageSize={pageSize}
-                      onPageChange={handlePageChange}
-                      totalPages={totalPages}
+                    {/* User Creation Form inline */}
+                    {showUserCreation && (
+                      <ContactUserCreationForm
+                        onSuccess={handleUserCreationSuccess}
+                        onCancel={() => setShowUserCreation(false)}
+                      />
+                    )}
+
+                    {/* Table */}
+                    {loading ? (
+                      <ContactsTableSkeleton rows={10} />
+                    ) : (
+                      <ContactsTable
+                        contacts={filteredContacts}
+                        tags={tags}
+                        selectedIds={selectedIds}
+                        onSelectionChange={(ids) => {
+                          const newSelection = new Set(ids);
+                          if (newSelection.size === 0) {
+                            clearSelection();
+                          } else {
+                            selectAll(Array.from(newSelection));
+                          }
+                        }}
+                        onContactUpdate={handleContactUpdate}
+                        onContactDelete={handleContactDelete}
+                        onAddTagsToContact={handleAddTagsToContact}
+                        onRemoveTagFromContact={handleRemoveTagFromContact}
+                        page={page}
+                        pageSize={pageSize}
+                        onPageChange={handlePageChange}
+                        totalPages={totalPages}
+                      />
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="duplicates" className="mt-6">
+                    <DuplicatesPanel
+                      duplicateSets={duplicates}
+                      onMerge={handleDuplicateMerge}
+                      onDismiss={handleDuplicateDismiss}
+                      onBulkMerge={handleBulkMerge}
+                      isLoading={duplicatesLoading}
                     />
-                  )}
-                </div>
+                  </TabsContent>
+                </Tabs>
               )}
             </CardContent>
           </Card>

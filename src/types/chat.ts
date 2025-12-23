@@ -387,6 +387,7 @@ export interface ConversationFilters {
   labelId?: number
   search?: string
   inboxId?: number
+  inboxIds?: string[]
   assignmentFilter?: AssignmentFilter
 }
 

@@ -13,6 +13,7 @@ const DEFAULT_FILTERS: ContactFilters = {
   search: '',
   tags: [],
   hasName: null,
+  sourceInboxId: null,
 };
 
 interface UseContactFiltersReturn {
@@ -37,7 +38,8 @@ export function useContactFilters(contacts: Contact[]): UseContactFiltersReturn 
     return (
       filters.search.trim().length > 0 ||
       filters.tags.length > 0 ||
-      filters.hasName !== null
+      filters.hasName !== null ||
+      filters.sourceInboxId !== null
     );
   }, [filters]);
 

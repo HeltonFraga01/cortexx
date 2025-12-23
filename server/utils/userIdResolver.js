@@ -121,6 +121,10 @@ function ensureSessionUserId(req, userToken) {
     if (!req.session.userId) {
       req.session.userId = hashToken(userToken);
     }
+    // CRITICAL: Always ensure role is set to avoid corrupted session
+    if (!req.session.role) {
+      req.session.role = 'user';
+    }
   }
 }
 

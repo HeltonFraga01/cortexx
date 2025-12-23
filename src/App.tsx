@@ -9,6 +9,7 @@ import { BrandingProvider } from "./contexts/BrandingContext";
 import { WuzAPIAuthProvider } from "./contexts/WuzAPIAuthContext";
 import { WuzAPIInstancesProvider } from "./contexts/WuzAPIInstancesContext";
 import { AgentAuthProvider } from "./contexts/AgentAuthContext";
+import { SupabaseInboxProvider } from "./contexts/SupabaseInboxContext";
 
 import { useBrandingConfig } from "./hooks/useBranding";
 import { updateAppNameMetaTags, updateDynamicFavicon, updateOgImage } from "./utils/metaTags";
@@ -128,7 +129,9 @@ const App = () => {
                         path="/user/*"
                         element={
                           <ProtectedRoute requiredRole="user">
-                            <UserDashboard />
+                            <SupabaseInboxProvider>
+                              <UserDashboard />
+                            </SupabaseInboxProvider>
                           </ProtectedRoute>
                         }
                       />

@@ -170,8 +170,10 @@ const verifyUserToken = async (req, res, next) => {
         });
         
         // Set session data for consistency
+        // CRITICAL: Always set both userId AND role to avoid corrupted session
         if (req.session && req.session.role !== 'admin') {
           req.session.userId = userId;
+          req.session.role = 'user'; // Set role to avoid corrupted session
           if (wuzapiToken) {
             req.session.userToken = wuzapiToken;
           }
@@ -253,8 +255,10 @@ const verifyUserToken = async (req, res, next) => {
       
       // Also set session.userId to the resolved userId (not just hash of token)
       // CRITICAL: Never overwrite admin session data - admin needs their token for WuzAPI validation
+      // CRITICAL: Always set both userId AND role to avoid corrupted session
       if (req.session && userId && req.session.role !== 'admin') {
         req.session.userId = userId;
+        req.session.role = req.session.role || 'user'; // Set role if not already set
       }
       
       next();

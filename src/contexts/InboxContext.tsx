@@ -1,7 +1,8 @@
 /**
  * InboxContext - Context for managing inbox state
  * 
- * Provides inbox list for current agent and current inbox selection.
+ * Provides inbox list for current user and current inbox selection.
+ * Works with both AgentContext (agent auth) and AuthContext (Supabase auth).
  * 
  * Requirements: 4.4
  */
@@ -9,7 +10,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import type { Inbox } from '@/types/multi-user'
 import * as inboxService from '@/services/account-inboxes'
-import { useAgent } from './AgentContext'
+import { useAuth } from './AuthContext'
 
 interface InboxContextValue {
   // State
@@ -29,17 +30,8 @@ interface InboxProviderProps {
 }
 
 export function InboxProvider({ children }: InboxProviderProps) {
-  // Try to use AgentContext, but don't fail if not available
-  let isAuthenticated = false
-  let agent = null
-  try {
-    const agentContext = useAgent()
-    isAuthenticated = agentContext.isAuthenticated
-    agent = agentContext.agent
-  } catch {
-    // AgentContext not available, use defaults
-    isAuthenticated = true // Assume authenticated if no AgentContext
-  }
+  // Use AuthContext for Supabase authentication
+  const { isAuthenticated, user } = useAuth()
   
   const [inboxes, setInboxes] = useState<Inbox[]>([])
   const [currentInbox, setCurrentInbox] = useState<Inbox | null>(null)
@@ -47,7 +39,7 @@ export function InboxProvider({ children }: InboxProviderProps) {
 
   // Load inboxes when authenticated
   useEffect(() => {
-    if (!isAuthenticated || !agent) {
+    if (!isAuthenticated || !user) {
       setInboxes([])
       setCurrentInbox(null)
       return
@@ -71,7 +63,7 @@ export function InboxProvider({ children }: InboxProviderProps) {
     }
 
     loadInboxes()
-  }, [isAuthenticated, agent])
+  }, [isAuthenticated, user])
 
   // Refresh inboxes
   const refreshInboxes = useCallback(async () => {

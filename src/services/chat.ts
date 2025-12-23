@@ -90,6 +90,9 @@ export async function getConversations(
   if (filters.labelId) params.append('labelId', String(filters.labelId))
   if (filters.search) params.append('search', filters.search)
   if (filters.inboxId) params.append('inboxId', String(filters.inboxId))
+  if (filters.inboxIds && filters.inboxIds.length > 0) {
+    params.append('inboxIds', JSON.stringify(filters.inboxIds))
+  }
   if (pagination.limit) params.append('limit', String(pagination.limit))
   if (pagination.offset) params.append('offset', String(pagination.offset))
   

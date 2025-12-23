@@ -19,7 +19,8 @@ const PG_ERROR_CODES = {
   '42P01': { code: 'UNDEFINED_TABLE', message: 'Table does not exist' },
   '42703': { code: 'UNDEFINED_COLUMN', message: 'Column does not exist' },
   'PGRST301': { code: 'ROW_NOT_FOUND', message: 'Record not found' },
-  'PGRST116': { code: 'MULTIPLE_ROWS', message: 'Multiple rows returned when one expected' }
+  // PGRST116 occurs when .single() returns 0 or multiple rows - treat as not found for single lookups
+  'PGRST116': { code: 'PGRST116', message: 'Record not found or multiple rows returned' }
 };
 
 class SupabaseService {
@@ -121,11 +122,15 @@ class SupabaseService {
       
       return { data: result.data, count: result.count, error: null };
     } catch (error) {
-      logger.error('queryAsUser failed', {
-        table,
-        error: error.message
-      });
-      return { data: null, count: null, error: this.translateError(error) };
+      // Don't log PGRST116 (not found) as error - it's expected for .single() queries
+      const translatedError = this.translateError(error);
+      if (translatedError.code !== 'PGRST116') {
+        logger.error('queryAsUser failed', {
+          table,
+          error: error.message
+        });
+      }
+      return { data: null, count: null, error: translatedError };
     }
   }
 

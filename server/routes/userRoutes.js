@@ -2,9 +2,78 @@ const express = require('express');
 const axios = require('axios');
 const { logger } = require('../utils/logger');
 const { requireAuth } = require('../middleware/auth');
-const verifyUserToken = require('../middleware/verifyUserToken');
+const { validateSupabaseToken } = require('../middleware/supabaseAuth');
+const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
 
 const router = express.Router();
+
+/**
+ * User Routes
+ * 
+ * UPDATED: Now uses inboxContextMiddleware to get wuzapiToken from the active inbox
+ * instead of the accounts table. This ensures the correct token is used when
+ * users have multiple inboxes.
+ */
+
+/**
+ * Middleware para verificar token do usuário usando InboxContext
+ */
+const verifyUserTokenWithInbox = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      await new Promise((resolve, reject) => {
+        validateSupabaseToken(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      await new Promise((resolve, reject) => {
+        inboxContextMiddleware({ required: false, useCache: true })(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      if (req.context?.wuzapiToken) {
+        req.userToken = req.context.wuzapiToken;
+        req.userId = req.user?.id;
+        req.inboxId = req.context.inboxId;
+        return next();
+      }
+      
+      if (req.user?.id) {
+        req.userId = req.user.id;
+        return next();
+      }
+    } catch (error) {
+      logger.debug('JWT/InboxContext validation failed, trying other methods', { 
+        error: error.message,
+        path: req.path
+      });
+    }
+  }
+  
+  const tokenHeader = req.headers.token;
+  if (tokenHeader) {
+    req.userToken = tokenHeader;
+    return next();
+  }
+  
+  if (req.session?.userToken) {
+    req.userToken = req.session.userToken;
+    return next();
+  }
+  
+  return res.status(401).json({
+    success: false,
+    error: { code: 'NO_TOKEN', message: 'Token não fornecido.' }
+  });
+};
+
+const verifyUserToken = verifyUserTokenWithInbox;
 
 // GET /api/user/messages - Buscar histórico de mensagens do usuário
 router.get('/messages', verifyUserToken, async (req, res) => {

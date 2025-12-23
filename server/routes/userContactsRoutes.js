@@ -4,7 +4,11 @@
  * Handles contact management for users including CRUD, tags, groups,
  * import from WhatsApp, and migration from localStorage.
  * 
- * Requirements: 1.1-1.5, 3.1-3.4, 4.1-4.4, 5.4, 6.1-6.4, 9.1-9.4, 11.2-11.5
+ * UPDATED: Now uses inboxContextMiddleware to get wuzapiToken from the active inbox
+ * instead of the accounts table. This ensures the correct token is used when
+ * users have multiple inboxes.
+ * 
+ * Requirements: 1.1-1.5, 3.1-3.4, 4.1-4.4, 5.4, 6.1-6.4, 9.1-9.4, 11.2-11.5, 8.2 (InboxContext)
  */
 
 const express = require('express');
@@ -12,7 +16,8 @@ const router = express.Router();
 const axios = require('axios');
 const { logger } = require('../utils/logger');
 const ContactsService = require('../services/ContactsService');
-const verifyUserToken = require('../middleware/verifyUserToken');
+const { validateSupabaseToken } = require('../middleware/supabaseAuth');
+const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
 const { 
   requireContactsRead, 
   requireContactsWrite, 
@@ -22,6 +27,81 @@ const {
   getTenantIdFromRequest
 } = require('../middleware/contactsPermission');
 const { z } = require('zod');
+
+/**
+ * Middleware para verificar token do usuário usando InboxContext
+ * Usa o token da inbox ativa em vez do token da account
+ */
+const verifyUserTokenWithInbox = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      await new Promise((resolve, reject) => {
+        validateSupabaseToken(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      await new Promise((resolve, reject) => {
+        inboxContextMiddleware({ required: false, useCache: true })(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      if (req.context?.wuzapiToken) {
+        req.userToken = req.context.wuzapiToken;
+        req.userId = req.user?.id;
+        req.inboxId = req.context.inboxId;
+        
+        logger.debug('WUZAPI token obtained from inbox context for contacts', {
+          userId: req.userId?.substring(0, 8) + '...',
+          inboxId: req.inboxId?.substring(0, 8) + '...',
+          hasToken: true
+        });
+        
+        return next();
+      }
+      
+      if (req.user?.id) {
+        req.userId = req.user.id;
+        logger.warn('No inbox context available for contacts user', {
+          userId: req.user.id.substring(0, 8) + '...',
+          path: req.path
+        });
+        return next();
+      }
+    } catch (error) {
+      logger.debug('JWT/InboxContext validation failed for contacts, trying other methods', { 
+        error: error.message,
+        path: req.path
+      });
+    }
+  }
+  
+  const tokenHeader = req.headers.token;
+  if (tokenHeader) {
+    req.userToken = tokenHeader;
+    return next();
+  }
+  
+  if (req.session?.userToken) {
+    req.userToken = req.session.userToken;
+    return next();
+  }
+  
+  return res.status(401).json({
+    success: false,
+    error: {
+      code: 'NO_TOKEN',
+      message: 'Token não fornecido. Use Authorization Bearer, header token ou sessão ativa.'
+    }
+  });
+};
+
+const verifyUserToken = verifyUserTokenWithInbox;
 
 // ==================== VALIDATION SCHEMAS ====================
 
@@ -160,6 +240,7 @@ router.get('/', verifyUserToken, requireContactsRead, async (req, res) => {
       tagIds: req.query.tagIds ? req.query.tagIds.split(',') : [],
       groupId: req.query.groupId || null,
       hasName: req.query.hasName === 'true' ? true : req.query.hasName === 'false' ? false : null,
+      sourceInboxId: req.query.sourceInboxId || null,
       sortBy: req.query.sortBy || 'created_at',
       sortOrder: req.query.sortOrder || 'desc'
     };
@@ -946,12 +1027,200 @@ router.post('/:id/create-user', verifyUserToken, requireContactsWrite, async (re
 // like /import/wuzapi, /tags, /groups to avoid catching them as :id
 
 /**
+ * POST /import/:inboxId - Import contacts from specific inbox
+ */
+router.post('/import/:inboxId', verifyUserToken, requireContactsWrite, async (req, res) => {
+  try {
+    const accountId = getAccountIdFromRequest(req);
+    const tenantId = getTenantIdFromRequest(req);
+    const { inboxId } = req.params;
+    const actor = getContactsActor(req);
+
+    // Validate inboxId is UUID
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(inboxId)) {
+      return res.status(400).json({ error: 'Invalid inbox ID format' });
+    }
+
+    const result = await ContactsService.importFromInbox(accountId, tenantId, inboxId, actor);
+    
+    logger.info('Inbox import completed', { 
+      accountId, 
+      inboxId,
+      result,
+      userId: req.user?.id 
+    });
+
+    res.json({ 
+      success: true, 
+      data: result,
+      message: `Import completed: ${result.added} added, ${result.updated} updated, ${result.unchanged} unchanged`
+    });
+  } catch (error) {
+    logger.error('Failed to import from inbox', { 
+      error: error.message, 
+      userId: req.user?.id,
+      inboxId: req.params.inboxId,
+      endpoint: '/import/:inboxId'
+    });
+
+    // Handle specific errors
+    if (error.message === 'INBOX_NOT_FOUND') {
+      return res.status(404).json({ error: 'Caixa de entrada não encontrada' });
+    }
+    if (error.message === 'INBOX_ACCESS_DENIED') {
+      return res.status(403).json({ error: 'Acesso negado à caixa de entrada' });
+    }
+    if (error.message === 'INBOX_NOT_CONNECTED') {
+      return res.status(400).json({ error: 'Caixa de entrada não conectada ao WhatsApp' });
+    }
+
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /merge - Merge duplicate contacts
+ */
+router.post('/merge', verifyUserToken, requireContactsWrite, async (req, res) => {
+  try {
+    const accountId = getAccountIdFromRequest(req);
+    const actor = getContactsActor(req);
+    
+    const { contactIds, mergeData } = req.body;
+    
+    // Validate input
+    if (!contactIds || !Array.isArray(contactIds) || contactIds.length < 2) {
+      return res.status(400).json({ error: 'At least 2 contact IDs required for merge' });
+    }
+
+    if (!mergeData || typeof mergeData !== 'object') {
+      return res.status(400).json({ error: 'Merge data is required' });
+    }
+
+    // Validate all contact IDs are UUIDs
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    for (const id of contactIds) {
+      if (!uuidRegex.test(id)) {
+        return res.status(400).json({ error: `Invalid contact ID format: ${id}` });
+      }
+    }
+
+    const mergedContact = await ContactsService.mergeContactsForDuplicates(
+      accountId, 
+      contactIds, 
+      mergeData, 
+      actor
+    );
+    
+    res.json({ 
+      success: true, 
+      data: mergedContact,
+      message: `Successfully merged ${contactIds.length} contacts`
+    });
+  } catch (error) {
+    logger.error('Failed to merge contacts', { 
+      error: error.message, 
+      userId: req.user?.id,
+      endpoint: '/merge'
+    });
+
+    if (error.message.includes('not found') || error.message.includes('access denied')) {
+      return res.status(404).json({ error: 'Um ou mais contatos não encontrados' });
+    }
+
+    res.status(500).json({ error: 'Erro ao mesclar contatos. Nenhuma alteração foi feita.' });
+  }
+});
+
+// ==================== DUPLICATES ROUTES ====================
+
+/**
+ * GET /duplicates - Get duplicate contact sets
+ */
+router.get('/duplicates', verifyUserToken, requireContactsRead, async (req, res) => {
+  try {
+    const accountId = getAccountIdFromRequest(req);
+    
+    const duplicates = await ContactsService.getDuplicates(accountId);
+    
+    res.json({ success: true, data: duplicates });
+  } catch (error) {
+    logger.error('Failed to get duplicates', { 
+      error: error.message, 
+      userId: req.user?.id,
+      endpoint: '/duplicates'
+    });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /duplicates/dismiss - Dismiss a duplicate pair as false positive
+ */
+router.post('/duplicates/dismiss', verifyUserToken, requireContactsWrite, async (req, res) => {
+  try {
+    const accountId = getAccountIdFromRequest(req);
+    const actor = getContactsActor(req);
+    
+    const { contactId1, contactId2 } = req.body;
+    
+    if (!contactId1 || !contactId2) {
+      return res.status(400).json({ error: 'Both contactId1 and contactId2 are required' });
+    }
+
+    if (contactId1 === contactId2) {
+      return res.status(400).json({ error: 'Cannot dismiss duplicate of same contact' });
+    }
+
+    await ContactsService.dismissDuplicate(accountId, contactId1, contactId2, actor);
+    
+    res.json({ 
+      success: true, 
+      message: 'Duplicate pair dismissed successfully' 
+    });
+  } catch (error) {
+    logger.error('Failed to dismiss duplicate', { 
+      error: error.message, 
+      userId: req.user?.id,
+      endpoint: '/duplicates/dismiss'
+    });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== INBOX SELECTION ROUTES ====================
+
+/**
+ * GET /inboxes - List available inboxes for import
+ */
+router.get('/inboxes', verifyUserToken, requireContactsRead, async (req, res) => {
+  try {
+    const accountId = getAccountIdFromRequest(req);
+    
+    const inboxes = await ContactsService.getAccountInboxes(accountId);
+    
+    res.json({ success: true, data: inboxes });
+  } catch (error) {
+    logger.error('Failed to get account inboxes', { 
+      error: error.message, 
+      userId: req.user?.id,
+      endpoint: '/inboxes'
+    });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== PARAMETERIZED ROUTES (MUST BE LAST) ====================
+// These routes use :id parameter and must be defined AFTER all specific paths
+// like /duplicates, /inboxes, /stats to avoid catching them as :id
+
+/**
  * GET /api/user/contacts/:id
  * Get a single contact by ID
  * Requirements: 11.2 - Read permission required
  * 
  * NOTE: This route MUST be defined after all other GET routes to avoid
- * catching paths like /import/wuzapi, /tags, /groups as :id parameter
+ * catching paths like /duplicates, /inboxes, /stats as :id parameter
  */
 router.get('/:id', verifyUserToken, requireContactsRead, async (req, res) => {
   try {

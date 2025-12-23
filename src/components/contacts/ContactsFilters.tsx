@@ -20,6 +20,7 @@ interface ContactsFiltersProps {
   filters: ContactFilters;
   onFiltersChange: (filters: ContactFilters) => void;
   availableTags: Tag[];
+  availableInboxes?: Array<{ id: string; name: string; phoneNumber?: string }>;
   resultCount: number;
   totalCount: number;
   hasActiveFilters: boolean;
@@ -30,6 +31,7 @@ export function ContactsFilters({
   filters,
   onFiltersChange,
   availableTags,
+  availableInboxes = [],
   resultCount,
   totalCount,
   hasActiveFilters,
@@ -79,11 +81,16 @@ export function ContactsFilters({
     onFiltersChange({ ...filters, hasName: value });
   };
 
+  const handleInboxChange = (inboxId: string | null) => {
+    onFiltersChange({ ...filters, sourceInboxId: inboxId });
+  };
+
   const handleClearFilters = () => {
     onFiltersChange({
       search: '',
       tags: [],
       hasName: null,
+      sourceInboxId: null,
     });
   };
 
@@ -110,9 +117,9 @@ export function ContactsFilters({
               <Badge 
                 variant="secondary" 
                 className="ml-2 animate-in transition-all duration-200" 
-                aria-label={`${filters.tags.length + (filters.hasName !== null ? 1 : 0) + (filters.search ? 1 : 0)} filtros ativos`}
+                aria-label={`${filters.tags.length + (filters.hasName !== null ? 1 : 0) + (filters.search ? 1 : 0) + (filters.sourceInboxId ? 1 : 0)} filtros ativos`}
               >
-                {filters.tags.length + (filters.hasName !== null ? 1 : 0) + (filters.search ? 1 : 0)} ativos
+                {filters.tags.length + (filters.hasName !== null ? 1 : 0) + (filters.search ? 1 : 0) + (filters.sourceInboxId ? 1 : 0)} ativos
               </Badge>
             )}
           </div>
@@ -237,6 +244,58 @@ export function ContactsFilters({
                     aria-label={`Filtrar por tag ${tag.name}`}
                   >
                     {tag.name}
+                  </Badge>
+                ))}
+              </div>
+            </fieldset>
+          )}
+
+          {/* Filtro por Origem (Inbox) */}
+          {availableInboxes.length > 0 && (
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">Origem</legend>
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Filtros de origem">
+                <Badge
+                  variant={filters.sourceInboxId === null ? "default" : "outline"}
+                  className="cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                  onClick={() => handleInboxChange(null)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleInboxChange(null);
+                    }
+                  }}
+                  tabIndex={0}
+                  role="checkbox"
+                  aria-checked={filters.sourceInboxId === null}
+                  aria-label="Filtrar por contatos manuais"
+                >
+                  Manual
+                </Badge>
+                {availableInboxes.map(inbox => (
+                  <Badge
+                    key={inbox.id}
+                    variant={filters.sourceInboxId === inbox.id ? "default" : "outline"}
+                    className="cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                    onClick={() => handleInboxChange(inbox.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleInboxChange(inbox.id);
+                      }
+                    }}
+                    tabIndex={0}
+                    role="checkbox"
+                    aria-checked={filters.sourceInboxId === inbox.id}
+                    aria-label={`Filtrar por inbox ${inbox.name}`}
+                    title={inbox.phoneNumber ? `${inbox.name} (${inbox.phoneNumber})` : inbox.name}
+                  >
+                    {inbox.name}
+                    {inbox.phoneNumber && (
+                      <span className="ml-1 text-xs opacity-70">
+                        ({inbox.phoneNumber})
+                      </span>
+                    )}
                   </Badge>
                 ))}
               </div>

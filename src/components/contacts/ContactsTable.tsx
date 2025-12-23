@@ -206,7 +206,7 @@ export function ContactsTable({
     return (
       <div 
         style={style} 
-        className={`flex items-center border-b transition-all duration-200 hover:bg-accent/30 min-w-[500px] xs:min-w-[600px] ${isSelected ? 'bg-accent/50' : ''}`}
+        className={`flex items-center border-b transition-all duration-200 hover:bg-accent/30 min-w-[600px] xs:min-w-[700px] ${isSelected ? 'bg-accent/50' : ''}`}
         role="row"
         aria-selected={isSelected}
       >
@@ -270,6 +270,24 @@ export function ContactsTable({
             >
               {contact.name || <span className="text-muted-foreground italic text-xs">Sem nome</span>}
             </button>
+          )}
+        </div>
+
+        {/* Origem */}
+        <div className="flex-1 px-1 sm:px-4 min-w-[100px] text-xs sm:text-sm" role="cell">
+          {contact.sourceInbox ? (
+            <div className="flex flex-col">
+              <span className="truncate text-xs font-medium" title={contact.sourceInbox.name}>
+                {contact.sourceInbox.name}
+              </span>
+              {contact.sourceInbox.phoneNumber && (
+                <span className="truncate text-[10px] text-muted-foreground font-mono" title={contact.sourceInbox.phoneNumber}>
+                  {contact.sourceInbox.phoneNumber}
+                </span>
+              )}
+            </div>
+          ) : (
+            <span className="text-muted-foreground italic text-xs">Manual</span>
           )}
         </div>
 
@@ -350,7 +368,7 @@ export function ContactsTable({
         <div className="overflow-x-auto">
           <div className="inline-block min-w-full">
             {/* Cabeçalho da tabela */}
-            <div className="flex items-center border-b bg-muted/50 font-medium text-xs sm:text-sm min-w-[500px] xs:min-w-[600px]" role="row">
+            <div className="flex items-center border-b bg-muted/50 font-medium text-xs sm:text-sm min-w-[600px] xs:min-w-[700px]" role="row">
               <div className="w-10 sm:w-12 px-1 sm:px-4 py-2 sm:py-3 flex items-center justify-center flex-shrink-0" role="columnheader">
                 <Checkbox
                   checked={allPageSelected}
@@ -364,6 +382,9 @@ export function ContactsTable({
               </div>
               <div className="flex-[2] px-1 sm:px-4 py-2 sm:py-3 min-w-[120px]" role="columnheader">
                 <span className="truncate block">Nome</span>
+              </div>
+              <div className="flex-1 px-1 sm:px-4 py-2 sm:py-3 min-w-[100px]" role="columnheader">
+                <span className="truncate block">Origem</span>
               </div>
               <div className="flex-1 px-1 sm:px-4 py-2 sm:py-3 min-w-[100px]" role="columnheader">
                 <span className="truncate block">Tags</span>
