@@ -12,7 +12,6 @@ const express = require('express');
 const { logger } = require('../utils/logger');
 const { validateSupabaseToken } = require('../middleware/supabaseAuth');
 const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
-const { featureMiddleware } = require('../middleware/featureEnforcement');
 const SupabaseService = require('../services/SupabaseService');
 
 const router = express.Router();
@@ -74,15 +73,14 @@ const verifyUserTokenWithInbox = async (req, res, next) => {
 
 const verifyUserToken = verifyUserTokenWithInbox;
 
-// Apply advanced_reports feature check to all routes
-router.use(verifyUserToken);
-router.use(featureMiddleware.advancedReports);
+// Note: Feature check removed - basic reports should be available to all users
+// Advanced features like PDF export can be gated separately if needed
 
 /**
  * GET /api/user/reports - List campaign reports with filters
  * Query params: page, limit, startDate, endDate, status, type, instance
  */
-router.get('/', async (req, res) => {
+router.get('/', verifyUserToken, async (req, res) => {
   try {
     const userToken = req.userToken;
 
@@ -178,7 +176,7 @@ router.get('/', async (req, res) => {
 /**
  * GET /api/user/reports/:campaignId - Get detailed report for a campaign
  */
-router.get('/:campaignId', async (req, res) => {
+router.get('/:campaignId', verifyUserToken, async (req, res) => {
   try {
     const userToken = req.userToken;
     const { campaignId } = req.params;
@@ -306,7 +304,7 @@ router.get('/:campaignId', async (req, res) => {
  * GET /api/user/reports/:campaignId/export - Export report as CSV or PDF
  * Query params: format (csv|pdf)
  */
-router.get('/:campaignId/export', async (req, res) => {
+router.get('/:campaignId/export', verifyUserToken, async (req, res) => {
   try {
     const userToken = req.userToken;
     const { campaignId } = req.params;

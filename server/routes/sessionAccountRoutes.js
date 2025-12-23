@@ -17,6 +17,7 @@ const InboxService = require('../services/InboxService');
 const AccountService = require('../services/AccountService');
 const CustomRoleService = require('../services/CustomRoleService');
 const MultiUserAuditService = require('../services/MultiUserAuditService');
+const AgentDatabaseAccessService = require('../services/AgentDatabaseAccessService');
 const SupabaseService = require('../services/SupabaseService');
 
 // Services initialized at module level (no db parameter needed)
@@ -26,6 +27,7 @@ const inboxService = new InboxService();
 const accountService = new AccountService();
 const customRoleService = new CustomRoleService();
 const auditService = new MultiUserAuditService();
+const agentDatabaseAccessService = new AgentDatabaseAccessService();
 
 /**
  * Get or create account for the current session user
@@ -2037,11 +2039,6 @@ router.get('/subscription', requireAuth, async (req, res) => {
 
 
 // ==================== AGENT DETAILS & ASSIGNMENTS ====================
-
-const AgentDatabaseAccessService = require('../services/AgentDatabaseAccessService');
-
-// AgentDatabaseAccessService initialized at module level (no db parameter needed)
-const agentDatabaseAccessService = new AgentDatabaseAccessService();
 
 /**
  * GET /api/session/agents/:id/details

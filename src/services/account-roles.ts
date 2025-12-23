@@ -11,37 +11,52 @@ import type {
   CreateCustomRoleDTO,
   UpdateCustomRoleDTO
 } from '@/types/multi-user'
+import { supabase } from '@/lib/supabase'
 
 const API_BASE = ''
 
-// CSRF token cache
-let csrfToken: string | null = null
+/**
+ * Get JWT token from Supabase session for API authentication
+ */
+async function getAuthToken(): Promise<string | null> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    return session?.access_token || null
+  } catch (error) {
+    console.error('Failed to get auth token:', error)
+    return null
+  }
+}
 
 async function getCsrfToken(): Promise<string | null> {
-  if (csrfToken) return csrfToken
-  
   try {
     const response = await fetch(`${API_BASE}/api/auth/csrf-token`, {
       credentials: 'include'
     })
     const data = await response.json()
-    csrfToken = data.csrfToken
-    return csrfToken
+    return data.csrfToken || null
   } catch (error) {
     console.error('Failed to get CSRF token:', error)
     return null
   }
 }
 
-function getRequestOptions(): RequestInit {
-  return { credentials: 'include' as RequestCredentials }
+async function getRequestOptions(): Promise<RequestInit> {
+  const token = await getAuthToken()
+  return { 
+    credentials: 'include' as RequestCredentials,
+    headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+  }
 }
 
 async function getRequestOptionsWithCsrf(): Promise<RequestInit> {
-  const token = await getCsrfToken()
+  const [authToken, csrfToken] = await Promise.all([getAuthToken(), getCsrfToken()])
+  const headers: Record<string, string> = {}
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`
+  if (csrfToken) headers['CSRF-Token'] = csrfToken
   return {
     credentials: 'include' as RequestCredentials,
-    headers: token ? { 'CSRF-Token': token } : {}
+    headers
   }
 }
 
@@ -49,7 +64,7 @@ async function getRequestOptionsWithCsrf(): Promise<RequestInit> {
  * List all roles (default + custom)
  */
 export async function listRoles(): Promise<RolesResponse> {
-  const response = await fetch(`${API_BASE}/api/session/roles`, getRequestOptions())
+  const response = await fetch(`${API_BASE}/api/session/roles`, await getRequestOptions())
   const result = await response.json()
   if (!response.ok) throw new Error(result.error || 'Failed to list roles')
   return result.data
@@ -59,7 +74,7 @@ export async function listRoles(): Promise<RolesResponse> {
  * Get custom role by ID
  */
 export async function getCustomRole(id: string): Promise<CustomRoleWithUsage> {
-  const response = await fetch(`${API_BASE}/api/session/roles/${id}`, getRequestOptions())
+  const response = await fetch(`${API_BASE}/api/session/roles/${id}`, await getRequestOptions())
   const result = await response.json()
   if (!response.ok) throw new Error(result.error || 'Failed to get role')
   return result.data

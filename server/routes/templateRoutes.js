@@ -4,47 +4,126 @@
  * 
  * Requirements: 1.1, 1.2, 1.3, 1.4
  * Migrated to use SupabaseService directly
+ * 
+ * UPDATED: Now uses account_id from InboxContext instead of user_token
  */
 
 const express = require('express');
 const { logger } = require('../utils/logger');
 const SupabaseService = require('../services/SupabaseService');
+const { validateSupabaseToken } = require('../middleware/supabaseAuth');
+const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
 const router = express.Router();
 
-// Middleware para verificar token do usuário
-const verifyUserToken = async (req, res, next) => {
-  let userToken = null;
-
+/**
+ * Middleware para verificar token do usuário e obter account_id
+ */
+const verifyUserWithAccount = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-  const tokenHeader = req.headers.token;
-
+  
+  // Try JWT authentication first
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    userToken = authHeader.substring(7);
-  } else if (tokenHeader) {
-    userToken = tokenHeader;
-  } else if (req.session?.userToken) {
-    userToken = req.session.userToken;
+    try {
+      await new Promise((resolve, reject) => {
+        validateSupabaseToken(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      await new Promise((resolve, reject) => {
+        inboxContextMiddleware({ required: false, useCache: true })(req, res, (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+      
+      if (req.context?.accountId) {
+        req.accountId = req.context.accountId;
+        req.userId = req.user?.id;
+        return next();
+      }
+      
+      // If no accountId in context, try to get it from user
+      if (req.user?.id) {
+        const { data: account } = await SupabaseService.adminClient
+          .from('accounts')
+          .select('id')
+          .eq('owner_user_id', req.user.id)
+          .single();
+        
+        if (account) {
+          req.accountId = account.id;
+          req.userId = req.user.id;
+          return next();
+        }
+      }
+    } catch (error) {
+      logger.debug('JWT/InboxContext validation failed for templates', { error: error.message });
+    }
   }
-
-  if (!userToken) {
-    return res.status(401).json({
-      success: false,
-      error: 'Token não fornecido',
-      message: 'Autenticação necessária'
-    });
+  
+  // Fallback to legacy token header
+  const tokenHeader = req.headers.token;
+  if (tokenHeader) {
+    try {
+      // Get account from session_token_mapping
+      const { data: mapping } = await SupabaseService.adminClient
+        .from('session_token_mapping')
+        .select('account_id')
+        .eq('wuzapi_token', tokenHeader)
+        .single();
+      
+      if (mapping?.account_id) {
+        req.accountId = mapping.account_id;
+        req.userToken = tokenHeader;
+        return next();
+      }
+    } catch (error) {
+      logger.debug('Token mapping lookup failed', { error: error.message });
+    }
   }
-
-  req.userToken = userToken;
-  next();
+  
+  // Fallback to session
+  if (req.session?.userToken) {
+    try {
+      const { data: mapping } = await SupabaseService.adminClient
+        .from('session_token_mapping')
+        .select('account_id')
+        .eq('wuzapi_token', req.session.userToken)
+        .single();
+      
+      if (mapping?.account_id) {
+        req.accountId = mapping.account_id;
+        req.userToken = req.session.userToken;
+        return next();
+      }
+    } catch (error) {
+      logger.debug('Session token mapping lookup failed', { error: error.message });
+    }
+  }
+  
+  return res.status(401).json({
+    success: false,
+    error: 'Token não fornecido ou inválido',
+    message: 'Autenticação necessária'
+  });
 };
 
 /**
  * GET /api/user/templates - List templates with pagination
  * Query params: page (default: 1), limit (default: 10)
  */
-router.get('/', verifyUserToken, async (req, res) => {
+router.get('/', verifyUserWithAccount, async (req, res) => {
   try {
-    const userToken = req.userToken;
+    const accountId = req.accountId;
+    
+    if (!accountId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Conta não encontrada'
+      });
+    }
     
     // Parse pagination params
     const page = Math.max(1, parseInt(req.query.page) || 1);
@@ -52,35 +131,36 @@ router.get('/', verifyUserToken, async (req, res) => {
     const offset = (page - 1) * limit;
 
     // Get total count
-    const { count: total, error: countError } = await SupabaseService.count(
-      'campaign_templates',
-      { user_token: userToken }
-    );
+    const { count: total, error: countError } = await SupabaseService.adminClient
+      .from('campaign_templates')
+      .select('*', { count: 'exact', head: true })
+      .eq('account_id', accountId);
 
     if (countError) {
       throw countError;
     }
 
     // Get paginated templates
-    const { data: rows, error: queryError } = await SupabaseService.queryAsAdmin(
-      'campaign_templates',
-      (query) => query
-        .select('id, name, description, config, created_at, updated_at')
-        .eq('user_token', userToken)
-        .order('created_at', { ascending: false })
-        .range(offset, offset + limit - 1)
-    );
+    const { data: rows, error: queryError } = await SupabaseService.adminClient
+      .from('campaign_templates')
+      .select('id, name, content, variables, created_at, updated_at')
+      .eq('account_id', accountId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
 
     if (queryError) {
       throw queryError;
     }
 
-    // Parse config JSON
+    // Map to expected format (frontend uses messageContent)
     const templates = (rows || []).map(t => ({
       id: t.id,
       name: t.name,
-      description: t.description,
-      config: typeof t.config === 'string' ? JSON.parse(t.config || '{}') : (t.config || {}),
+      description: null,
+      config: {
+        messageContent: t.content,
+        variables: t.variables || []
+      },
       createdAt: t.created_at,
       updatedAt: t.updated_at
     }));
@@ -114,36 +194,33 @@ router.get('/', verifyUserToken, async (req, res) => {
 /**
  * GET /api/user/templates/:id - Get a single template by ID
  */
-router.get('/:id', verifyUserToken, async (req, res) => {
+router.get('/:id', verifyUserWithAccount, async (req, res) => {
   try {
-    const userToken = req.userToken;
+    const accountId = req.accountId;
     const { id } = req.params;
 
-    const { data: rows, error } = await SupabaseService.queryAsAdmin(
-      'campaign_templates',
-      (query) => query
-        .select('id, name, description, config, created_at, updated_at')
-        .eq('id', id)
-        .eq('user_token', userToken)
-    );
+    const { data: t, error } = await SupabaseService.adminClient
+      .from('campaign_templates')
+      .select('id, name, content, variables, created_at, updated_at')
+      .eq('id', id)
+      .eq('account_id', accountId)
+      .single();
 
-    if (error) {
-      throw error;
-    }
-
-    if (!rows || rows.length === 0) {
+    if (error || !t) {
       return res.status(404).json({
         success: false,
         error: 'Template não encontrado'
       });
     }
 
-    const t = rows[0];
     const template = {
       id: t.id,
       name: t.name,
-      description: t.description,
-      config: typeof t.config === 'string' ? JSON.parse(t.config || '{}') : (t.config || {}),
+      description: null,
+      config: {
+        messageContent: t.content,
+        variables: t.variables || []
+      },
       createdAt: t.created_at,
       updatedAt: t.updated_at
     };
@@ -169,9 +246,9 @@ router.get('/:id', verifyUserToken, async (req, res) => {
 /**
  * POST /api/user/templates - Create a new template
  */
-router.post('/', verifyUserToken, async (req, res) => {
+router.post('/', verifyUserWithAccount, async (req, res) => {
   try {
-    const userToken = req.userToken;
+    const accountId = req.accountId;
     const { name, description, config } = req.body;
 
     if (!name) {
@@ -182,38 +259,43 @@ router.post('/', verifyUserToken, async (req, res) => {
       });
     }
 
-    const id = `tpl-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const now = new Date().toISOString();
+    
+    // Extract content and variables from config
+    // Support both 'content' and 'messageContent' for frontend compatibility
+    const content = config?.content || config?.messageContent || '';
+    const variables = config?.variables || [];
 
-    const { data, error } = await SupabaseService.queryAsAdmin(
-      'campaign_templates',
-      (query) => query.insert({
-        id,
+    const { data, error } = await SupabaseService.adminClient
+      .from('campaign_templates')
+      .insert({
+        account_id: accountId,
         name,
-        description: description || null,
-        user_token: userToken,
-        config: config || {},
+        content,
+        variables,
         created_at: now,
         updated_at: now
-      }).select()
-    );
+      })
+      .select()
+      .single();
 
     if (error) {
       throw error;
     }
 
     logger.info('Template criado:', {
-      templateId: id,
-      name
+      templateId: data.id,
+      name,
+      accountId
     });
 
     res.status(201).json({
       success: true,
       template: {
-        id,
+        id: data.id,
         name,
-        description,
-        config: config || {},
+        description: null,
+        config: { messageContent: content, variables },
         createdAt: now,
         updatedAt: now
       }
@@ -234,26 +316,21 @@ router.post('/', verifyUserToken, async (req, res) => {
 /**
  * PUT /api/user/templates/:id - Update an existing template
  */
-router.put('/:id', verifyUserToken, async (req, res) => {
+router.put('/:id', verifyUserWithAccount, async (req, res) => {
   try {
-    const userToken = req.userToken;
+    const accountId = req.accountId;
     const { id } = req.params;
     const { name, description, config } = req.body;
 
     // Verify ownership
-    const { data: existing, error: checkError } = await SupabaseService.queryAsAdmin(
-      'campaign_templates',
-      (query) => query
-        .select('id, config')
-        .eq('id', id)
-        .eq('user_token', userToken)
-    );
+    const { data: existing, error: checkError } = await SupabaseService.adminClient
+      .from('campaign_templates')
+      .select('id, content, variables')
+      .eq('id', id)
+      .eq('account_id', accountId)
+      .single();
 
-    if (checkError) {
-      throw checkError;
-    }
-
-    if (!existing || existing.length === 0) {
+    if (checkError || !existing) {
       return res.status(404).json({
         success: false,
         error: 'Template não encontrado'
@@ -261,10 +338,13 @@ router.put('/:id', verifyUserToken, async (req, res) => {
     }
 
     // Build update data
+    // Support both 'content' and 'messageContent' for frontend compatibility
     const updateData = {};
     if (name !== undefined) updateData.name = name;
-    if (description !== undefined) updateData.description = description;
-    if (config !== undefined) updateData.config = config;
+    if (config?.content !== undefined || config?.messageContent !== undefined) {
+      updateData.content = config?.content || config?.messageContent;
+    }
+    if (config?.variables !== undefined) updateData.variables = config.variables;
 
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
@@ -276,32 +356,29 @@ router.put('/:id', verifyUserToken, async (req, res) => {
     const now = new Date().toISOString();
     updateData.updated_at = now;
 
-    const { error: updateError } = await SupabaseService.queryAsAdmin(
-      'campaign_templates',
-      (query) => query
-        .update(updateData)
-        .eq('id', id)
-    );
+    const { error: updateError } = await SupabaseService.adminClient
+      .from('campaign_templates')
+      .update(updateData)
+      .eq('id', id);
 
     if (updateError) {
       throw updateError;
     }
 
     // Fetch updated template
-    const { data: updated, error: fetchError } = await SupabaseService.queryAsAdmin(
-      'campaign_templates',
-      (query) => query
-        .select('id, name, description, config, created_at, updated_at')
-        .eq('id', id)
-        .single()
-    );
+    const { data: updated, error: fetchError } = await SupabaseService.adminClient
+      .from('campaign_templates')
+      .select('id, name, content, variables, created_at, updated_at')
+      .eq('id', id)
+      .single();
 
     if (fetchError) {
       throw fetchError;
     }
 
     logger.info('Template atualizado:', {
-      templateId: id
+      templateId: id,
+      accountId
     });
 
     res.json({
@@ -309,8 +386,11 @@ router.put('/:id', verifyUserToken, async (req, res) => {
       template: {
         id: updated.id,
         name: updated.name,
-        description: updated.description,
-        config: typeof updated.config === 'string' ? JSON.parse(updated.config || '{}') : (updated.config || {}),
+        description: null,
+        config: {
+          messageContent: updated.content,
+          variables: updated.variables || []
+        },
         createdAt: updated.created_at,
         updatedAt: updated.updated_at
       }
@@ -332,42 +412,38 @@ router.put('/:id', verifyUserToken, async (req, res) => {
 /**
  * DELETE /api/user/templates/:id - Delete a template
  */
-router.delete('/:id', verifyUserToken, async (req, res) => {
+router.delete('/:id', verifyUserWithAccount, async (req, res) => {
   try {
-    const userToken = req.userToken;
+    const accountId = req.accountId;
     const { id } = req.params;
 
     // Verify ownership
-    const { data: existing, error: checkError } = await SupabaseService.queryAsAdmin(
-      'campaign_templates',
-      (query) => query
-        .select('id')
-        .eq('id', id)
-        .eq('user_token', userToken)
-    );
+    const { data: existing, error: checkError } = await SupabaseService.adminClient
+      .from('campaign_templates')
+      .select('id')
+      .eq('id', id)
+      .eq('account_id', accountId)
+      .single();
 
-    if (checkError) {
-      throw checkError;
-    }
-
-    if (!existing || existing.length === 0) {
+    if (checkError || !existing) {
       return res.status(404).json({
         success: false,
         error: 'Template não encontrado'
       });
     }
 
-    const { error: deleteError } = await SupabaseService.queryAsAdmin(
-      'campaign_templates',
-      (query) => query.delete().eq('id', id)
-    );
+    const { error: deleteError } = await SupabaseService.adminClient
+      .from('campaign_templates')
+      .delete()
+      .eq('id', id);
 
     if (deleteError) {
       throw deleteError;
     }
 
     logger.info('Template excluído:', {
-      templateId: id
+      templateId: id,
+      accountId
     });
 
     res.json({

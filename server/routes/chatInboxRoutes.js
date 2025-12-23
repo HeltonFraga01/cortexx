@@ -890,25 +890,24 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
           }
           
           // 4. Check Monthly Quota
-            const monthlyCheck = await quotaService.checkQuota(ownerId, 'max_messages_per_month', 1)
-            if (!monthlyCheck.allowed) {
-              logger.warn('Monthly message quota exceeded', { ownerId, accountId, usage: monthlyCheck.usage, limit: monthlyCheck.limit })
-              return res.status(429).json({ 
-                success: false, 
-                error: 'Monthly message limit reached',
-                message: 'Você atingiu seu limite mensal de mensagens. Faça um upgrade no seu plano.',
-                limit: monthlyCheck.limit,
-                usage: monthlyCheck.usage
-              })
-            }
-            
-            logger.debug('Quota check passed for message send', { ownerId })
-          } else {
-            logger.warn('Database connection unavailable for quota check', { accountId })
-            // Fail safe: If we can't check usage, we probably shouldn't block, 
-            // OR we should block to prevent abuse. 
-            // Better to block if system is unstable, but here we proceed with warning.
+          const monthlyCheck = await quotaService.checkQuota(ownerId, 'max_messages_per_month', 1)
+          if (!monthlyCheck.allowed) {
+            logger.warn('Monthly message quota exceeded', { ownerId, accountId, usage: monthlyCheck.usage, limit: monthlyCheck.limit })
+            return res.status(429).json({ 
+              success: false, 
+              error: 'Monthly message limit reached',
+              message: 'Você atingiu seu limite mensal de mensagens. Faça um upgrade no seu plano.',
+              limit: monthlyCheck.limit,
+              usage: monthlyCheck.usage
+            })
           }
+          
+          logger.debug('Quota check passed for message send', { ownerId })
+        } else {
+          logger.warn('Database connection unavailable for quota check', { accountId })
+          // Fail safe: If we can't check usage, we probably shouldn't block, 
+          // OR we should block to prevent abuse. 
+          // Better to block if system is unstable, but here we proceed with warning.
         }
       }
     } catch (quotaError) {

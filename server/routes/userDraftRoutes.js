@@ -2,7 +2,8 @@
  * User Draft Routes
  * Handles message draft persistence for the messaging system
  * 
- * UPDATED: Now uses SupabaseService directly instead of database.js compatibility layer
+ * UPDATED: Uses user_preferences table to store drafts since message_drafts
+ * has a different schema (conversation-based drafts for chat)
  * 
  * Requirements: 7.1, 7.2, 7.3
  */
@@ -74,6 +75,13 @@ const verifyUserTokenWithInbox = async (req, res, next) => {
 const verifyUserToken = verifyUserTokenWithInbox;
 
 /**
+ * Helper to get draft key for user_preferences
+ */
+function getDraftKey(draftType) {
+  return `draft_${draftType || 'send_flow'}`;
+}
+
+/**
  * GET /api/user/drafts - List all drafts for the user
  * Optionally filter by draft_type
  */
@@ -81,15 +89,23 @@ router.get('/', verifyUserToken, async (req, res) => {
   const userId = req.userId;
   const { draft_type } = req.query;
   
+  if (!userId) {
+    return res.status(401).json({
+      success: false,
+      error: 'Usuário não autenticado'
+    });
+  }
+  
   try {
+    // Get drafts from user_preferences
     let query = SupabaseService.adminClient
-      .from('message_drafts')
-      .select('id, user_id, draft_type, data, created_at, updated_at')
+      .from('user_preferences')
+      .select('id, user_id, key, value, created_at, updated_at')
       .eq('user_id', userId)
-      .order('updated_at', { ascending: false });
+      .like('key', 'draft_%');
     
     if (draft_type) {
-      query = query.eq('draft_type', draft_type);
+      query = query.eq('key', getDraftKey(draft_type));
     }
     
     const { data: rows, error } = await query;
@@ -101,8 +117,8 @@ router.get('/', verifyUserToken, async (req, res) => {
     const drafts = (rows || []).map(row => ({
       id: row.id,
       userId: row.user_id,
-      draftType: row.draft_type,
-      data: typeof row.data === 'string' ? JSON.parse(row.data) : row.data,
+      draftType: row.key.replace('draft_', ''),
+      data: row.value,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }));
@@ -134,10 +150,17 @@ router.get('/:id', verifyUserToken, async (req, res) => {
   const userId = req.userId;
   const { id } = req.params;
   
+  if (!userId) {
+    return res.status(401).json({
+      success: false,
+      error: 'Usuário não autenticado'
+    });
+  }
+  
   try {
     const { data: row, error } = await SupabaseService.adminClient
-      .from('message_drafts')
-      .select('id, user_id, draft_type, data, created_at, updated_at')
+      .from('user_preferences')
+      .select('id, user_id, key, value, created_at, updated_at')
       .eq('id', id)
       .eq('user_id', userId)
       .single();
@@ -152,8 +175,8 @@ router.get('/:id', verifyUserToken, async (req, res) => {
     const draft = {
       id: row.id,
       userId: row.user_id,
-      draftType: row.draft_type,
-      data: typeof row.data === 'string' ? JSON.parse(row.data) : row.data,
+      draftType: row.key.replace('draft_', ''),
+      data: row.value,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -186,6 +209,13 @@ router.post('/', verifyUserToken, async (req, res) => {
   const userId = req.userId;
   const { draftType = 'send_flow', data } = req.body;
   
+  if (!userId) {
+    return res.status(401).json({
+      success: false,
+      error: 'Usuário não autenticado'
+    });
+  }
+  
   if (!data) {
     return res.status(400).json({
       success: false,
@@ -195,14 +225,15 @@ router.post('/', verifyUserToken, async (req, res) => {
   
   try {
     const now = new Date().toISOString();
+    const key = getDraftKey(draftType);
     
     // Check if draft already exists for this user and type
     const { data: existing } = await SupabaseService.adminClient
-      .from('message_drafts')
+      .from('user_preferences')
       .select('id')
       .eq('user_id', userId)
-      .eq('draft_type', draftType)
-      .single();
+      .eq('key', key)
+      .maybeSingle();
     
     let draftId;
     
@@ -210,8 +241,8 @@ router.post('/', verifyUserToken, async (req, res) => {
       // Update existing draft
       draftId = existing.id;
       const { error: updateError } = await SupabaseService.adminClient
-        .from('message_drafts')
-        .update({ data: JSON.stringify(data), updated_at: now })
+        .from('user_preferences')
+        .update({ value: data, updated_at: now })
         .eq('id', draftId);
       
       if (updateError) {
@@ -225,21 +256,23 @@ router.post('/', verifyUserToken, async (req, res) => {
       });
     } else {
       // Create new draft
-      draftId = uuidv4();
-      const { error: insertError } = await SupabaseService.adminClient
-        .from('message_drafts')
+      const { data: inserted, error: insertError } = await SupabaseService.adminClient
+        .from('user_preferences')
         .insert({
-          id: draftId,
           user_id: userId,
-          draft_type: draftType,
-          data: JSON.stringify(data),
+          key,
+          value: data,
           created_at: now,
           updated_at: now
-        });
+        })
+        .select('id')
+        .single();
       
       if (insertError) {
         throw insertError;
       }
+      
+      draftId = inserted.id;
       
       logger.info('Rascunho criado:', {
         userId,
@@ -282,14 +315,22 @@ router.delete('/:id', verifyUserToken, async (req, res) => {
   const userId = req.userId;
   const { id } = req.params;
   
+  if (!userId) {
+    return res.status(401).json({
+      success: false,
+      error: 'Usuário não autenticado'
+    });
+  }
+  
   try {
     // Verify draft belongs to user before deleting
     const { data: existing } = await SupabaseService.adminClient
-      .from('message_drafts')
+      .from('user_preferences')
       .select('id')
       .eq('id', id)
       .eq('user_id', userId)
-      .single();
+      .like('key', 'draft_%')
+      .maybeSingle();
     
     if (!existing) {
       return res.status(404).json({
@@ -299,7 +340,7 @@ router.delete('/:id', verifyUserToken, async (req, res) => {
     }
     
     const { error: deleteError } = await SupabaseService.adminClient
-      .from('message_drafts')
+      .from('user_preferences')
       .delete()
       .eq('id', id)
       .eq('user_id', userId);
@@ -340,14 +381,26 @@ router.delete('/', verifyUserToken, async (req, res) => {
   const userId = req.userId;
   const { draft_type } = req.query;
   
+  if (!userId) {
+    return res.status(401).json({
+      success: false,
+      error: 'Usuário não autenticado'
+    });
+  }
+  
   try {
     let query = SupabaseService.adminClient
-      .from('message_drafts')
+      .from('user_preferences')
       .delete()
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .like('key', 'draft_%');
     
     if (draft_type) {
-      query = query.eq('draft_type', draft_type);
+      query = SupabaseService.adminClient
+        .from('user_preferences')
+        .delete()
+        .eq('user_id', userId)
+        .eq('key', getDraftKey(draft_type));
     }
     
     const { error: deleteError } = await query;

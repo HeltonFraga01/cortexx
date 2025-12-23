@@ -369,6 +369,11 @@ The SQLite to Supabase migration is 100% complete.
       - `FAQ.md`
       - `DEPLOY.md`
       - `TROUBLESHOOTING.md`
+      - `DEVELOPMENT_VS_DOCKER.md`
+      - `BACKEND_ENDPOINT_TEMPLATES_GUIDE.md`
+      - `ManualdeEngenharia.md`
+      - `custom-home-page-editor-technical.md`
+      - `releases/RELEASE_NOTES_v1.5.1.md`
   - [x] 18.7 Create README for archived docs folder
   - [x] 18.8 Create README for archived migration scripts folder
 

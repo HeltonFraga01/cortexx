@@ -62,21 +62,44 @@ export function IncomingWebhookConfig() {
   })
 
   // Generate the webhook URL based on current server
-  // In production, use the current browser URL (same origin)
-  // In development, use VITE_API_BASE_URL
+  // MULTI-TENANT: The webhook URL should be the main domain (without tenant subdomain)
+  // because WUZAPI identifies the user by token, not by subdomain
   const getWebhookUrl = () => {
-    // If we're in production (served from the same origin), use window.location
     const currentOrigin = window.location.origin
-    const isProduction = import.meta.env.PROD || !currentOrigin.includes('localhost:5173')
+    const hostname = window.location.hostname
+    const protocol = window.location.protocol
+    const port = window.location.port
     
-    if (isProduction) {
-      // Use the current origin (where the app is being served from)
+    // Check if we're in development (localhost)
+    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.localhost')
+    
+    if (isLocalhost) {
+      // In development, use the configured API URL or construct from current port
+      const baseUrl = import.meta.env.VITE_API_BASE_URL
+      if (baseUrl) {
+        return `${baseUrl}/api/webhook/events`
+      }
+      // Fallback: use current origin (for *.localhost development)
       return `${currentOrigin}/api/webhook/events`
     }
     
-    // In development, use the configured API URL
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'
-    return `${baseUrl}/api/webhook/events`
+    // PRODUCTION: Extract main domain (remove tenant subdomain)
+    // Example: cortexx.cortexx.online -> cortexx.online
+    // Example: tenant.example.com -> example.com
+    const parts = hostname.split('.')
+    
+    // If we have a subdomain (3+ parts), remove it to get main domain
+    // tenant.cortexx.online -> cortexx.online
+    // www.example.com -> example.com
+    let mainDomain = hostname
+    if (parts.length >= 3) {
+      // Remove first part (subdomain)
+      mainDomain = parts.slice(1).join('.')
+    }
+    
+    // Construct the webhook URL with main domain
+    const portSuffix = port && port !== '80' && port !== '443' ? `:${port}` : ''
+    return `${protocol}//${mainDomain}${portSuffix}/api/webhook/events`
   }
 
   const webhookUrl = getWebhookUrl()
@@ -105,31 +128,46 @@ export function IncomingWebhookConfig() {
   }
 
   const handleConfigure = () => {
-    // ALWAYS use the server URL as the source of truth
-    // This ensures the webhook points to THIS server, not the previously configured one
+    // MULTI-TENANT: Always use the main domain (without tenant subdomain)
+    // because WUZAPI identifies the user by token, not by subdomain
     let urlToUse: string | undefined
     
     if (showCustomUrl && customUrl) {
       // Custom URL provided by user - use as base (without /api/webhook/events)
       urlToUse = customUrl.replace(/\/api\/webhook\/events\/?$/, '')
     } else {
-      // ALWAYS use window.location.origin in production
-      // This is the actual server URL where the app is running
-      const currentOrigin = window.location.origin
-      const isProductionServer = !currentOrigin.includes('localhost') && !currentOrigin.includes('127.0.0.1')
+      const hostname = window.location.hostname
+      const protocol = window.location.protocol
+      const port = window.location.port
       
-      if (isProductionServer) {
-        // Use the current origin directly (e.g., https://cloudapi.wasend.com.br)
-        urlToUse = currentOrigin
+      // Check if localhost/development
+      const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.localhost')
+      
+      if (isLocalhost) {
+        // In development, let backend use WEBHOOK_BASE_URL env var
+        // urlToUse remains undefined
+      } else {
+        // PRODUCTION: Extract main domain (remove tenant subdomain)
+        const parts = hostname.split('.')
+        
+        // If we have a subdomain (3+ parts), remove it to get main domain
+        let mainDomain = hostname
+        if (parts.length >= 3) {
+          mainDomain = parts.slice(1).join('.')
+        }
+        
+        // Construct base URL with main domain (without /api/webhook/events)
+        const portSuffix = port && port !== '80' && port !== '443' ? `:${port}` : ''
+        urlToUse = `${protocol}//${mainDomain}${portSuffix}`
       }
-      // If localhost, urlToUse remains undefined and backend will use WEBHOOK_BASE_URL env var
     }
     
     // Debug log
     console.log('[IncomingWebhookConfig] Configuring webhook:', {
       windowOrigin: window.location.origin,
+      hostname: window.location.hostname,
       webhookUrl,
-      isLocalhost,
+      isLocalhost: window.location.hostname.includes('localhost'),
       showCustomUrl,
       customUrl,
       urlToUse,
@@ -230,6 +268,9 @@ export function IncomingWebhookConfig() {
                   )}
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground">
+                O webhook usa o domínio principal. O WUZAPI identifica seu usuário pelo token.
+              </p>
             </div>
 
             {/* Warning for localhost */}

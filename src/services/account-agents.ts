@@ -14,8 +14,22 @@ import type {
   InvitationFilters,
   AgentRole
 } from '@/types/multi-user'
+import { supabase } from '@/lib/supabase'
 
 const API_BASE = ''
+
+/**
+ * Get JWT token from Supabase session for API authentication
+ */
+async function getAuthToken(): Promise<string | null> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    return session?.access_token || null
+  } catch (error) {
+    console.error('Failed to get auth token:', error)
+    return null
+  }
+}
 
 /**
  * Get fresh CSRF token from server
@@ -34,18 +48,23 @@ async function getCsrfToken(): Promise<string | null> {
   }
 }
 
-// Use session-based auth (cookies) instead of agent token headers
-function getRequestOptions(): RequestInit {
+// Use JWT auth with session cookies as fallback
+async function getRequestOptions(): Promise<RequestInit> {
+  const token = await getAuthToken()
   return {
-    credentials: 'include' as RequestCredentials
+    credentials: 'include' as RequestCredentials,
+    headers: token ? { 'Authorization': `Bearer ${token}` } : {}
   }
 }
 
 async function getRequestOptionsWithCsrf(): Promise<RequestInit> {
-  const token = await getCsrfToken()
+  const [authToken, csrfToken] = await Promise.all([getAuthToken(), getCsrfToken()])
+  const headers: Record<string, string> = {}
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`
+  if (csrfToken) headers['CSRF-Token'] = csrfToken
   return {
     credentials: 'include' as RequestCredentials,
-    headers: token ? { 'CSRF-Token': token } : {}
+    headers
   }
 }
 
@@ -61,7 +80,7 @@ export async function listAgents(filters?: AgentFilters): Promise<Agent[]> {
   if (filters?.offset) params.set('offset', String(filters.offset))
 
   const url = `${API_BASE}/api/session/agents${params.toString() ? `?${params}` : ''}`
-  const response = await fetch(url, getRequestOptions())
+  const response = await fetch(url, await getRequestOptions())
 
   const result = await response.json()
   if (!response.ok) throw new Error(result.error || 'Failed to list agents')
@@ -73,7 +92,7 @@ export async function listAgents(filters?: AgentFilters): Promise<Agent[]> {
  * Get agent by ID
  */
 export async function getAgent(id: string): Promise<Agent> {
-  const response = await fetch(`${API_BASE}/api/session/agents/${id}`, getRequestOptions())
+  const response = await fetch(`${API_BASE}/api/session/agents/${id}`, await getRequestOptions())
 
   const result = await response.json()
   if (!response.ok) throw new Error(result.error || 'Failed to get agent')
@@ -138,7 +157,7 @@ export async function listInvitations(filters?: InvitationFilters): Promise<Invi
   if (filters?.status) params.set('status', filters.status)
 
   const url = `${API_BASE}/api/session/agents/invitations/list${params.toString() ? `?${params}` : ''}`
-  const response = await fetch(url, getRequestOptions())
+  const response = await fetch(url, await getRequestOptions())
 
   const result = await response.json()
   if (!response.ok) throw new Error(result.error || 'Failed to list invitations')
@@ -254,7 +273,7 @@ import type {
  * Get agent details including teams, inboxes, database access, and permissions
  */
 export async function getAgentDetails(agentId: string): Promise<AgentDetailsResponse> {
-  const response = await fetch(`${API_BASE}/api/session/agents/${agentId}/details`, getRequestOptions())
+  const response = await fetch(`${API_BASE}/api/session/agents/${agentId}/details`, await getRequestOptions())
 
   const result = await response.json()
   if (!response.ok) throw new Error(result.error || 'Failed to get agent details')

@@ -387,4 +387,3 @@ router.post('/:id/activate', requireAgentAuth(null), requirePermission('agents:e
 });
 
 module.exports = router;
-module.exports.initServices = initServices;

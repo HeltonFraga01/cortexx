@@ -36,7 +36,7 @@ class AgentDatabaseAccessService {
     try {
       const { data, error } = await SupabaseService.queryAsAdmin('agent_database_access', (query) => {
         return query
-          .select('id, agent_id, connection_id, access_level, created_at, updated_at')
+          .select('id, agent_id, connection_id, permissions, created_at')
           .eq('agent_id', agentId);
       });
       
@@ -75,13 +75,13 @@ class AgentDatabaseAccessService {
       for (const config of accessConfigs) {
         if (config.accessLevel !== 'none') {
           const id = this.generateId();
+          const permissions = this.accessLevelToPermissions(config.accessLevel);
           await SupabaseService.insert('agent_database_access', {
             id,
             agent_id: agentId,
             connection_id: config.connectionId,
-            access_level: config.accessLevel,
-            created_at: now,
-            updated_at: now
+            permissions,
+            created_at: now
           });
         }
       }
@@ -99,6 +99,22 @@ class AgentDatabaseAccessService {
   }
 
   /**
+   * Convert access level to permissions object
+   * @param {string} accessLevel - Access level ('none', 'view', 'full')
+   * @returns {Object} Permissions object
+   */
+  accessLevelToPermissions(accessLevel) {
+    switch (accessLevel) {
+      case 'full':
+        return { read: true, write: true, delete: true };
+      case 'view':
+        return { read: true, write: false, delete: false };
+      default:
+        return { read: false, write: false, delete: false };
+    }
+  }
+
+  /**
    * Check if agent has access to a specific database connection
    * @param {string} agentId - Agent ID
    * @param {string} connectionId - Database connection ID
@@ -108,7 +124,7 @@ class AgentDatabaseAccessService {
     try {
       const { data, error } = await SupabaseService.queryAsAdmin('agent_database_access', (query) => {
         return query
-          .select('access_level')
+          .select('permissions')
           .eq('agent_id', agentId)
           .eq('connection_id', connectionId)
           .single();
@@ -120,7 +136,13 @@ class AgentDatabaseAccessService {
         return 'none';
       }
       
-      return data.access_level;
+      const permissions = data.permissions || {};
+      if (permissions.write || permissions.delete) {
+        return 'full';
+      } else if (permissions.read) {
+        return 'view';
+      }
+      return 'none';
     } catch (error) {
       logger.error('Failed to check database access', { 
         error: error.message, 
@@ -133,7 +155,7 @@ class AgentDatabaseAccessService {
 
   /**
    * Get all accessible databases for an agent
-   * Returns only databases with 'view' or 'full' access
+   * Returns only databases with 'view' or 'full' access (read permission)
    * @param {string} agentId - Agent ID
    * @returns {Promise<Object[]>} List of accessible database configs with access level
    */
@@ -141,16 +163,28 @@ class AgentDatabaseAccessService {
     try {
       const { data, error } = await SupabaseService.queryAsAdmin('agent_database_access', (query) => {
         return query
-          .select('connection_id, access_level')
-          .eq('agent_id', agentId)
-          .in('access_level', ['view', 'full']);
+          .select('connection_id, permissions')
+          .eq('agent_id', agentId);
       });
       
       if (error) throw error;
-      return (data || []).map(row => ({
-        connectionId: row.connection_id,
-        accessLevel: row.access_level
-      }));
+      
+      // Filter to only those with read access and map to access levels
+      return (data || [])
+        .filter(row => row.permissions?.read)
+        .map(row => {
+          const permissions = row.permissions || {};
+          let accessLevel = 'none';
+          if (permissions.write || permissions.delete) {
+            accessLevel = 'full';
+          } else if (permissions.read) {
+            accessLevel = 'view';
+          }
+          return {
+            connectionId: row.connection_id,
+            accessLevel
+          };
+        });
     } catch (error) {
       logger.error('Failed to get accessible databases', { error: error.message, agentId });
       throw error;
@@ -185,13 +219,13 @@ class AgentDatabaseAccessService {
 
       // Insert new config
       const id = this.generateId();
+      const permissions = this.accessLevelToPermissions(accessLevel);
       await SupabaseService.insert('agent_database_access', {
         id,
         agent_id: agentId,
         connection_id: connectionId,
-        access_level: accessLevel,
-        created_at: now,
-        updated_at: now
+        permissions,
+        created_at: now
       });
 
       logger.info('Database access set', { agentId, connectionId, accessLevel });
@@ -243,23 +277,35 @@ class AgentDatabaseAccessService {
         return query
           .select(`
             agent_id,
-            access_level,
+            permissions,
             agents!inner (
               name,
               email
             )
           `)
-          .eq('connection_id', connectionId)
-          .in('access_level', ['view', 'full']);
+          .eq('connection_id', connectionId);
       });
       
       if (error) throw error;
-      return (data || []).map(row => ({
-        agentId: row.agent_id,
-        agentName: row.agents?.name,
-        agentEmail: row.agents?.email,
-        accessLevel: row.access_level
-      }));
+      
+      // Filter to only those with read access and map to access levels
+      return (data || [])
+        .filter(row => row.permissions?.read)
+        .map(row => {
+          const permissions = row.permissions || {};
+          let accessLevel = 'none';
+          if (permissions.write || permissions.delete) {
+            accessLevel = 'full';
+          } else if (permissions.read) {
+            accessLevel = 'view';
+          }
+          return {
+            agentId: row.agent_id,
+            agentName: row.agents?.name,
+            agentEmail: row.agents?.email,
+            accessLevel
+          };
+        });
     } catch (error) {
       logger.error('Failed to get agents with access', { error: error.message, connectionId });
       throw error;
@@ -281,6 +327,7 @@ class AgentDatabaseAccessService {
 
       const now = new Date().toISOString();
       let updatedCount = 0;
+      const permissions = this.accessLevelToPermissions(accessLevel);
 
       for (const agentId of agentIds) {
         // Delete existing
@@ -295,9 +342,8 @@ class AgentDatabaseAccessService {
             id,
             agent_id: agentId,
             connection_id: connectionId,
-            access_level: accessLevel,
-            created_at: now,
-            updated_at: now
+            permissions,
+            created_at: now
           });
         }
         updatedCount++;
@@ -326,13 +372,22 @@ class AgentDatabaseAccessService {
    * @returns {Object} Formatted access config
    */
   formatAccessConfig(row) {
+    // Extract access level from permissions jsonb
+    const permissions = row.permissions || { read: false, write: false, delete: false };
+    let accessLevel = 'none';
+    if (permissions.write || permissions.delete) {
+      accessLevel = 'full';
+    } else if (permissions.read) {
+      accessLevel = 'view';
+    }
+    
     return {
       id: row.id,
       agentId: row.agent_id,
       connectionId: row.connection_id,
-      accessLevel: row.access_level,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at
+      accessLevel,
+      permissions,
+      createdAt: row.created_at
     };
   }
 }

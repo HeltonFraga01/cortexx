@@ -120,15 +120,21 @@ class InboxContextService {
     // Selecionar inbox ativa
     const activeInbox = await this.selectActiveInbox(userId, availableInboxes);
 
-    // Buscar email do usuário
-    const { data: userData } = await SupabaseService.queryAsAdmin('auth.users', (query) =>
-      query.select('email').eq('id', userId).single()
-    );
+    // Buscar email do usuário via Supabase Auth Admin API
+    let userEmail = '';
+    try {
+      const { data: authUser, error: authError } = await SupabaseService.adminClient.auth.admin.getUserById(userId);
+      if (!authError && authUser?.user?.email) {
+        userEmail = authUser.user.email;
+      }
+    } catch (authErr) {
+      logger.debug('Could not fetch user email from auth', { userId, error: authErr.message });
+    }
 
     return {
       userId,
       userType: 'owner',
-      email: userData?.email || '',
+      email: userEmail,
       agentId: null,
       agentRole: 'owner',
       accountId: account.id,
