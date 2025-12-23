@@ -619,7 +619,7 @@ Isso significa que os campos realmente estão vazios no banco de dados, não é 
 1. **Verifique o Tipo de Conexão**
    ```
    - Metadados só estão disponíveis para conexões NocoDB
-   - Conexões SQLite, PostgreSQL, MySQL usam texto simples
+   - Conexões PostgreSQL, MySQL usam texto simples
    ```
 
 2. **Recarregue a Página**

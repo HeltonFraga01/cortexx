@@ -34,7 +34,7 @@ WUZAPI Manager/
 ```
 
 ### Tecnologias Principais
-- **Backend**: Node.js, Express, SQLite
+- **Backend**: Node.js, Express, Supabase (PostgreSQL)
 - **Frontend**: React, TypeScript, Tailwind CSS, shadcn/ui
 - **Ferramentas**: Vite, ESLint, Vitest
 - **Deploy**: Docker, Docker Swarm

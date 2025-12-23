@@ -120,9 +120,8 @@ ALERT_EMAIL_TO=admin@company.com
 
 **Verificações**:
 - Status da aplicação
-- Conectividade com banco de dados
+- Conectividade com banco de dados (Supabase)
 - Uso de memória
-- Integridade do banco SQLite
 - Espaço em disco
 - Conectividade com APIs externas
 

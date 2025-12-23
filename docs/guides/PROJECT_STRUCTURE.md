@@ -179,14 +179,14 @@ server/
 │   ├── 004_add_messages_table.js
 │   └── run-migrations.js
 ├── config/                     # Configurações
-│   └── sqlite.js
 ├── tests/                      # Testes backend
 │   ├── integration/
 │   ├── routes/
 │   └── services/
 ├── public/                     # Arquivos estáticos
 ├── logs/                       # Logs da aplicação
-├── database.js                 # Abstração de banco
+├── services/
+│   └── SupabaseService.js     # Abstração de banco (OBRIGATÓRIO)
 ├── index.js                    # Entry point
 ├── healthcheck.js              # Health check
 └── package.json                # Dependências backend
@@ -254,7 +254,6 @@ security-reports/               # Relatórios de segurança
 ```
 node_modules/                   # Dependências Node.js
 dist/                          # Build do frontend
-data/                          # Dados SQLite
 logs/                          # Logs da aplicação
 backups/                       # Backups do banco
 .vite/                         # Cache Vite
@@ -272,7 +271,7 @@ backups/                       # Backups do banco
 ### Desenvolvimento Backend
 - `server/index.js` - Entry point
 - `server/routes/` - Definição de rotas
-- `server/database.js` - Acesso ao banco
+- `server/services/SupabaseService.js` - Acesso ao banco
 - `server/utils/logger.js` - Logging
 
 ### Deploy
@@ -313,11 +312,11 @@ backups/                       # Backups do banco
 
 - Sempre use `@/` para imports do frontend (alias para `src/`)
 - Backend usa CommonJS, frontend usa ES modules
-- SQLite em modo WAL para melhor concorrência
+- Supabase (PostgreSQL) como banco de dados
 - Docker multi-stage para otimização de build
 - Documentação organizada por categoria em `docs/`
 
 ---
 
-**Última atualização**: 09/11/2024  
-**Versão**: v1.3.2
+**Última atualização**: 23/12/2024  
+**Versão**: v1.5.x

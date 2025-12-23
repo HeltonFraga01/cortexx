@@ -76,7 +76,7 @@ Cada tutorial segue esta estrutura:
 
 ### Backend
 - **Node.js + Express** - Servidor e APIs
-- **SQLite** - Banco de dados
+- **Supabase (PostgreSQL)** - Banco de dados
 - **Axios** - Cliente HTTP
 - **Winston** - Logging
 

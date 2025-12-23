@@ -25,7 +25,7 @@ The Dynamic Sidebar Navigation feature replaces the static "Meu Banco" menu item
 
 - **Dynamic Menu Generation**: Automatically creates sidebar items for each assigned database connection
 - **Direct-to-Edit Navigation**: Single-click access from sidebar to record edit form
-- **Multi-Database Support**: Works with NocoDB, SQLite, PostgreSQL, and MySQL
+- **Multi-Database Support**: Works with NocoDB, PostgreSQL, and MySQL (external user databases)
 - **Intelligent Caching**: Reduces API calls and improves performance
 - **Real-time Updates**: Reflects admin configuration changes after login/refresh
 
@@ -69,14 +69,13 @@ The Dynamic Sidebar Navigation feature replaces the static "Meu Banco" menu item
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │  UserRecordService                                     │ │
 │  │    ├─ fetchNocoDBRecord()                              │ │
-│  │    ├─ fetchSQLiteRecord()                              │ │
 │  │    ├─ fetchSQLRecord()                                 │ │
 │  │    └─ hasAccess()                                      │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                             ↕
 ┌─────────────────────────────────────────────────────────────┐
-│       External Databases (NocoDB, SQLite, PostgreSQL)        │
+│       External Databases (NocoDB, PostgreSQL, MySQL)         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -1029,7 +1028,8 @@ describe('Dynamic Sidebar Navigation', () => {
 PORT=3001
 NODE_ENV=production
 WUZAPI_BASE_URL=https://api.wuzapi.com
-SQLITE_DB_PATH=./server/wuzapi.db
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 LOG_LEVEL=info
 
 # Frontend (.env)
@@ -1123,9 +1123,6 @@ services:
 
 **Debug Commands**:
 ```bash
-# Check if connections exist in database
-sqlite3 server/wuzapi.db "SELECT * FROM database_connections WHERE assignedUsers LIKE '%token%';"
-
 # Test API endpoint
 curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:3001/api/user/database-connections
 
@@ -1157,9 +1154,6 @@ tail -f server/logs/app-$(date +%Y-%m-%d).log
 # For NocoDB connection
 curl -H "xc-token: YOUR_NOCODB_TOKEN" \
   "https://nocodb.example.com/api/v1/db/data/noco/PROJECT_ID/TABLE_ID?where=(apiToken,eq,USER_TOKEN)"
-
-# For SQLite connection
-sqlite3 server/wuzapi.db "SELECT * FROM table_name WHERE apiToken = 'USER_TOKEN';"
 ```
 
 ---
@@ -1510,11 +1504,11 @@ curl -X PUT \
 - [React Documentation](https://react.dev/)
 - [Express.js Guide](https://expressjs.com/)
 - [NocoDB API](https://docs.nocodb.com/)
-- [SQLite Documentation](https://www.sqlite.org/docs.html)
+- [Supabase Documentation](https://supabase.com/docs)
 
 ---
 
-**Document Version**: 1.0.0  
-**Last Updated**: November 7, 2025  
+**Document Version**: 1.1.0  
+**Last Updated**: December 23, 2025  
 **Authors**: WUZAPI Manager Development Team  
 **Status**: Complete

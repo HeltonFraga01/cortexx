@@ -7,7 +7,7 @@ Este documento define os padrões de qualidade e boas práticas que devem ser se
 - [Padrões Gerais](#padrões-gerais)
 - [Backend - Node.js/Express](#backend---nodejsexpress)
 - [Frontend - React/TypeScript](#frontend---reacttypescript)
-- [Banco de Dados - SQLite](#banco-de-dados---sqlite)
+- [Banco de Dados - Supabase (PostgreSQL)](#banco-de-dados---supabase-postgresql)
 - [Segurança](#segurança)
 - [Performance](#performance)
 - [Testes](#testes)
@@ -300,7 +300,7 @@ try {
 )}
 ```
 
-## Banco de Dados - SQLite
+## Banco de Dados - Supabase (PostgreSQL)
 
 ### ✅ Estrutura de Dados
 
@@ -310,27 +310,29 @@ try {
 - [ ] Índices criados para queries frequentes
 - [ ] Constraints de integridade implementadas
 - [ ] Campos de auditoria (created_at, updated_at)
+- [ ] RLS (Row Level Security) configurado onde necessário
 
-#### Queries
+#### Queries via SupabaseService
 ```javascript
-// ✅ Bom
-const result = await db.query(
-  'SELECT * FROM users WHERE status = ? AND created_at > ? ORDER BY created_at DESC LIMIT ?',
-  ['active', startDate, limit]
+// ✅ Bom - usando SupabaseService
+const { data, error } = await SupabaseService.getMany('users', {
+  status: 'active'
+});
+
+// ✅ Bom - query customizada
+const { data, error } = await SupabaseService.queryAsAdmin('users', (query) =>
+  query.select('*').eq('status', 'active').gt('created_at', startDate).order('created_at', { ascending: false }).limit(limit)
 );
 
-// ❌ Ruim
-const result = await db.query(
-  `SELECT * FROM users WHERE status = '${status}'`
-);
+// ❌ Ruim - cliente Supabase direto
+const { data } = await supabase.from('users').select('*');
 ```
 
 #### Transações
-- [ ] Transações usadas para operações múltiplas
-- [ ] Rollback implementado em caso de erro
-- [ ] Locks adequados para concorrência
-- [ ] Timeout configurado para transações
-- [ ] Logs de transações para auditoria
+- [ ] Operações atômicas usando funções RPC quando necessário
+- [ ] Tratamento de erros com rollback lógico
+- [ ] Logs de operações para auditoria
+- [ ] Timeout configurado para operações longas
 
 ## Segurança
 
@@ -354,16 +356,13 @@ const result = await db.query(
 
 #### SQL Injection
 ```javascript
-// ✅ Bom
-const result = await db.query(
-  'SELECT * FROM users WHERE id = ?',
-  [userId]
-);
+// ✅ Bom - SupabaseService usa queries parametrizadas
+const { data, error } = await SupabaseService.getById('users', userId);
 
-// ❌ Ruim
-const result = await db.query(
-  `SELECT * FROM users WHERE id = ${userId}`
-);
+// ✅ Bom - filtros são parametrizados automaticamente
+const { data, error } = await SupabaseService.getMany('users', { id: userId });
+
+// ❌ Ruim - nunca concatenar valores em queries
 ```
 
 #### XSS Prevention

@@ -69,8 +69,8 @@ Complete implementation of a permission-based table access control system for th
 - Dynamic form generation based on table schema
 
 ### Security
-- SQL injection protection via input validation
-- System table exclusion (sqlite_*, table_permissions, _*)
+- SQL injection protection via parameterized queries (SupabaseService)
+- System table exclusion (table_permissions, _*)
 - Rate limiting (100/50/20 req/min for read/write/delete)
 - Permission-based access control
 - Audit logging for all operations

@@ -148,8 +148,10 @@ NODE_ENV=development
 WUZAPI_BASE_URL=https://wzapi.wasend.com.br
 WUZAPI_TIMEOUT=10000
 
-# Banco de Dados
-SQLITE_DB_PATH=./server/wuzapi.db
+# Banco de Dados (Supabase)
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_ANON_KEY=your-anon-key
 
 # Tokens
 VITE_ADMIN_TOKEN=UeH7cZ2c1K3zVUBFi7SginSC
@@ -295,7 +297,7 @@ services:
 2. **Testes**: `npm test`
 3. **Deploy**: Use CI/CD pipeline
 4. **Monitoramento**: Configure logs e alertas
-5. **Backup**: Configure backup do banco SQLite
+5. **Backup**: Configure backup via Supabase Dashboard
 
 ## 📝 Changelog
 

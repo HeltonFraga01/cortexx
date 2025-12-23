@@ -467,9 +467,9 @@ All table and column names are validated against a whitelist pattern:
 ### System Tables Protection
 
 The following system tables are automatically excluded from access:
-- `sqlite_*` (SQLite internal tables)
 - `table_permissions` (permissions table itself)
 - Any table starting with `_` (internal tables)
+- System tables managed by Supabase
 
 ### Input Validation
 

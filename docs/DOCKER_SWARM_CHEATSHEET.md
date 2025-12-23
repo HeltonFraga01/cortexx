@@ -308,13 +308,13 @@ sleep 30
 
 ---
 
-## 📈 Escala (Não recomendado para SQLite)
+## 📈 Escala (Arquitetura Single-Instance)
 
 ```bash
 # Ver replicas atuais
 docker service ls --filter "name=wuzapi-manager"
 
-# Escalar (NÃO FAZER - SQLite não suporta)
+# Escalar (NÃO RECOMENDADO - arquitetura single-instance)
 # docker service scale wuzapi-manager_wuzapi-manager=2
 
 # Manter sempre em 1 replica

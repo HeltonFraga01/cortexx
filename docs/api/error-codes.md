@@ -273,14 +273,14 @@ Todas as respostas de erro seguem o mesmo formato:
 ```
 
 **Causas:**
-- Problemas com SQLite
-- Corrupção de dados
-- Falta de espaço em disco
+- Problemas com banco de dados (Supabase)
+- Erro de conexão
+- Timeout de operação
 
 **Soluções:**
 - Verificar logs do servidor
-- Confirmar integridade do banco
-- Verificar espaço em disco
+- Confirmar conectividade com Supabase
+- Verificar variáveis de ambiente
 
 ## Troubleshooting por Endpoint
 

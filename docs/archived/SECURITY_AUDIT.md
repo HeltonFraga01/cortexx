@@ -198,18 +198,17 @@ WUZAPI_BASE_URL: import.meta.env.VITE_WUZAPI_BASE_URL || 'https://wzapi.wasend.c
 
 ### 4. 🟢 BAIXO: Validação de Nome de Tabela/Campo
 
-**Localização**: `server/database.js` - `getSQLiteTableData()`
+**Localização**: `server/services/SupabaseService.js`
 
 ```javascript
-// ✅ BOM: Validação contra SQL injection
-if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
-  throw new Error(`Nome de tabela inválido: ${tableName}`);
-}
+// ✅ BOM: Queries parametrizadas via Supabase
+// Supabase usa queries parametrizadas por padrão, prevenindo SQL injection
+const { data, error } = await SupabaseService.getMany('table_name', { field: value });
 ```
 
 **Status**: ✅ **PROTEGIDO**
 
-A validação está implementada corretamente.
+O SupabaseService usa queries parametrizadas por padrão.
 
 ---
 

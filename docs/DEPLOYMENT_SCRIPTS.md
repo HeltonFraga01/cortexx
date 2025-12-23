@@ -256,7 +256,7 @@ docker service update --image heltonfraga/wuzapi-manager:v1.5.46 wuzapi-manager_
 # Atualizar variável de ambiente
 docker service update --env-add "NEW_VAR=value" wuzapi-manager_wuzapi-manager
 
-# Escalar replicas (não recomendado - SQLite não suporta)
+# Escalar replicas (não recomendado - arquitetura single-instance)
 docker service scale wuzapi-manager_wuzapi-manager=1
 ```
 

@@ -9,7 +9,7 @@ O WUZAPI Manager utiliza uma arquitetura Docker otimizada com:
 - **Multi-stage build** para imagens menores e builds mais rápidos
 - **Health checks robustos** com verificações múltiplas
 - **Traefik** como reverse proxy e load balancer
-- **Backup automático** do banco SQLite
+- **Supabase** como banco de dados (PostgreSQL hospedado)
 - **Monitoramento** com Prometheus e Grafana (opcional)
 
 ## 📋 Pré-requisitos
@@ -144,13 +144,10 @@ NODE_ENV=production
 PORT=3001
 WUZAPI_BASE_URL=https://wzapi.wasend.com.br
 
-# SQLite Otimizado
-SQLITE_DB_PATH=/app/data/wuzapi.db
-SQLITE_WAL_MODE=true
-SQLITE_TIMEOUT=10000
-SQLITE_CACHE_SIZE=8000
-SQLITE_SYNCHRONOUS=NORMAL
-SQLITE_JOURNAL_MODE=WAL
+# Supabase (PostgreSQL)
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_ANON_KEY=your-anon-key
 
 # Node.js Otimizado
 NODE_OPTIONS=--max-old-space-size=512
@@ -190,7 +187,7 @@ resources:
 O health check verifica:
 
 - **HTTP Server** - Resposta da API `/health`
-- **Database** - Acessibilidade do SQLite
+- **Database** - Conectividade com Supabase
 - **Memory Usage** - Uso de memória dentro dos limites
 - **Disk Space** - Acesso ao diretório de dados
 
@@ -224,14 +221,11 @@ docker inspect <container-id> | grep Health -A 10
 #### Banco de dados não acessível
 
 ```bash
-# Verificar permissões
-docker exec -it <container-id> ls -la /app/data/
+# Verificar variáveis de ambiente
+docker exec -it <container-id> env | grep SUPABASE
 
-# Verificar espaço em disco
-docker exec -it <container-id> df -h
-
-# Backup manual
-docker exec -it <container-id> sqlite3 /app/data/wuzapi.db ".backup /app/data/backup.db"
+# Verificar conectividade
+docker exec -it <container-id> curl -s https://your-project.supabase.co/rest/v1/
 ```
 
 #### Traefik não roteia

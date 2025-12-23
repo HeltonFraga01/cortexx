@@ -317,6 +317,65 @@ The following test files were updated to use SupabaseService mocking instead of 
 
 The SQLite to Supabase migration is 100% complete.
 
+## Post-Migration Cleanup (December 23, 2025)
+
+- [x] 18. Clean Up Obsolete Code and Documentation
+  - [x] 18.1 Remove archived SQLite test folders
+    - `server/tests/integration/archived-sqlite-tests/`
+    - `server/webhooks/archived-sqlite-tests/`
+    - `server/scripts/archived-sqlite-scripts/`
+    - `server/services/archived-sqlite-tests/`
+    - `server/tests/routes/archived-sqlite-tests/`
+    - `server/migrations-sqlite-archived/`
+    - `server/tests/archived-sqlite-tests/`
+  - [x] 18.2 Remove `server/scripts/verify-sqlite-removal.js`
+  - [x] 18.3 Archive migration scripts (no longer needed)
+    - Moved to `server/scripts/archived-migration-scripts/`:
+      - `migrate-to-supabase.js`
+      - `verify-migration.js`
+      - `verify-data-consistency.js`
+  - [x] 18.4 Update `server/README.md` with Supabase-only architecture
+  - [x] 18.5 Update test files to remove MockDatabase pattern
+    - Updated 6 test files to use SupabaseService mocking
+  - [x] 18.6 Update documentation to remove SQLite references
+    - Updated: `docs/QUALITY_CHECKLIST.md`
+    - Updated: `docs/DYNAMIC_SIDEBAR_NAVIGATION_TECHNICAL.md`
+    - Updated: `docs/table-permissions-implementation-summary.md`
+    - Updated: `docs/MONITORING.md`
+    - Updated: `docs/DEPLOYMENT_SCRIPTS.md`
+    - Updated: `docs/USER_DATABASE_NAVIGATION_GUIDE.md`
+    - Updated: `docs/DEVELOPMENT_GUIDE.md`
+    - Updated: `docs/examples/README.md`
+    - Updated: `docs/guides/PROJECT_STRUCTURE.md`
+    - Updated: `docs/DOCKER_SWARM_CHEATSHEET.md`
+    - Updated: `docs/DOCKER.md`
+    - Updated: `docs/api/README.md`
+    - Updated: `docs/api/error-codes.md`
+    - Updated: `docs/table-permissions-api.md`
+    - Updated: `docs/SECURITY_IMPLEMENTATION.md`
+    - Updated: `docs/NETWORK_ARCHITECTURE.md`
+    - Archived (moved to `docs/archived/`):
+      - `BACKEND_DATA_INTEGRATIONS_GUIDE.md`
+      - `SECURITY_AUDIT.md`
+      - `MODERNIZATION_SUMMARY.md`
+      - `examples/tutorial-grupos.md`
+      - `guides/ESPECIFICACAO_PRODUTO.md`
+      - `DOCKER_DATABASE_CONFIG.md`
+      - `DYNAMIC_SIDEBAR_QUICK_REFERENCE.md`
+      - `DYNAMIC_SIDEBAR_ARCHITECTURE.md`
+      - `development/CHANGELOG_USER_DASHBOARD.md`
+      - `development/CHANGELOG_MESSAGES_MODERNIZATION.md`
+      - `guides/QUICK_REFERENCE.md`
+      - `FAQ.md`
+      - `DEPLOY.md`
+      - `TROUBLESHOOTING.md`
+  - [x] 18.7 Create README for archived docs folder
+  - [x] 18.8 Create README for archived migration scripts folder
+
+## Migration Complete ✅
+
+The SQLite to Supabase migration is 100% complete as of December 23, 2025.
+
 ## Notes
 
 - Tasks marked with `*` are optional and can be skipped for faster MVP

@@ -260,7 +260,7 @@ docker network create --driver overlay network_public
 
 - ✅ Single-instance (1 serviço apenas)
 - ✅ Sem comunicação inter-serviços
-- ✅ SQLite local (não há DB externo)
+- ✅ Supabase como DB externo (gerenciado)
 - ✅ Segurança via Traefik + Auth
 - ✅ Simplicidade é prioridade
 

@@ -12,7 +12,7 @@ Todas as vulnerabilidades críticas de segurança identificadas na auditoria for
 
 ### 1. ✅ Sistema de Sessão e Autenticação
 - **Arquivo**: `server/middleware/session.js`
-- **Configuração**: SQLite store, cookies HTTP-only, SameSite=Strict
+- **Configuração**: Cookies HTTP-only, SameSite=Strict
 - **Duração**: 24 horas
 - **Secret**: Configurável via `SESSION_SECRET` no .env
 
