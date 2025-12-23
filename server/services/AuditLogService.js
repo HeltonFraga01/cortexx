@@ -7,8 +7,8 @@ const { logger } = require('../utils/logger');
 const SupabaseService = require('./SupabaseService');
 
 class AuditLogService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   async logAutomation(entry) {

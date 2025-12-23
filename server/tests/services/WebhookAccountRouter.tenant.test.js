@@ -1,120 +1,150 @@
 /**
  * WebhookAccountRouter Tenant Context Tests
  * Tests for multi-tenant webhook routing
+ * 
+ * MIGRATED: Now uses SupabaseService mocking instead of MockDatabase
  */
 
-const { test, describe } = require('node:test');
+const { test, describe, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
+
+// Mock SupabaseService before requiring WebhookAccountRouter
+const mockSupabaseService = {
+  accounts: new Map(),
+  tenants: new Map(),
+  conversations: new Map(),
+  agents: new Map(),
+
+  async queryAsAdmin(table, queryBuilder) {
+    if (table === 'accounts') {
+      const mockQuery = {
+        _filters: {},
+        _select: '*',
+        select: (fields) => { mockQuery._select = fields; return mockQuery; },
+        eq: (field, value) => { mockQuery._filters[field] = value; return mockQuery; },
+        limit: () => mockQuery,
+        then: async (resolve) => {
+          const token = mockQuery._filters?.wuzapi_token;
+          const account = mockSupabaseService.accounts.get(token);
+          if (!account) return resolve({ data: [], error: null });
+          
+          const tenant = mockSupabaseService.tenants.get(account.tenant_id);
+          if (!tenant) return resolve({ data: [], error: null });
+
+          // Check status filters
+          if (mockQuery._filters.status === 'active' && account.status !== 'active') {
+            return resolve({ data: [], error: null });
+          }
+          if (mockQuery._filters['tenants.status'] === 'active' && tenant.status !== 'active') {
+            return resolve({ data: [], error: null });
+          }
+
+          return resolve({
+            data: [{
+              id: account.id,
+              name: account.name,
+              owner_user_id: account.owner_user_id,
+              wuzapi_token: account.wuzapi_token,
+              status: account.status,
+              tenant_id: account.tenant_id,
+              tenants: {
+                id: tenant.id,
+                subdomain: tenant.subdomain,
+                name: tenant.name,
+                status: tenant.status
+              }
+            }],
+            error: null
+          });
+        }
+      };
+      return queryBuilder(mockQuery);
+    }
+
+    if (table === 'conversations') {
+      const mockQuery = {
+        _filters: {},
+        select: () => mockQuery,
+        eq: (field, value) => { mockQuery._filters[field] = value; return mockQuery; },
+        single: () => mockQuery,
+        then: async (resolve) => {
+          const convId = mockQuery._filters?.id;
+          const conv = mockSupabaseService.conversations.get(convId);
+          return resolve({ data: conv || null, error: conv ? null : { code: 'PGRST116' } });
+        }
+      };
+      return queryBuilder(mockQuery);
+    }
+
+    if (table === 'agents') {
+      const mockQuery = {
+        _filters: {},
+        select: () => mockQuery,
+        eq: (field, value) => { mockQuery._filters[field] = value; return mockQuery; },
+        then: async (resolve) => {
+          const accountId = mockQuery._filters?.account_id;
+          const agents = Array.from(mockSupabaseService.agents.values()).filter(a => a.account_id === accountId);
+          return resolve({ data: agents, error: null });
+        }
+      };
+      return queryBuilder(mockQuery);
+    }
+
+    return { data: [], error: null };
+  },
+
+  async getMany(table, filters) { return { data: [], error: null }; },
+  async insert(table, data) { return { data, error: null }; },
+  async update(table, id, data) { return { data: { id, ...data }, error: null }; },
+  async delete(table, id) { return { data: null, error: null }; },
+
+  addTenant(id, data) {
+    mockSupabaseService.tenants.set(id, { id, ...data });
+  },
+  addAccount(token, data) {
+    mockSupabaseService.accounts.set(token, { wuzapi_token: token, ...data });
+  },
+  addConversation(id, data) {
+    mockSupabaseService.conversations.set(id, { id, ...data });
+  },
+  addAgent(id, data) {
+    mockSupabaseService.agents.set(id, { id, ...data });
+  },
+  reset() {
+    mockSupabaseService.accounts.clear();
+    mockSupabaseService.tenants.clear();
+    mockSupabaseService.conversations.clear();
+    mockSupabaseService.agents.clear();
+  }
+};
+
+// Mock the SupabaseService module
+require.cache[require.resolve('../../services/SupabaseService')] = {
+  exports: mockSupabaseService
+};
+
 const WebhookAccountRouter = require('../../services/WebhookAccountRouter');
 
 describe('WebhookAccountRouter - Tenant Context', () => {
   let router;
-  let mockDb;
 
-  // Mock database
-  class MockDatabase {
-    constructor() {
-      this.accounts = new Map();
-      this.tenants = new Map();
-      this.conversations = new Map();
-      this.agents = new Map();
-    }
+  beforeEach(() => {
+    mockSupabaseService.reset();
+    router = new WebhookAccountRouter();
+  });
 
-    async query(sql, params = []) {
-      // Mock account lookup with tenant join
-      if (sql.includes('FROM accounts a') && sql.includes('JOIN tenants t')) {
-        const token = params[0];
-        const account = this.accounts.get(token);
-        if (!account) return { rows: [] };
-        
-        const tenant = this.tenants.get(account.tenant_id);
-        if (!tenant) return { rows: [] };
-
-        // Implement the SQL filtering: WHERE a.status = 'active' AND t.status = 'active'
-        if (sql.includes("a.status = 'active' AND t.status = 'active'")) {
-          if (account.status !== 'active' || tenant.status !== 'active') {
-            return { rows: [] };
-          }
-        }
-
-        return {
-          rows: [{
-            id: account.id,
-            name: account.name,
-            owner_user_id: account.owner_user_id,
-            wuzapi_token: account.wuzapi_token,
-            status: account.status,
-            tenant_id: account.tenant_id,
-            tenant_subdomain: tenant.subdomain,
-            tenant_name: tenant.name,
-            tenant_status: tenant.status
-          }]
-        };
-      }
-
-      // Mock conversation lookup
-      if (sql.includes('FROM conversations')) {
-        const convId = params[0];
-        const conv = this.conversations.get(convId);
-        return { rows: conv ? [conv] : [] };
-      }
-
-      // Mock agents lookup
-      if (sql.includes('FROM agents')) {
-        const accountId = params[0];
-        const agents = Array.from(this.agents.values()).filter(a => a.account_id === accountId);
-        return { rows: agents };
-      }
-
-      // Mock inbox members lookup
-      if (sql.includes('FROM inbox_members')) {
-        return { rows: [] }; // Simplified for test
-      }
-
-      // Mock audit log insert
-      if (sql.includes('INSERT INTO audit_log')) {
-        return { rows: [] };
-      }
-
-      return { rows: [] };
-    }
-
-    addTenant(id, data) {
-      this.tenants.set(id, { id, ...data });
-    }
-
-    addAccount(token, data) {
-      this.accounts.set(token, { wuzapi_token: token, ...data });
-    }
-
-    addConversation(id, data) {
-      this.conversations.set(id, { id, ...data });
-    }
-
-    addAgent(id, data) {
-      this.agents.set(id, { id, ...data });
-    }
-
-    reset() {
-      this.accounts.clear();
-      this.tenants.clear();
-      this.conversations.clear();
-      this.agents.clear();
-    }
-  }
+  afterEach(() => {
+    mockSupabaseService.reset();
+  });
 
   test('should route webhook to correct account with tenant context', async () => {
-    mockDb = new MockDatabase();
-    router = new WebhookAccountRouter(mockDb);
-
-    // Setup test data
-    mockDb.addTenant('tenant-1', {
+    mockSupabaseService.addTenant('tenant-1', {
       subdomain: 'company1',
       name: 'Company 1',
       status: 'active'
     });
 
-    mockDb.addAccount('token123', {
+    mockSupabaseService.addAccount('token123', {
       id: 'account-1',
       name: 'Test Account',
       owner_user_id: 'user-1',
@@ -133,17 +163,13 @@ describe('WebhookAccountRouter - Tenant Context', () => {
   });
 
   test('should reject webhook when tenant is inactive', async () => {
-    mockDb = new MockDatabase();
-    router = new WebhookAccountRouter(mockDb);
-
-    // Setup test data with inactive tenant
-    mockDb.addTenant('tenant-2', {
+    mockSupabaseService.addTenant('tenant-2', {
       subdomain: 'company2',
       name: 'Company 2',
       status: 'inactive'
     });
 
-    mockDb.addAccount('token456', {
+    mockSupabaseService.addAccount('token456', {
       id: 'account-2',
       name: 'Test Account 2',
       owner_user_id: 'user-2',
@@ -155,13 +181,10 @@ describe('WebhookAccountRouter - Tenant Context', () => {
     const result = await router.routeWebhook('token456', event);
 
     assert.strictEqual(result.routed, false);
-    assert.strictEqual(result.reason, 'account_not_found'); // Because tenant is inactive
+    assert.strictEqual(result.reason, 'account_not_found');
   });
 
   test('should validate tenant context correctly', async () => {
-    mockDb = new MockDatabase();
-    router = new WebhookAccountRouter(mockDb);
-
     const account = {
       id: 'account-1',
       tenant_id: 'tenant-1',
@@ -171,32 +194,22 @@ describe('WebhookAccountRouter - Tenant Context', () => {
       }
     };
 
-    // Should pass with matching tenant
     assert.strictEqual(router.validateTenantContext(account, 'tenant-1'), true);
-
-    // Should fail with different tenant
     assert.strictEqual(router.validateTenantContext(account, 'tenant-2'), false);
-
-    // Should pass with no expected tenant (just check active)
     assert.strictEqual(router.validateTenantContext(account), true);
 
-    // Should fail with inactive tenant
     account.tenant.status = 'inactive';
     assert.strictEqual(router.validateTenantContext(account), false);
   });
 
   test('should reject webhook with invalid tenant context', async () => {
-    mockDb = new MockDatabase();
-    router = new WebhookAccountRouter(mockDb);
-
-    // Setup test data
-    mockDb.addTenant('tenant-1', {
+    mockSupabaseService.addTenant('tenant-1', {
       subdomain: 'company1',
       name: 'Company 1',
       status: 'active'
     });
 
-    mockDb.addAccount('token789', {
+    mockSupabaseService.addAccount('token789', {
       id: 'account-3',
       name: 'Test Account 3',
       owner_user_id: 'user-3',
@@ -205,8 +218,6 @@ describe('WebhookAccountRouter - Tenant Context', () => {
     });
 
     const event = { type: 'message.received', text: 'Hello' };
-    
-    // Try to route with different expected tenant
     const result = await router.routeWebhook('token789', event, 'tenant-2');
 
     assert.strictEqual(result.routed, false);
@@ -214,9 +225,6 @@ describe('WebhookAccountRouter - Tenant Context', () => {
   });
 
   test('should handle missing account gracefully', async () => {
-    mockDb = new MockDatabase();
-    router = new WebhookAccountRouter(mockDb);
-
     const event = { type: 'message.received', text: 'Hello' };
     const result = await router.routeWebhook('nonexistent-token', event);
 

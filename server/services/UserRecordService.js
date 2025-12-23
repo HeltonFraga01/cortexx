@@ -1,5 +1,6 @@
 const { logger } = require('../utils/logger');
 const axios = require('axios');
+const SupabaseService = require('./SupabaseService');
 
 /**
  * UserRecordService - Serviço para buscar registros únicos de usuários em diferentes tipos de banco de dados
@@ -9,8 +10,8 @@ const axios = require('axios');
  * - Bancos relacionais (MySQL, PostgreSQL)
  */
 class UserRecordService {
-  constructor(database) {
-    this.db = database;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   /**
@@ -27,7 +28,14 @@ class UserRecordService {
       });
 
       // 1. Buscar configuração da conexão
-      const connection = await this.db.getConnectionById(connectionId);
+      const { data: connection, error: connError } = await SupabaseService.queryAsAdmin('database_connections', (query) =>
+        query.select('*').eq('id', connectionId).single()
+      );
+      
+      if (connError) {
+        logger.error('❌ UserRecordService: Erro ao buscar conexão:', { connectionId, error: connError.message });
+        throw connError;
+      }
       
       if (!connection) {
         const error = new Error('Connection not found');

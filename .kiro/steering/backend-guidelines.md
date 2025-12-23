@@ -8,7 +8,7 @@ fileMatchPattern: 'server/**/*.js'
 ## Critical Rules
 
 **NEVER bypass these abstractions:**
-- Database: ALWAYS use `require('../services/SupabaseService')` or `require('../database')` for compatibility layer
+- Database: ALWAYS use `require('../services/SupabaseService')` for all database operations
 - Logging: ALWAYS use `require('../utils/logger')`, NEVER `console.log/error`
 - WUZAPI: ALWAYS use `require('../utils/wuzapiClient')`, NEVER direct `fetch()`
 - Imports: ALWAYS use CommonJS `require()`, NEVER ES modules `import`

@@ -4,135 +4,116 @@
  * Uses fast-check for property-based testing to verify correctness properties.
  * 
  * Requirements: 2.6, 3.1, 3.2, 3.4, 3.5, 3.6
+ * 
+ * MIGRATED: Now uses SupabaseService mocking instead of MockDatabase
  */
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
 const fc = require('fast-check');
-const QuotaService = require('../../services/QuotaService');
 
-// Mock database
-class MockDatabase {
-  constructor() {
-    this.subscriptions = new Map();
-    this.plans = new Map();
-    this.overrides = new Map();
-    this.usage = new Map();
-  }
+// Mock SupabaseService before requiring QuotaService
+const mockSupabaseService = {
+  subscriptions: new Map(),
+  plans: new Map(),
+  overrides: new Map(),
+  usage: new Map(),
 
-  async query(sql, params = []) {
-    const sqlUpper = sql.trim().toUpperCase();
-
-    // Plan quotas query - updated for tenant_plans
-    if (sql.includes('FROM user_subscriptions s') && sql.includes('JOIN tenant_plans tp')) {
-      const userId = params[0];
-      const sub = this.subscriptions.get(userId);
-      if (!sub) return { rows: [] };
-      const plan = this.plans.get(sub.planId);
-      if (!plan) return { rows: [] };
-      
-      // Convert plan structure to match new JSON-based quotas format
-      return { 
-        rows: [{
-          max_agents: plan.max_agents?.toString(),
-          max_connections: plan.max_connections?.toString(),
-          max_messages_per_day: plan.max_messages_per_day?.toString(),
-          max_messages_per_month: plan.max_messages_per_month?.toString(),
-          max_inboxes: plan.max_inboxes?.toString(),
-          max_teams: plan.max_teams?.toString(),
-          max_webhooks: plan.max_webhooks?.toString(),
-          max_campaigns: plan.max_campaigns?.toString(),
-          max_storage_mb: plan.max_storage_mb?.toString(),
-          max_bots: plan.max_bots?.toString(),
-          max_bot_calls_per_day: plan.max_bot_calls_per_day?.toString(),
-          max_bot_calls_per_month: plan.max_bot_calls_per_month?.toString(),
-          max_bot_messages_per_day: plan.max_bot_messages_per_day?.toString(),
-          max_bot_messages_per_month: plan.max_bot_messages_per_month?.toString(),
-          max_bot_tokens_per_day: plan.max_bot_tokens_per_day?.toString(),
-          max_bot_tokens_per_month: plan.max_bot_tokens_per_month?.toString()
-        }]
+  async queryAsAdmin(table, queryBuilder) {
+    // Handle user_subscriptions with plan join
+    if (table === 'user_subscriptions') {
+      const mockQuery = {
+        select: () => mockQuery,
+        eq: (field, value) => {
+          mockQuery._filters = mockQuery._filters || {};
+          mockQuery._filters[field] = value;
+          return mockQuery;
+        },
+        single: () => mockQuery,
+        then: async (resolve) => {
+          const userId = mockQuery._filters?.user_id;
+          const sub = mockSupabaseService.subscriptions.get(userId);
+          if (!sub) return resolve({ data: null, error: { code: 'PGRST116' } });
+          const plan = mockSupabaseService.plans.get(sub.planId);
+          if (!plan) return resolve({ data: null, error: { code: 'PGRST116' } });
+          return resolve({ 
+            data: {
+              plans: {
+                max_agents: plan.max_agents,
+                max_connections: plan.max_connections,
+                max_messages_per_day: plan.max_messages_per_day,
+                max_messages_per_month: plan.max_messages_per_month,
+                max_inboxes: plan.max_inboxes,
+                max_teams: plan.max_teams,
+                max_webhooks: plan.max_webhooks,
+                max_campaigns: plan.max_campaigns,
+                max_storage_mb: plan.max_storage_mb,
+                max_bots: plan.max_bots,
+                max_bot_calls_per_day: plan.max_bot_calls_per_day,
+                max_bot_calls_per_month: plan.max_bot_calls_per_month,
+                max_bot_messages_per_day: plan.max_bot_messages_per_day,
+                max_bot_messages_per_month: plan.max_bot_messages_per_month,
+                max_bot_tokens_per_day: plan.max_bot_tokens_per_day,
+                max_bot_tokens_per_month: plan.max_bot_tokens_per_month
+              }
+            }, 
+            error: null 
+          });
+        }
       };
+      return queryBuilder(mockQuery);
     }
+    return { data: null, error: null };
+  },
 
-    // Override queries
-    if (sql.includes('FROM user_quota_overrides')) {
-      const userId = params[0];
-      const quotaType = params[1];
-      const key = quotaType ? `${userId}:${quotaType}` : userId;
-      
+  async getMany(table, filters) {
+    if (table === 'user_quota_overrides') {
+      const userId = filters.user_id;
+      const quotaType = filters.quota_type;
       if (quotaType) {
-        const override = this.overrides.get(key);
-        return { rows: override ? [override] : [] };
+        const key = `${userId}:${quotaType}`;
+        const override = mockSupabaseService.overrides.get(key);
+        return { data: override ? [override] : [], error: null };
       } else {
         const overrides = [];
-        this.overrides.forEach((v, k) => {
+        mockSupabaseService.overrides.forEach((v, k) => {
           if (k.startsWith(userId + ':')) overrides.push(v);
         });
-        return { rows: overrides };
+        return { data: overrides, error: null };
       }
     }
-
-    // Usage queries
-    if (sql.includes('FROM user_quota_usage')) {
-      const userId = params[0];
-      const quotaType = params[1];
-      const key = `${userId}:${quotaType}`;
-      const usage = this.usage.get(key);
-      return { rows: usage ? [usage] : [] };
+    if (table === 'user_quota_usage') {
+      const key = `${filters.user_id}:${filters.quota_type}`;
+      const usage = mockSupabaseService.usage.get(key);
+      return { data: usage ? [usage] : [], error: null };
     }
+    return { data: [], error: null };
+  },
 
-    // Insert/Update override
-    if (sqlUpper.includes('INSERT INTO USER_QUOTA_OVERRIDES')) {
-      const key = `${params[1]}:${params[2]}`;
-      this.overrides.set(key, {
-        id: params[0], user_id: params[1], quota_type: params[2],
-        limit_value: params[3], reason: params[4], set_by: params[5]
-      });
-      return { rows: [] };
+  async insert(table, data) {
+    if (table === 'user_quota_overrides') {
+      const key = `${data.user_id}:${data.quota_type}`;
+      mockSupabaseService.overrides.set(key, data);
+      return { data, error: null };
     }
-
-    if (sqlUpper.includes('UPDATE USER_QUOTA_OVERRIDES')) {
-      const userId = params[4];
-      const quotaType = params[5];
-      const key = `${userId}:${quotaType}`;
-      const existing = this.overrides.get(key);
-      if (existing) {
-        existing.limit_value = params[0];
-        existing.reason = params[1];
-        existing.set_by = params[2];
-      }
-      return { rows: [] };
+    if (table === 'user_quota_usage') {
+      const key = `${data.user_id}:${data.quota_type}`;
+      mockSupabaseService.usage.set(key, data);
+      return { data, error: null };
     }
+    return { data, error: null };
+  },
 
-    if (sqlUpper.includes('DELETE FROM USER_QUOTA_OVERRIDES')) {
-      const key = `${params[0]}:${params[1]}`;
-      this.overrides.delete(key);
-      return { rows: [] };
-    }
+  async update(table, id, data) {
+    return { data: { id, ...data }, error: null };
+  },
 
-    // Insert/Update usage
-    if (sqlUpper.includes('INSERT INTO USER_QUOTA_USAGE')) {
-      const key = `${params[1]}:${params[2]}`;
-      this.usage.set(key, {
-        id: params[0], user_id: params[1], quota_type: params[2],
-        period_start: params[3], current_usage: params[5]
-      });
-      return { rows: [] };
-    }
-
-    if (sqlUpper.includes('UPDATE USER_QUOTA_USAGE SET CURRENT_USAGE')) {
-      if (sql.includes('WHERE id')) {
-        const id = params[2];
-        this.usage.forEach(u => { if (u.id === id) u.current_usage = params[0]; });
-      }
-      return { rows: [] };
-    }
-
-    return { rows: [] };
-  }
+  async delete(table, id) {
+    return { data: null, error: null };
+  },
 
   addPlan(id, quotas) {
-    this.plans.set(id, {
+    mockSupabaseService.plans.set(id, {
       max_agents: quotas.maxAgents || 1,
       max_connections: quotas.maxConnections || 1,
       max_messages_per_day: quotas.maxMessagesPerDay || 100,
@@ -150,31 +131,37 @@ class MockDatabase {
       max_bot_tokens_per_day: quotas.maxBotTokensPerDay || 10000,
       max_bot_tokens_per_month: quotas.maxBotTokensPerMonth || 300000
     });
-  }
+  },
 
   addSubscription(userId, planId) {
-    this.subscriptions.set(userId, { userId, planId });
-  }
+    mockSupabaseService.subscriptions.set(userId, { userId, planId });
+  },
 
   reset() {
-    this.subscriptions.clear();
-    this.plans.clear();
-    this.overrides.clear();
-    this.usage.clear();
+    mockSupabaseService.subscriptions.clear();
+    mockSupabaseService.plans.clear();
+    mockSupabaseService.overrides.clear();
+    mockSupabaseService.usage.clear();
   }
-}
+};
+
+// Mock the SupabaseService module
+require.cache[require.resolve('../../services/SupabaseService')] = {
+  exports: mockSupabaseService
+};
+
+const QuotaService = require('../../services/QuotaService');
 
 describe('QuotaService Property-Based Tests', () => {
-  let db;
   let quotaService;
 
   beforeEach(() => {
-    db = new MockDatabase();
-    quotaService = new QuotaService(db);
+    mockSupabaseService.reset();
+    quotaService = new QuotaService();
   });
 
   afterEach(() => {
-    db.reset();
+    mockSupabaseService.reset();
   });
 
   /**
@@ -192,8 +179,8 @@ describe('QuotaService Property-Based Tests', () => {
             const planId = 'plan-1';
             const quotaType = 'max_agents';
 
-            db.addPlan(planId, { maxAgents: planLimit });
-            db.addSubscription(userId, planId);
+            mockSupabaseService.addPlan(planId, { maxAgents: planLimit });
+            mockSupabaseService.addSubscription(userId, planId);
             await quotaService.setQuotaOverride(userId, quotaType, overrideLimit, 'admin-1', 'Test');
 
             const effectiveLimit = await quotaService.getEffectiveLimit(userId, quotaType);
@@ -209,8 +196,8 @@ describe('QuotaService Property-Based Tests', () => {
       const planId = 'plan-2';
       const planLimit = 50;
 
-      db.addPlan(planId, { maxAgents: planLimit });
-      db.addSubscription(userId, planId);
+      mockSupabaseService.addPlan(planId, { maxAgents: planLimit });
+      mockSupabaseService.addSubscription(userId, planId);
 
       const effectiveLimit = await quotaService.getEffectiveLimit(userId, 'max_agents');
       assert.strictEqual(effectiveLimit, planLimit);
@@ -232,13 +219,13 @@ describe('QuotaService Property-Based Tests', () => {
             const planId = 'plan-3';
             const quotaType = 'max_messages_per_day';
 
-            db.addPlan(planId, { maxMessagesPerDay: limit });
-            db.addSubscription(userId, planId);
+            mockSupabaseService.addPlan(planId, { maxMessagesPerDay: limit });
+            mockSupabaseService.addSubscription(userId, planId);
             
             // Set current usage
             if (currentUsage > 0) {
               const key = `${userId}:${quotaType}`;
-              db.usage.set(key, { id: 'u1', user_id: userId, quota_type: quotaType, current_usage: currentUsage });
+              mockSupabaseService.usage.set(key, { id: 'u1', user_id: userId, quota_type: quotaType, current_usage: currentUsage });
             }
 
             const amountToAdd = limit - currentUsage + 1; // Exceeds limit
@@ -261,12 +248,12 @@ describe('QuotaService Property-Based Tests', () => {
             const planId = 'plan-4';
             const quotaType = 'max_messages_per_day';
 
-            db.addPlan(planId, { maxMessagesPerDay: limit });
-            db.addSubscription(userId, planId);
+            mockSupabaseService.addPlan(planId, { maxMessagesPerDay: limit });
+            mockSupabaseService.addSubscription(userId, planId);
             
             if (currentUsage > 0) {
               const key = `${userId}:${quotaType}`;
-              db.usage.set(key, { id: 'u2', user_id: userId, quota_type: quotaType, current_usage: currentUsage });
+              mockSupabaseService.usage.set(key, { id: 'u2', user_id: userId, quota_type: quotaType, current_usage: currentUsage });
             }
 
             const amountToAdd = 1;
@@ -290,19 +277,17 @@ describe('QuotaService Property-Based Tests', () => {
         fc.asyncProperty(
           fc.integer({ min: 1, max: 50 }), // incrementAmount
           async (incrementAmount) => {
-            // Reset db for each test to ensure clean state
-            db.reset();
+            mockSupabaseService.reset();
             
             const userId = `user-inc-${Date.now()}-${Math.random()}`;
             const planId = 'plan-inc';
             const quotaType = 'max_messages_per_day';
 
-            db.addPlan(planId, { maxMessagesPerDay: 1000 });
-            db.addSubscription(userId, planId);
+            mockSupabaseService.addPlan(planId, { maxMessagesPerDay: 1000 });
+            mockSupabaseService.addSubscription(userId, planId);
 
             const newUsage = await quotaService.incrementUsage(userId, quotaType, incrementAmount);
             
-            // Verify the usage was recorded
             const currentUsage = await quotaService.getCurrentUsage(userId, quotaType);
             return newUsage === incrementAmount && currentUsage === incrementAmount;
           }
@@ -317,11 +302,11 @@ describe('QuotaService Property-Based Tests', () => {
       const limit = 100;
       const usage = 80;
 
-      db.addPlan(planId, { maxMessagesPerDay: limit });
-      db.addSubscription(userId, planId);
+      mockSupabaseService.addPlan(planId, { maxMessagesPerDay: limit });
+      mockSupabaseService.addSubscription(userId, planId);
       
       const key = `${userId}:max_messages_per_day`;
-      db.usage.set(key, { id: 'u3', user_id: userId, quota_type: 'max_messages_per_day', current_usage: usage });
+      mockSupabaseService.usage.set(key, { id: 'u3', user_id: userId, quota_type: 'max_messages_per_day', current_usage: usage });
 
       const quotas = await quotaService.getUserQuotas(userId);
       const msgQuota = quotas.find(q => q.quotaType === 'max_messages_per_day');
@@ -339,8 +324,8 @@ describe('QuotaService Property-Based Tests', () => {
       const userId = 'user-reset';
       const planId = 'plan-reset';
 
-      db.addPlan(planId, { maxMessagesPerDay: 100, maxMessagesPerMonth: 3000 });
-      db.addSubscription(userId, planId);
+      mockSupabaseService.addPlan(planId, { maxMessagesPerDay: 100, maxMessagesPerMonth: 3000 });
+      mockSupabaseService.addSubscription(userId, planId);
 
       // Set some usage
       await quotaService.incrementUsage(userId, 'max_messages_per_day', 50);
@@ -349,8 +334,7 @@ describe('QuotaService Property-Based Tests', () => {
       // Reset
       await quotaService.resetCycleCounters(userId);
 
-      // Verify reset (note: our mock doesn't fully implement reset, but the service does)
-      // This test verifies the method runs without error
+      // Verify reset runs without error
       assert.ok(true);
     });
   });

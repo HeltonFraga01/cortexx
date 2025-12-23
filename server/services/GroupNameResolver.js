@@ -9,6 +9,7 @@
 
 const axios = require('axios');
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 /**
  * Check if a group name is invalid and needs to be fetched from WUZAPI
@@ -44,11 +45,9 @@ class GroupNameResolver {
   /**
    * Create a new GroupNameResolver instance
    * 
-   * @param {Object} db - Database instance
-   * @param {Object} logger - Logger instance (optional, uses default if not provided)
+   * @param {Object} customLogger - Logger instance (optional, uses default if not provided)
    */
-  constructor(db, customLogger = null) {
-    this.db = db;
+  constructor(customLogger = null) {
     this.logger = customLogger || logger;
     this.nameCache = new Map(); // groupJid -> { name, timestamp }
     this.cacheTTL = 5 * 60 * 1000; // 5 minutes
@@ -398,12 +397,13 @@ class GroupNameResolver {
     try {
       const timestamp = new Date().toISOString();
       
-      await this.db.query(
-        `UPDATE conversations 
-         SET contact_name = ?, name_source = ?, name_updated_at = ? 
-         WHERE id = ?`,
-        [name, source, timestamp, conversationId]
-      );
+      const { error } = await SupabaseService.update('conversations', conversationId, {
+        contact_name: name,
+        name_source: source,
+        name_updated_at: timestamp
+      });
+      
+      if (error) throw error;
       
       this.logger.info('Conversation name updated', {
         conversationId,
@@ -468,15 +468,16 @@ class GroupNameResolver {
     
     // Step 2: Check database for existing conversation
     try {
-      const sql = `
-        SELECT id, contact_name, name_source, name_updated_at 
-        FROM conversations 
-        WHERE user_id = ? AND contact_jid = ?
-      `;
-      const { rows } = await this.db.query(sql, [userId, groupJid]);
+      const { data: conversations, error: convError } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+        query.select('id, contact_name, name_source, name_updated_at')
+          .eq('user_id', userId)
+          .eq('contact_jid', groupJid)
+      );
       
-      if (rows.length > 0) {
-        const conversation = rows[0];
+      if (convError) throw convError;
+      
+      if (conversations && conversations.length > 0) {
+        const conversation = conversations[0];
         conversationId = conversation.id;
         previousName = conversation.contact_name;
         

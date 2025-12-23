@@ -14,10 +14,8 @@ const supabaseService = require('./SupabaseService');
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 class AgentSessionService {
-  // eslint-disable-next-line no-unused-vars
-  constructor(db) {
-    // db parameter kept for backward compatibility but not used
-    // All operations use SupabaseService directly
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   /**

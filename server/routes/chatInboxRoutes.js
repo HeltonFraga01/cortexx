@@ -874,25 +874,22 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
         
         if (!accountError && account?.owner_user_id) {
           const ownerId = account.owner_user_id
-          const db = req.app?.locals?.db
+          const quotaService = new QuotaService()
           
-          if (db) {
-            const quotaService = new QuotaService(db)
-            
-            // 3. Check Daily Quota
-            const dailyCheck = await quotaService.checkQuota(ownerId, 'max_messages_per_day', 1)
-            if (!dailyCheck.allowed) {
-              logger.warn('Daily message quota exceeded', { ownerId, accountId, usage: dailyCheck.usage, limit: dailyCheck.limit })
-              return res.status(429).json({ 
-                success: false, 
-                error: 'Daily message limit reached',
-                message: 'Você atingiu seu limite diário de mensagens. Faça um upgrade no seu plano ou aguarde até amanhã.',
-                limit: dailyCheck.limit,
-                usage: dailyCheck.usage
-              })
-            }
-            
-            // 4. Check Monthly Quota
+          // 3. Check Daily Quota
+          const dailyCheck = await quotaService.checkQuota(ownerId, 'max_messages_per_day', 1)
+          if (!dailyCheck.allowed) {
+            logger.warn('Daily message quota exceeded', { ownerId, accountId, usage: dailyCheck.usage, limit: dailyCheck.limit })
+            return res.status(429).json({ 
+              success: false, 
+              error: 'Daily message limit reached',
+              message: 'Você atingiu seu limite diário de mensagens. Faça um upgrade no seu plano ou aguarde até amanhã.',
+              limit: dailyCheck.limit,
+              usage: dailyCheck.usage
+            })
+          }
+          
+          // 4. Check Monthly Quota
             const monthlyCheck = await quotaService.checkQuota(ownerId, 'max_messages_per_month', 1)
             if (!monthlyCheck.allowed) {
               logger.warn('Monthly message quota exceeded', { ownerId, accountId, usage: monthlyCheck.usage, limit: monthlyCheck.limit })
@@ -1211,23 +1208,17 @@ router.post('/conversations/:id/messages', verifyUserToken, async (req, res) => 
           const { data: account, error: accountError } = await supabaseService.getById('accounts', accountId)
           
           if (!accountError && account?.owner_user_id) {
-            // Get db from app.locals for QuotaService
-            const db = req.app?.locals?.db;
-            if (db) {
-              const quotaService = new QuotaService(db)
-              
-              // Increment daily and monthly message quotas
-              await quotaService.incrementUsage(account.owner_user_id, 'max_messages_per_day', 1)
-              await quotaService.incrementUsage(account.owner_user_id, 'max_messages_per_month', 1)
-              
-              logger.debug('Message quota incremented', {
-                accountId,
-                ownerId: account.owner_user_id,
-                conversationId: id
-              })
-            } else {
-              logger.warn('Database not available for quota tracking', { accountId })
-            }
+            const quotaService = new QuotaService()
+            
+            // Increment daily and monthly message quotas
+            await quotaService.incrementUsage(account.owner_user_id, 'max_messages_per_day', 1)
+            await quotaService.incrementUsage(account.owner_user_id, 'max_messages_per_month', 1)
+            
+            logger.debug('Message quota incremented', {
+              accountId,
+              ownerId: account.owner_user_id,
+              conversationId: id
+            })
           } else {
             logger.warn('Could not find account owner for quota tracking', { accountId })
           }

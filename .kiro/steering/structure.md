@@ -122,7 +122,7 @@ import { Button } from '../../../components/ui/button'
 ```javascript
 // ✅ Correto
 const logger = require('../utils/logger')
-const db = require('../database')
+const SupabaseService = require('../services/SupabaseService')
 
 // ❌ Errado (sem suporte a alias)
 const logger = require('@/utils/logger')

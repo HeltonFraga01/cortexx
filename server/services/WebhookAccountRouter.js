@@ -7,10 +7,11 @@
  */
 
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class WebhookAccountRouter {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   /**
@@ -23,18 +24,22 @@ class WebhookAccountRouter {
    */
   async getAccountByToken(userToken) {
     try {
-      const sql = `
-        SELECT a.id, a.name, a.owner_user_id, a.wuzapi_token, a.status, a.tenant_id,
-               t.subdomain as tenant_subdomain, t.name as tenant_name, t.status as tenant_status
-        FROM accounts a
-        JOIN tenants t ON a.tenant_id = t.id
-        WHERE a.wuzapi_token = ? AND a.status = 'active' AND t.status = 'active'
-      `;
+      const { data: accounts, error } = await SupabaseService.queryAsAdmin('accounts', (query) =>
+        query.select(`
+          id, name, owner_user_id, wuzapi_token, status, tenant_id,
+          tenants!inner(id, subdomain, name, status)
+        `)
+        .eq('wuzapi_token', userToken)
+        .eq('status', 'active')
+        .eq('tenants.status', 'active')
+        .limit(1)
+      );
       
-      const { rows } = await this.db.query(sql, [userToken]);
+      if (error) throw error;
       
-      if (rows[0]) {
-        const account = rows[0];
+      if (accounts && accounts.length > 0) {
+        const account = accounts[0];
+        const tenant = account.tenants;
         return {
           id: account.id,
           name: account.name,
@@ -43,10 +48,10 @@ class WebhookAccountRouter {
           status: account.status,
           tenant_id: account.tenant_id,
           tenant: {
-            id: account.tenant_id,
-            subdomain: account.tenant_subdomain,
-            name: account.tenant_name,
-            status: account.tenant_status
+            id: tenant.id,
+            subdomain: tenant.subdomain,
+            name: tenant.name,
+            status: tenant.status
           }
         };
       }
@@ -77,26 +82,27 @@ class WebhookAccountRouter {
 
       // If there's an inbox, notify all inbox members
       if (inboxId) {
-        const sql = `
-          SELECT agent_id
-          FROM inbox_members
-          WHERE inbox_id = ?
-        `;
-        const { rows } = await this.db.query(sql, [inboxId]);
-        rows.forEach(r => agentIds.add(r.agent_id));
+        const { data: members, error: membersError } = await SupabaseService.queryAsAdmin('inbox_members', (query) =>
+          query.select('agent_id').eq('inbox_id', inboxId)
+        );
+        
+        if (!membersError && members) {
+          members.forEach(r => agentIds.add(r.agent_id));
+        }
       }
 
       // If no specific inbox, notify all online agents in the account
       if (!inboxId && agentIds.size === 0) {
-        const sql = `
-          SELECT id
-          FROM agents
-          WHERE account_id = ? 
-            AND status = 'active'
-            AND availability IN ('online', 'busy')
-        `;
-        const { rows } = await this.db.query(sql, [accountId]);
-        rows.forEach(r => agentIds.add(r.id));
+        const { data: agents, error: agentsError } = await SupabaseService.queryAsAdmin('agents', (query) =>
+          query.select('id')
+            .eq('account_id', accountId)
+            .eq('status', 'active')
+            .in('availability', ['online', 'busy'])
+        );
+        
+        if (!agentsError && agents) {
+          agents.forEach(r => agentIds.add(r.id));
+        }
       }
 
       return Array.from(agentIds);
@@ -176,15 +182,15 @@ class WebhookAccountRouter {
       let assignedAgentId = null;
       
       if (event.conversationId) {
-        const convSql = `
-          SELECT inbox_id, assigned_agent_id
-          FROM conversations
-          WHERE id = ?
-        `;
-        const { rows } = await this.db.query(convSql, [event.conversationId]);
-        if (rows[0]) {
-          inboxId = rows[0].inbox_id;
-          assignedAgentId = rows[0].assigned_agent_id;
+        const { data: conv, error: convError } = await SupabaseService.queryAsAdmin('conversations', (query) =>
+          query.select('inbox_id, assigned_agent_id')
+            .eq('id', event.conversationId)
+            .single()
+        );
+        
+        if (!convError && conv) {
+          inboxId = conv.inbox_id;
+          assignedAgentId = conv.assigned_agent_id;
         }
       }
 
@@ -239,28 +245,23 @@ class WebhookAccountRouter {
    */
   async logWebhookEvent(accountId, event, routingResult) {
     try {
-      const sql = `
-        INSERT INTO audit_log (
-          id, account_id, action, resource_type, resource_id, details, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-      `;
-      
       const id = `wh-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
-      await this.db.query(sql, [
+      await SupabaseService.insert('audit_log', {
         id,
-        accountId,
-        'webhook_received',
-        'webhook',
-        event.type,
-        JSON.stringify({
+        account_id: accountId,
+        action: 'webhook_received',
+        resource_type: 'webhook',
+        resource_id: event.type,
+        details: {
           eventType: event.type,
           routed: routingResult.routed,
           agentsNotified: routingResult.agentsToNotify?.length || 0,
           tenantId: routingResult.tenant?.id,
           tenantSubdomain: routingResult.tenant?.subdomain
-        })
-      ]);
+        },
+        created_at: new Date().toISOString()
+      });
     } catch (error) {
       // Don't throw - logging failure shouldn't break webhook processing
       logger.error('Failed to log webhook event', { error: error.message });

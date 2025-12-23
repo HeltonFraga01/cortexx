@@ -16,10 +16,9 @@ const SupabaseService = require('./SupabaseService');
 
 class CampaignScheduler {
   /**
-   * @param {Object} db - Instância do banco de dados (legacy, não usado)
+   * Constructor - no db parameter needed, uses SupabaseService directly
    */
-  constructor(db) {
-    this.db = db;
+  constructor() {
     this.checkInterval = 60000; // 1 minuto
     this.intervalId = null;
     this.activeQueues = new Map(); // campaignId -> QueueManager
@@ -313,7 +312,7 @@ class CampaignScheduler {
         sending_window: campaign.sending_window ? JSON.parse(campaign.sending_window) : null
       };
 
-      const queueManager = new QueueManager(campaign.id, config, this.db);
+      const queueManager = new QueueManager(campaign.id, config);
 
       // Carregar contatos (já normaliza os números)
       await queueManager.loadContacts();
@@ -569,7 +568,7 @@ class CampaignScheduler {
 
         // 5. Criar nova fila com config correto
         const QueueManager = require('./QueueManager');
-        queue = new QueueManager(campaignId, config, this.db);
+        queue = new QueueManager(campaignId, config);
 
         logger.info('QueueManager criado', { campaignId });
 

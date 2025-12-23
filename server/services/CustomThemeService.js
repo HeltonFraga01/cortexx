@@ -5,10 +5,11 @@
  */
 
 const { logger } = require('../utils/logger');
+const SupabaseService = require('./SupabaseService');
 
 class CustomThemeService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   /**
@@ -20,20 +21,19 @@ class CustomThemeService {
     const { name, description, connectionId, schema, previewImage } = data;
 
     try {
-      const result = await this.db.query(`
-        INSERT INTO custom_themes (name, description, connection_id, schema, preview_image)
-        VALUES (?, ?, ?, ?, ?)
-      `, [
+      const { data: result, error } = await SupabaseService.insert('custom_themes', {
         name,
-        description || null,
-        connectionId || null,
-        JSON.stringify(schema),
-        previewImage || null
-      ]);
+        description: description || null,
+        connection_id: connectionId || null,
+        schema: schema,
+        preview_image: previewImage || null
+      });
 
-      logger.info('Custom theme created', { themeId: result.lastID, name });
+      if (error) throw error;
 
-      return this.getById(result.lastID);
+      logger.info('Custom theme created', { themeId: result.id, name });
+
+      return this._formatTheme(result);
     } catch (error) {
       logger.error('Failed to create custom theme', { error: error.message, name });
       throw error;
@@ -47,25 +47,16 @@ class CustomThemeService {
    */
   async getById(id) {
     try {
-      const result = await this.db.query(`
-        SELECT 
-          id,
-          name,
-          description,
-          connection_id,
-          schema,
-          preview_image,
-          created_at,
-          updated_at
-        FROM custom_themes
-        WHERE id = ?
-      `, [id]);
+      const { data, error } = await SupabaseService.queryAsAdmin('custom_themes', (query) =>
+        query.select('id, name, description, connection_id, schema, preview_image, created_at, updated_at')
+          .eq('id', id)
+          .single()
+      );
 
-      if (!result.rows || result.rows.length === 0) {
-        return null;
-      }
+      if (error && error.code !== 'PGRST116') throw error;
+      if (!data) return null;
 
-      return this._formatTheme(result.rows[0]);
+      return this._formatTheme(data);
     } catch (error) {
       logger.error('Failed to get custom theme', { error: error.message, id });
       throw error;
@@ -81,32 +72,20 @@ class CustomThemeService {
     const { connectionId, limit = 100, offset = 0 } = options;
 
     try {
-      let query = `
-        SELECT 
-          id,
-          name,
-          description,
-          connection_id,
-          schema,
-          preview_image,
-          created_at,
-          updated_at
-        FROM custom_themes
-      `;
+      const { data, error } = await SupabaseService.queryAsAdmin('custom_themes', (query) => {
+        let q = query.select('id, name, description, connection_id, schema, preview_image, created_at, updated_at');
+        
+        if (connectionId) {
+          q = q.eq('connection_id', connectionId);
+        }
+        
+        return q.order('updated_at', { ascending: false })
+          .range(offset, offset + limit - 1);
+      });
 
-      const params = [];
+      if (error) throw error;
 
-      if (connectionId) {
-        query += ' WHERE connection_id = ?';
-        params.push(connectionId);
-      }
-
-      query += ' ORDER BY updated_at DESC LIMIT ? OFFSET ?';
-      params.push(limit, offset);
-
-      const result = await this.db.query(query, params);
-
-      return (result.rows || []).map(row => this._formatTheme(row));
+      return (data || []).map(row => this._formatTheme(row));
     } catch (error) {
       logger.error('Failed to list custom themes', { error: error.message });
       throw error;
@@ -128,28 +107,23 @@ class CustomThemeService {
         throw new Error('Theme not found');
       }
 
-      await this.db.query(`
-        UPDATE custom_themes
-        SET 
-          name = COALESCE(?, name),
-          description = COALESCE(?, description),
-          connection_id = ?,
-          schema = COALESCE(?, schema),
-          preview_image = COALESCE(?, preview_image),
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `, [
-        name || null,
-        description !== undefined ? description : null,
-        connectionId !== undefined ? connectionId : existing.connection_id,
-        schema ? JSON.stringify(schema) : null,
-        previewImage !== undefined ? previewImage : null,
-        id
-      ]);
+      const updateData = {
+        updated_at: new Date().toISOString()
+      };
+      
+      if (name !== undefined && name !== null) updateData.name = name;
+      if (description !== undefined) updateData.description = description;
+      if (connectionId !== undefined) updateData.connection_id = connectionId;
+      if (schema !== undefined && schema !== null) updateData.schema = schema;
+      if (previewImage !== undefined) updateData.preview_image = previewImage;
+
+      const { data: result, error } = await SupabaseService.update('custom_themes', id, updateData);
+
+      if (error) throw error;
 
       logger.info('Custom theme updated', { themeId: id, name: name || existing.name });
 
-      return this.getById(id);
+      return this._formatTheme(result);
     } catch (error) {
       logger.error('Failed to update custom theme', { error: error.message, id });
       throw error;
@@ -168,7 +142,9 @@ class CustomThemeService {
         throw new Error('Theme not found');
       }
 
-      await this.db.query('DELETE FROM custom_themes WHERE id = ?', [id]);
+      const { error } = await SupabaseService.delete('custom_themes', id);
+
+      if (error) throw error;
 
       logger.info('Custom theme deleted', { themeId: id, name: existing.name });
 
@@ -188,17 +164,16 @@ class CustomThemeService {
     const { connectionId } = options;
 
     try {
-      let query = 'SELECT COUNT(*) as count FROM custom_themes';
-      const params = [];
-
+      const filters = {};
       if (connectionId) {
-        query += ' WHERE connection_id = ?';
-        params.push(connectionId);
+        filters.connection_id = connectionId;
       }
 
-      const result = await this.db.query(query, params);
+      const { count, error } = await SupabaseService.count('custom_themes', filters);
 
-      return result.rows[0]?.count || 0;
+      if (error) throw error;
+
+      return count || 0;
     } catch (error) {
       logger.error('Failed to count custom themes', { error: error.message });
       throw error;
@@ -233,9 +208,9 @@ class CustomThemeService {
 // Singleton instance
 let instance = null;
 
-function getCustomThemeService(db) {
-  if (!instance && db) {
-    instance = new CustomThemeService(db);
+function getCustomThemeService() {
+  if (!instance) {
+    instance = new CustomThemeService();
   }
   return instance;
 }

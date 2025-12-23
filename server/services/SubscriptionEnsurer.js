@@ -15,10 +15,8 @@ const SubscriptionService = require('./SubscriptionService');
 const SupabaseService = require('./SupabaseService');
 
 class SubscriptionEnsurer {
-  // eslint-disable-next-line no-unused-vars
-  constructor(db) {
-    // db parameter kept for backward compatibility but not used
-    // All operations use SupabaseService directly
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
     this.subscriptionService = new SubscriptionService();
   }
 

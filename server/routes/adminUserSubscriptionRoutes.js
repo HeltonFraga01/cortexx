@@ -24,14 +24,14 @@ let auditService = null;
 
 function getSubscriptionService() {
   if (!subscriptionService) {
-    subscriptionService = new SubscriptionService(SupabaseService);
+    subscriptionService = new SubscriptionService();
   }
   return subscriptionService;
 }
 
 function getAuditService() {
   if (!auditService) {
-    auditService = new AdminAuditService(SupabaseService);
+    auditService = new AdminAuditService();
   }
   return auditService;
 }

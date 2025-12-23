@@ -11,13 +11,8 @@ const { logger } = require('../utils/logger');
 const MultiUserAuditService = require('../services/MultiUserAuditService');
 const { requireAgentAuth, requireAgentRole } = require('../middleware/agentAuth');
 
-let auditService = null;
-
-function initServices(db) {
-  if (!auditService) {
-    auditService = new MultiUserAuditService(db);
-  }
-}
+// Service initialized at module level (uses SupabaseService internally)
+const auditService = new MultiUserAuditService();
 
 /**
  * GET /api/account/audit
@@ -25,8 +20,6 @@ function initServices(db) {
  */
 router.get('/', requireAgentAuth(null), requireAgentRole('owner', 'administrator'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
-    
     const { agentId, action, resourceType, resourceId, startDate, endDate, limit, offset } = req.query;
     
     const result = await auditService.queryLogs(req.account.id, {
@@ -53,8 +46,6 @@ router.get('/', requireAgentAuth(null), requireAgentRole('owner', 'administrator
  */
 router.get('/:id', requireAgentAuth(null), requireAgentRole('owner', 'administrator'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
-    
     const log = await auditService.getLogById(req.params.id);
     
     if (!log || log.accountId !== req.account.id) {
@@ -74,8 +65,6 @@ router.get('/:id', requireAgentAuth(null), requireAgentRole('owner', 'administra
  */
 router.get('/agent/:agentId', requireAgentAuth(null), requireAgentRole('owner', 'administrator'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
-    
     const { limit } = req.query;
     const logs = await auditService.getAgentActivity(req.params.agentId, limit ? parseInt(limit) : 20);
     
@@ -92,8 +81,6 @@ router.get('/agent/:agentId', requireAgentAuth(null), requireAgentRole('owner', 
  */
 router.get('/resource/:type/:id', requireAgentAuth(null), requireAgentRole('owner', 'administrator'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
-    
     const { limit } = req.query;
     const logs = await auditService.getResourceActivity(req.params.type, req.params.id, limit ? parseInt(limit) : 50);
     

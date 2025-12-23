@@ -16,8 +16,8 @@ const { featureMiddleware } = require('../middleware/featureEnforcement');
 router.use(requireAdmin);
 router.use(featureMiddleware.pageBuilder);
 
-// Get service instance (initialized with null, uses SupabaseService internally)
-const customThemeService = getCustomThemeService(null);
+// Get service instance (uses SupabaseService internally)
+const customThemeService = getCustomThemeService();
 
 /**
  * GET /admin/custom-themes

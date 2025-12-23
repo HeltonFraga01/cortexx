@@ -12,14 +12,8 @@ const AgentService = require('../services/AgentService');
 const { requireAgentAuth, requireAgentRole, requirePermission } = require('../middleware/agentAuth');
 const { quotaMiddleware } = require('../middleware/quotaEnforcement');
 
-// Services will be initialized with db
-let agentService = null;
-
-function initServices(db) {
-  if (!agentService) {
-    agentService = new AgentService(db);
-  }
-}
+// Service initialized at module level (uses SupabaseService internally)
+const agentService = new AgentService();
 
 /**
  * GET /api/account/agents
@@ -27,8 +21,6 @@ function initServices(db) {
  */
 router.get('/', requireAgentAuth(null), requirePermission('agents:view'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
-    
     const { status, role, availability, limit, offset } = req.query;
     
     const agents = await agentService.listAgents(req.account.id, {
@@ -55,7 +47,7 @@ router.get('/', requireAgentAuth(null), requirePermission('agents:view'), async 
  */
 router.get('/:id', requireAgentAuth(null), requirePermission('agents:view'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const agent = await agentService.getAgentById(req.params.id);
     
@@ -82,7 +74,7 @@ router.get('/:id', requireAgentAuth(null), requirePermission('agents:view'), asy
  */
 router.post('/', requireAgentAuth(null), requirePermission('agents:create'), quotaMiddleware.agents, async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const { email, password, name, role, avatarUrl, customRoleId } = req.body;
     
@@ -143,7 +135,7 @@ router.post('/', requireAgentAuth(null), requirePermission('agents:create'), quo
  */
 router.post('/invite', requireAgentAuth(null), requirePermission('agents:create'), quotaMiddleware.agents, async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const { email, role, customRoleId } = req.body;
     
@@ -189,7 +181,7 @@ router.post('/invite', requireAgentAuth(null), requirePermission('agents:create'
  */
 router.get('/invitations/list', requireAgentAuth(null), requirePermission('agents:view'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const { status } = req.query;
     
@@ -211,7 +203,7 @@ router.get('/invitations/list', requireAgentAuth(null), requirePermission('agent
  */
 router.delete('/invitations/:id', requireAgentAuth(null), requirePermission('agents:create'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     await agentService.deleteInvitation(req.params.id);
     
@@ -231,7 +223,7 @@ router.delete('/invitations/:id', requireAgentAuth(null), requirePermission('age
  */
 router.put('/:id', requireAgentAuth(null), requirePermission('agents:edit'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const agent = await agentService.getAgentById(req.params.id);
     
@@ -274,7 +266,7 @@ router.put('/:id', requireAgentAuth(null), requirePermission('agents:edit'), asy
  */
 router.put('/:id/role', requireAgentAuth(null), requireAgentRole('owner', 'administrator'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const agent = await agentService.getAgentById(req.params.id);
     
@@ -322,7 +314,7 @@ router.put('/:id/role', requireAgentAuth(null), requireAgentRole('owner', 'admin
  */
 router.delete('/:id', requireAgentAuth(null), requirePermission('agents:delete'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const agent = await agentService.getAgentById(req.params.id);
     
@@ -369,7 +361,7 @@ router.delete('/:id', requireAgentAuth(null), requirePermission('agents:delete')
  */
 router.post('/:id/activate', requireAgentAuth(null), requirePermission('agents:edit'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const agent = await agentService.getAgentById(req.params.id);
     

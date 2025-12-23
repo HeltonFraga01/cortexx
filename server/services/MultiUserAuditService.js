@@ -75,9 +75,8 @@ const RESOURCE_TYPES = {
 };
 
 class MultiUserAuditService {
-  constructor(db) {
-    // db parameter kept for backward compatibility but not used
-    // All operations use SupabaseService directly
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   /**

@@ -29,9 +29,8 @@ const ACTIVE_STATUSES = [SUBSCRIPTION_STATUS.TRIAL, SUBSCRIPTION_STATUS.ACTIVE];
 const READ_ONLY_STATUSES = [SUBSCRIPTION_STATUS.EXPIRED, SUBSCRIPTION_STATUS.SUSPENDED];
 
 class SubscriptionService {
-  constructor(db) {
-    // db parameter kept for backwards compatibility but not used
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   generateId() {

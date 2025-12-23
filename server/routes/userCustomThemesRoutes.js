@@ -10,7 +10,6 @@ const router = express.Router();
 const { requireUser } = require('../middleware/auth');
 const { getCustomThemeService } = require('../services/CustomThemeService');
 const { logger } = require('../utils/logger');
-const SupabaseService = require('../services/SupabaseService');
 
 // Apply user authentication to all routes
 router.use(requireUser);
@@ -21,7 +20,7 @@ router.use(requireUser);
  */
 router.get('/', async (req, res) => {
   try {
-    const service = getCustomThemeService(SupabaseService);
+    const service = getCustomThemeService();
     
     const { connection_id, limit, offset } = req.query;
 
@@ -58,7 +57,7 @@ router.get('/', async (req, res) => {
  */
 router.get('/:id', async (req, res) => {
   try {
-    const service = getCustomThemeService(SupabaseService);
+    const service = getCustomThemeService();
     
     const { id } = req.params;
     const theme = await service.getById(parseInt(id, 10));

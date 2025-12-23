@@ -234,7 +234,7 @@ const verifyUserToken = async (req, res, next) => {
       if (userId && userId !== providedToken) {
         try {
           const { getSessionMappingService } = require('../services/SessionMappingService');
-          const sessionMapping = getSessionMappingService(req.app?.locals?.db);
+          const sessionMapping = getSessionMappingService();
           if (sessionMapping) {
             await sessionMapping.registerMapping(userId, providedToken, {
               instanceName: response.data?.data?.name

@@ -12,13 +12,8 @@ const TeamService = require('../services/TeamService');
 const { requireAgentAuth, requirePermission } = require('../middleware/agentAuth');
 const { quotaMiddleware } = require('../middleware/quotaEnforcement');
 
-let teamService = null;
-
-function initServices(db) {
-  if (!teamService) {
-    teamService = new TeamService(db);
-  }
-}
+// Service initialized at module level (uses SupabaseService internally)
+const teamService = new TeamService();
 
 /**
  * GET /api/account/teams
@@ -26,8 +21,6 @@ function initServices(db) {
  */
 router.get('/', requireAgentAuth(null), requirePermission('teams:view'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
-    
     const teams = await teamService.listTeamsWithStats(req.account.id);
     
     res.json({ success: true, data: teams });
@@ -43,7 +36,7 @@ router.get('/', requireAgentAuth(null), requirePermission('teams:view'), async (
  */
 router.get('/:id', requireAgentAuth(null), requirePermission('teams:view'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const team = await teamService.getTeamById(req.params.id);
     
@@ -67,7 +60,7 @@ router.get('/:id', requireAgentAuth(null), requirePermission('teams:view'), asyn
  */
 router.post('/', requireAgentAuth(null), requirePermission('teams:manage'), quotaMiddleware.teams, async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const { name, description, allowAutoAssign } = req.body;
     
@@ -92,7 +85,7 @@ router.post('/', requireAgentAuth(null), requirePermission('teams:manage'), quot
  */
 router.put('/:id', requireAgentAuth(null), requirePermission('teams:manage'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const team = await teamService.getTeamById(req.params.id);
     if (!team || team.accountId !== req.account.id) {
@@ -115,7 +108,7 @@ router.put('/:id', requireAgentAuth(null), requirePermission('teams:manage'), as
  */
 router.delete('/:id', requireAgentAuth(null), requirePermission('teams:manage'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const team = await teamService.getTeamById(req.params.id);
     if (!team || team.accountId !== req.account.id) {
@@ -139,7 +132,7 @@ router.delete('/:id', requireAgentAuth(null), requirePermission('teams:manage'),
  */
 router.post('/:id/members', requireAgentAuth(null), requirePermission('teams:manage'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const team = await teamService.getTeamById(req.params.id);
     if (!team || team.accountId !== req.account.id) {
@@ -169,7 +162,7 @@ router.post('/:id/members', requireAgentAuth(null), requirePermission('teams:man
  */
 router.delete('/:id/members/:agentId', requireAgentAuth(null), requirePermission('teams:manage'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const team = await teamService.getTeamById(req.params.id);
     if (!team || team.accountId !== req.account.id) {

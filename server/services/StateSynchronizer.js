@@ -16,11 +16,10 @@ const SupabaseService = require('./SupabaseService');
 
 class StateSynchronizer {
   /**
-   * @param {Object} db - Database instance
    * @param {Object} scheduler - CampaignScheduler instance
    */
-  constructor(db, scheduler) {
-    this.db = db;
+  constructor(scheduler) {
+    // No db parameter needed - uses SupabaseService directly
     this.scheduler = scheduler;
     this.syncInterval = 30000; // 30 seconds
     this.intervalId = null;

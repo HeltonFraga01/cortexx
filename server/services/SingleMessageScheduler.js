@@ -14,10 +14,10 @@ const SupabaseService = require('./SupabaseService');
 
 class SingleMessageScheduler {
   /**
-   * @param {Object} db - Instância do banco de dados (deprecated, kept for backwards compatibility)
+   * Constructor - no db parameter needed, uses SupabaseService directly
    */
-  constructor(db = null) {
-    // db parameter kept for backwards compatibility but not used
+  constructor() {
+    // Uses SupabaseService directly
     this.checkInterval = 30000; // 30 segundos
     this.intervalId = null;
     this.isRunning = false;

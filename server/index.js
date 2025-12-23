@@ -1181,14 +1181,14 @@ async function startServer() {
     // Inicializar CampaignScheduler para campanhas agendadas
     logger.info('📅 Inicializando CampaignScheduler...');
     const CampaignScheduler = require('./services/CampaignScheduler');
-    const campaignScheduler = new CampaignScheduler(null); // db parameter deprecated, uses SupabaseService internally
+    const campaignScheduler = new CampaignScheduler(); // Uses SupabaseService internally
     campaignScheduler.start();
     logger.info('✅ CampaignScheduler iniciado');
 
     // Inicializar StateSynchronizer para sincronização de estado
     logger.info('🔄 Inicializando StateSynchronizer...');
     const StateSynchronizer = require('./services/StateSynchronizer');
-    const stateSynchronizer = new StateSynchronizer(null, campaignScheduler); // db parameter deprecated
+    const stateSynchronizer = new StateSynchronizer(campaignScheduler); // Uses SupabaseService internally
     
     // Restaurar campanhas que estavam rodando antes do reinício
     const restoredCampaigns = await stateSynchronizer.restoreRunningCampaigns();
@@ -1214,8 +1214,8 @@ async function startServer() {
     logger.info('🗑️ Inicializando LogRotationService...');
     const AuditLogger = require('./services/AuditLogger');
     const LogRotationService = require('./services/LogRotationService');
-    const auditLogger = new AuditLogger(null); // db parameter deprecated
-    const logRotationService = new LogRotationService(null, auditLogger, { // db parameter deprecated
+    const auditLogger = new AuditLogger(); // Uses SupabaseService internally
+    const logRotationService = new LogRotationService(auditLogger, {
       auditRetentionDays: 30,
       deletedCampaignRetentionDays: 90,
       errorRetentionDays: 30,

@@ -22,8 +22,8 @@ class LogRotationService {
    * @param {number} [options.errorRetentionDays=30] - Days to retain error logs
    * @param {number} [options.cleanupIntervalMs=86400000] - Cleanup interval (default: 24 hours)
    */
-  constructor(db, auditLogger, options = {}) {
-    this.db = db;
+  constructor(auditLogger, options = {}) {
+    // No db parameter needed - uses SupabaseService directly
     this.auditLogger = auditLogger;
     
     this.auditRetentionDays = options.auditRetentionDays || 30;

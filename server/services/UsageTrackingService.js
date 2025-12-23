@@ -43,11 +43,18 @@ class UsageTrackingService {
       const id = this.generateId();
       const now = new Date().toISOString();
 
-      await this.db.query(
-        `INSERT INTO usage_metrics (id, user_id, metric_type, amount, metadata, recorded_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [id, userId, metricType, amount, JSON.stringify(metadata), now]
+      const { error } = await SupabaseService.queryAsAdmin('usage_metrics', (query) =>
+        query.insert({
+          id,
+          user_id: userId,
+          metric_type: metricType,
+          amount,
+          metadata: JSON.stringify(metadata),
+          recorded_at: now
+        })
       );
+
+      if (error) throw error;
 
       logger.debug('Usage tracked', { userId, metricType, amount });
 
@@ -68,17 +75,21 @@ class UsageTrackingService {
     try {
       const startDate = this.getPeriodStart(period);
       
-      const result = await this.db.query(
-        `SELECT metric_type, SUM(amount) as total
-         FROM usage_metrics
-         WHERE user_id = ? AND recorded_at >= ?
-         GROUP BY metric_type`,
-        [userId, startDate.toISOString()]
+      const { data, error } = await SupabaseService.queryAsAdmin('usage_metrics', (query) =>
+        query.select('metric_type, amount')
+          .eq('user_id', userId)
+          .gte('recorded_at', startDate.toISOString())
       );
 
+      if (error) throw error;
+
+      // Aggregate by metric_type manually
       const metrics = {};
-      for (const row of result.rows) {
-        metrics[row.metric_type] = row.total;
+      for (const row of (data || [])) {
+        if (!metrics[row.metric_type]) {
+          metrics[row.metric_type] = 0;
+        }
+        metrics[row.metric_type] += row.amount;
       }
 
       return metrics;
@@ -97,46 +108,51 @@ class UsageTrackingService {
     try {
       const { planId, startDate, endDate, metricType } = filters;
       
-      let sql = `
-        SELECT m.metric_type, SUM(m.amount) as total, COUNT(DISTINCT m.user_id) as user_count
-        FROM usage_metrics m
-      `;
-      const params = [];
-      const conditions = [];
-
-      if (planId) {
-        sql += ' JOIN user_subscriptions s ON m.user_id = s.user_id';
-        conditions.push('s.plan_id = ?');
-        params.push(planId);
-      }
+      // Build query with filters
+      let query = SupabaseService.adminClient
+        .from('usage_metrics')
+        .select('metric_type, amount, user_id');
 
       if (startDate) {
-        conditions.push('m.recorded_at >= ?');
-        params.push(startDate);
+        query = query.gte('recorded_at', startDate);
       }
 
       if (endDate) {
-        conditions.push('m.recorded_at <= ?');
-        params.push(endDate);
+        query = query.lte('recorded_at', endDate);
       }
 
       if (metricType) {
-        conditions.push('m.metric_type = ?');
-        params.push(metricType);
+        query = query.eq('metric_type', metricType);
       }
 
-      if (conditions.length > 0) {
-        sql += ' WHERE ' + conditions.join(' AND ');
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      // If planId filter, we need to filter by users with that plan
+      let filteredData = data || [];
+      if (planId) {
+        const { data: subscriptions } = await SupabaseService.queryAsAdmin('user_subscriptions', (q) =>
+          q.select('user_id').eq('plan_id', planId)
+        );
+        const userIds = new Set((subscriptions || []).map(s => s.user_id));
+        filteredData = filteredData.filter(d => userIds.has(d.user_id));
       }
 
-      sql += ' GROUP BY m.metric_type';
+      // Aggregate manually
+      const aggregated = {};
+      for (const row of filteredData) {
+        if (!aggregated[row.metric_type]) {
+          aggregated[row.metric_type] = { total: 0, users: new Set() };
+        }
+        aggregated[row.metric_type].total += row.amount;
+        aggregated[row.metric_type].users.add(row.user_id);
+      }
 
-      const result = await this.db.query(sql, params);
-
-      return result.rows.map(row => ({
-        metricType: row.metric_type,
-        total: row.total,
-        userCount: row.user_count
+      return Object.entries(aggregated).map(([metricType, stats]) => ({
+        metricType,
+        total: stats.total,
+        userCount: stats.users.size
       }));
     } catch (error) {
       logger.error('Failed to get aggregated metrics', { error: error.message, filters });
@@ -194,23 +210,25 @@ class UsageTrackingService {
    */
   async exportUsageData(userId, dateRange = {}, format = 'csv') {
     try {
-      let sql = 'SELECT * FROM usage_metrics WHERE user_id = ?';
-      const params = [userId];
+      let query = SupabaseService.adminClient
+        .from('usage_metrics')
+        .select('*')
+        .eq('user_id', userId)
+        .order('recorded_at', { ascending: false });
 
       if (dateRange.startDate) {
-        sql += ' AND recorded_at >= ?';
-        params.push(dateRange.startDate);
+        query = query.gte('recorded_at', dateRange.startDate);
       }
 
       if (dateRange.endDate) {
-        sql += ' AND recorded_at <= ?';
-        params.push(dateRange.endDate);
+        query = query.lte('recorded_at', dateRange.endDate);
       }
 
-      sql += ' ORDER BY recorded_at DESC';
+      const { data, error } = await query;
 
-      const result = await this.db.query(sql, params);
-      const data = result.rows.map(row => ({
+      if (error) throw error;
+
+      const formattedData = (data || []).map(row => ({
         id: row.id,
         userId: row.user_id,
         metricType: row.metric_type,
@@ -220,10 +238,10 @@ class UsageTrackingService {
       }));
 
       if (format === 'csv') {
-        return this.toCSV(data);
+        return this.toCSV(formattedData);
       }
 
-      return JSON.stringify(data, null, 2);
+      return JSON.stringify(formattedData, null, 2);
     } catch (error) {
       logger.error('Failed to export usage data', { error: error.message, userId });
       throw error;

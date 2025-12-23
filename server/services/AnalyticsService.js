@@ -2,8 +2,8 @@ const { logger } = require('../utils/logger');
 const SupabaseService = require('./SupabaseService');
 
 class AnalyticsService {
-    constructor(db) {
-        this.db = db;
+    constructor() {
+        // No db parameter needed - uses SupabaseService directly
     }
 
     /**

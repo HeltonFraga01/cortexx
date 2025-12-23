@@ -22,12 +22,11 @@ class QueueManager {
   /**
    * @param {string} campaignId - ID da campanha
    * @param {Object} config - Configuração da campanha
-   * @param {Object} db - Instância do banco de dados
    */
-  constructor(campaignId, config, db) {
+  constructor(campaignId, config) {
     this.campaignId = campaignId;
     this.config = config;
-    this.db = db;
+    // No db parameter needed - uses SupabaseService directly
 
     // Estado da fila
     this.status = 'initialized'; // initialized, running, paused, completed, cancelled, failed

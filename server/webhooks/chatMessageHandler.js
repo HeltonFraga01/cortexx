@@ -136,7 +136,7 @@ class ChatMessageHandler {
     this.presenceState = new Map() // contactJid -> { state, timestamp }
     this.outgoingWebhookService = new OutgoingWebhookService()
     this.botService = new BotService()
-    this.groupNameResolver = new GroupNameResolver(SupabaseService, logger) // Group name resolution service
+    this.groupNameResolver = new GroupNameResolver(logger) // Group name resolution service
     
     logger.info('ChatMessageHandler initialized with GroupNameResolver', {
       hasGroupNameResolver: !!this.groupNameResolver

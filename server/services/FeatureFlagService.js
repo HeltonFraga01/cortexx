@@ -53,8 +53,8 @@ const DEFAULT_FEATURES = {
 };
 
 class FeatureFlagService {
-  constructor(db) {
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   generateId() {

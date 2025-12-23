@@ -12,13 +12,8 @@ const InboxService = require('../services/InboxService');
 const { requireAgentAuth, requirePermission } = require('../middleware/agentAuth');
 const { quotaMiddleware } = require('../middleware/quotaEnforcement');
 
-let inboxService = null;
-
-function initServices(db) {
-  if (!inboxService) {
-    inboxService = new InboxService(db);
-  }
-}
+// Service initialized at module level (uses SupabaseService internally)
+const inboxService = new InboxService();
 
 /**
  * GET /api/account/inboxes
@@ -26,8 +21,6 @@ function initServices(db) {
  */
 router.get('/', requireAgentAuth(null), requirePermission('inboxes:view'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
-    
     const inboxes = await inboxService.listInboxesWithStats(req.account.id);
     
     res.json({ success: true, data: inboxes });
@@ -43,7 +36,7 @@ router.get('/', requireAgentAuth(null), requirePermission('inboxes:view'), async
  */
 router.get('/my', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const inboxes = await inboxService.listAgentInboxes(req.agent.id);
     
@@ -60,7 +53,7 @@ router.get('/my', requireAgentAuth(null), async (req, res) => {
  */
 router.get('/:id', requireAgentAuth(null), requirePermission('inboxes:view'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const inbox = await inboxService.getInboxById(req.params.id);
     
@@ -83,7 +76,7 @@ router.get('/:id', requireAgentAuth(null), requirePermission('inboxes:view'), as
  */
 router.post('/', requireAgentAuth(null), requirePermission('inboxes:manage'), quotaMiddleware.inboxes, async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const { name, description, channelType, enableAutoAssignment, autoAssignmentConfig, greetingEnabled, greetingMessage } = req.body;
     
@@ -110,7 +103,7 @@ router.post('/', requireAgentAuth(null), requirePermission('inboxes:manage'), qu
  */
 router.put('/:id', requireAgentAuth(null), requirePermission('inboxes:manage'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const inbox = await inboxService.getInboxById(req.params.id);
     if (!inbox || inbox.accountId !== req.account.id) {
@@ -135,7 +128,7 @@ router.put('/:id', requireAgentAuth(null), requirePermission('inboxes:manage'), 
  */
 router.delete('/:id', requireAgentAuth(null), requirePermission('inboxes:manage'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const inbox = await inboxService.getInboxById(req.params.id);
     if (!inbox || inbox.accountId !== req.account.id) {
@@ -159,7 +152,7 @@ router.delete('/:id', requireAgentAuth(null), requirePermission('inboxes:manage'
  */
 router.post('/:id/agents', requireAgentAuth(null), requirePermission('inboxes:manage'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const inbox = await inboxService.getInboxById(req.params.id);
     if (!inbox || inbox.accountId !== req.account.id) {
@@ -186,7 +179,7 @@ router.post('/:id/agents', requireAgentAuth(null), requirePermission('inboxes:ma
  */
 router.delete('/:id/agents/:agentId', requireAgentAuth(null), requirePermission('inboxes:manage'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const inbox = await inboxService.getInboxById(req.params.id);
     if (!inbox || inbox.accountId !== req.account.id) {

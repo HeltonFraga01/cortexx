@@ -11,13 +11,8 @@ const { logger } = require('../utils/logger');
 const PermissionService = require('../services/PermissionService');
 const { requireAgentAuth, requireAgentRole } = require('../middleware/agentAuth');
 
-let permissionService = null;
-
-function initServices(db) {
-  if (!permissionService) {
-    permissionService = new PermissionService(db);
-  }
-}
+// Service initialized at module level (uses SupabaseService internally)
+const permissionService = new PermissionService();
 
 /**
  * GET /api/account/roles
@@ -25,8 +20,6 @@ function initServices(db) {
  */
 router.get('/', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
-    
     const defaultRoles = permissionService.getDefaultRoles();
     const customRoles = await permissionService.listCustomRoles(req.account.id);
     const allPermissions = permissionService.getAllPermissions();
@@ -55,7 +48,7 @@ router.get('/', requireAgentAuth(null), async (req, res) => {
  */
 router.get('/:id', requireAgentAuth(null), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const role = await permissionService.getCustomRoleById(req.params.id);
     
@@ -78,7 +71,7 @@ router.get('/:id', requireAgentAuth(null), async (req, res) => {
  */
 router.post('/', requireAgentAuth(null), requireAgentRole('owner', 'administrator'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const { name, description, permissions } = req.body;
     
@@ -106,7 +99,7 @@ router.post('/', requireAgentAuth(null), requireAgentRole('owner', 'administrato
  */
 router.put('/:id', requireAgentAuth(null), requireAgentRole('owner', 'administrator'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const role = await permissionService.getCustomRoleById(req.params.id);
     if (!role || role.accountId !== req.account.id) {
@@ -134,7 +127,7 @@ router.put('/:id', requireAgentAuth(null), requireAgentRole('owner', 'administra
  */
 router.delete('/:id', requireAgentAuth(null), requireAgentRole('owner', 'administrator'), async (req, res) => {
   try {
-    initServices(req.app.get('db'));
+    
     
     const role = await permissionService.getCustomRoleById(req.params.id);
     if (!role || role.accountId !== req.account.id) {

@@ -32,9 +32,8 @@ const ACTION_TYPES = {
 };
 
 class AdminAuditService {
-  constructor(db) {
-    // db parameter kept for backwards compatibility but not used
-    this.db = db;
+  constructor() {
+    // No db parameter needed - uses SupabaseService directly
   }
 
   generateId() {
