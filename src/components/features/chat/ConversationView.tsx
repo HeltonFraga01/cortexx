@@ -416,9 +416,9 @@ export function ConversationView({
   const groupedMessages = groupMessagesByDate(messages)
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Header - h-14 for uniformity */}
-      <div className="flex items-center justify-between px-4 h-14 border-b bg-background">
+      <div className="flex-shrink-0 flex items-center justify-between px-4 h-14 border-b bg-background">
         <div className="flex items-center gap-3">
           {isSidebarCollapsed && (
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onToggleSidebar}>
@@ -619,7 +619,7 @@ export function ConversationView({
 
       {/* Search bar */}
       {isSearchOpen && (
-        <div className="px-4 py-2 border-b bg-muted/30">
+        <div className="flex-shrink-0 px-4 py-2 border-b bg-muted/30">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <input
@@ -644,7 +644,7 @@ export function ConversationView({
       )}
 
       {/* Messages */}
-      <ScrollArea className="flex-1 p-4" ref={scrollRef} constrainWidth>
+      <ScrollArea className="flex-1 min-h-0 p-4" ref={scrollRef} constrainWidth>
         {isLoading ? (
           <MessagesSkeleton />
         ) : error ? (
@@ -764,7 +764,7 @@ export function ConversationView({
 
       {/* Task 4.4: Improved Reply preview - compact with clear dismiss */}
       {replyToMessage && (
-        <div className="px-4 py-2 border-t bg-muted/30">
+        <div className="flex-shrink-0 px-4 py-2 border-t bg-muted/30">
           <div className="flex items-start gap-3 p-2 rounded-lg bg-background/50 border-l-2 border-primary">
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-primary">

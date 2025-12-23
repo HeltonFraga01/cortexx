@@ -22,7 +22,12 @@ import { useChatInbox } from '@/hooks/useChatInbox'
 import { useChatApi } from '@/hooks/useChatApi'
 import { ConversationInboxBadge } from '@/components/features/chat/ConversationInboxBadge'
 import type { Conversation, ConversationFilters } from '@/types/chat'
-import { Search, ChevronLeft, X, User, Users, Megaphone, Newspaper, BellOff, Bell, Inbox as InboxIcon, Mail, FolderOpen, CheckCircle, Clock, Pause, Bot, UserCheck, UserX, Hand } from 'lucide-react'
+import { Search, ChevronLeft, X, User, Users, Megaphone, Newspaper, BellOff, Bell, Inbox as InboxIcon, Mail, FolderOpen, CheckCircle, Clock, Pause, Bot, UserCheck, UserX, Hand, CheckSquare, MailCheck, Loader2, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
+import { Checkbox } from '@/components/ui/checkbox'
+import { useConversationSelection } from '@/hooks/useConversationSelection'
+import { useConfirmDialog } from '@/hooks/useConfirmDialog'
+import { SelectionToolbar } from '@/components/features/chat/SelectionToolbar'
 
 // Cache for avatars that have been fetched or are being fetched (to avoid re-fetching)
 const avatarFetchedCache = new Set<number>()
@@ -70,6 +75,21 @@ export function InboxSidebar({
   // Get the appropriate chat API based on context (user or agent)
   const chatApi = useChatApi()
 
+  // Selection mode for bulk actions - Requirements: 2.1, 2.4, 3.1-3.4
+  const {
+    isSelectionMode,
+    selectedIds,
+    enterSelectionMode,
+    exitSelectionMode,
+    toggleSelection,
+    selectAll,
+    deselectAll,
+    selectedCount,
+    isAllSelected: isAllConversationsSelected,
+    isIndeterminate,
+    isSelected
+  } = useConversationSelection()
+
   // Merge inbox filter with other filters - now uses unified context
   const effectiveFilters = useMemo(() => {
     const merged: ConversationFilters = { ...filters }
@@ -81,6 +101,90 @@ export function InboxSidebar({
     }
     return merged
   }, [filters, isAllSelected, selectedInboxIds])
+
+  // Exit selection mode when filters or tab changes - Requirement 6.1
+  useEffect(() => {
+    if (isSelectionMode) {
+      exitSelectionMode()
+    }
+  }, [filters, activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Bulk action handlers - Requirements: 4.3, 4.4, 4.5, 4.6
+  const handleBulkMarkAsRead = useCallback(async () => {
+    const ids = Array.from(selectedIds)
+    const results = await Promise.allSettled(
+      ids.map(id => chatApi.markConversationAsRead(id))
+    )
+    
+    const succeeded = results.filter(r => r.status === 'fulfilled').length
+    const failed = results.filter(r => r.status === 'rejected').length
+    
+    if (failed > 0 && succeeded > 0) {
+      toast.warning(`${succeeded} sucesso, ${failed} falha(s)`)
+    } else if (failed > 0) {
+      throw new Error('Falha ao marcar conversas como lidas')
+    }
+    
+    queryClient.invalidateQueries({ queryKey: ['conversations'] })
+    exitSelectionMode()
+  }, [selectedIds, chatApi, queryClient, exitSelectionMode])
+
+  const handleBulkMarkAsUnread = useCallback(async () => {
+    const ids = Array.from(selectedIds)
+    const results = await Promise.allSettled(
+      ids.map(id => chatApi.markConversationAsUnread(id))
+    )
+    
+    const succeeded = results.filter(r => r.status === 'fulfilled').length
+    const failed = results.filter(r => r.status === 'rejected').length
+    
+    if (failed > 0 && succeeded > 0) {
+      toast.warning(`${succeeded} sucesso, ${failed} falha(s)`)
+    } else if (failed > 0) {
+      throw new Error('Falha ao marcar conversas como não lidas')
+    }
+    
+    queryClient.invalidateQueries({ queryKey: ['conversations'] })
+    exitSelectionMode()
+  }, [selectedIds, chatApi, queryClient, exitSelectionMode])
+
+  const handleBulkResolve = useCallback(async () => {
+    const ids = Array.from(selectedIds)
+    const results = await Promise.allSettled(
+      ids.map(id => chatApi.updateConversation(id, { status: 'resolved' }))
+    )
+    
+    const succeeded = results.filter(r => r.status === 'fulfilled').length
+    const failed = results.filter(r => r.status === 'rejected').length
+    
+    if (failed > 0 && succeeded > 0) {
+      toast.warning(`${succeeded} sucesso, ${failed} falha(s)`)
+    } else if (failed > 0) {
+      throw new Error('Falha ao resolver conversas')
+    }
+    
+    queryClient.invalidateQueries({ queryKey: ['conversations'] })
+    exitSelectionMode()
+  }, [selectedIds, chatApi, queryClient, exitSelectionMode])
+
+  const handleBulkDelete = useCallback(async () => {
+    const ids = Array.from(selectedIds)
+    const results = await Promise.allSettled(
+      ids.map(id => chatApi.deleteConversation(id))
+    )
+    
+    const succeeded = results.filter(r => r.status === 'fulfilled').length
+    const failed = results.filter(r => r.status === 'rejected').length
+    
+    if (failed > 0 && succeeded > 0) {
+      toast.warning(`${succeeded} sucesso, ${failed} falha(s)`)
+    } else if (failed > 0) {
+      throw new Error('Falha ao excluir conversas')
+    }
+    
+    queryClient.invalidateQueries({ queryKey: ['conversations'] })
+    exitSelectionMode()
+  }, [selectedIds, chatApi, queryClient, exitSelectionMode])
 
   // Fetch conversations using the appropriate API (user or agent)
   const {
@@ -243,10 +347,47 @@ export function InboxSidebar({
             />
           )}
         </div>
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onCollapse}>
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {/* Select button - Requirement 2.1 */}
+          {!isSelectionMode && (
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={enterSelectionMode}
+                  >
+                    <CheckSquare className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Selecionar</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onCollapse}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
+
+      {/* Selection Toolbar - Requirements: 4.1, 4.2 */}
+      {isSelectionMode && selectedCount > 0 && (
+        <SelectionToolbar
+          selectedCount={selectedCount}
+          totalCount={displayConversations.length}
+          isAllSelected={isAllConversationsSelected(displayConversations.length)}
+          isIndeterminate={isIndeterminate(displayConversations.length)}
+          onSelectAll={() => selectAll(displayConversations.map(c => c.id))}
+          onDeselectAll={deselectAll}
+          onCancel={exitSelectionMode}
+          onMarkAsRead={handleBulkMarkAsRead}
+          onMarkAsUnread={handleBulkMarkAsUnread}
+          onResolve={handleBulkResolve}
+          onDelete={handleBulkDelete}
+        />
+      )}
 
       {/* Search */}
       <div className="px-3 pt-3 pb-1.5">
@@ -358,6 +499,23 @@ export function InboxSidebar({
         searchQuery={searchQuery}
         showInboxBadges={showInboxBadges}
         inboxes={inboxes}
+        // Selection mode props - Requirements: 2.2, 3.1, 5.1, 5.2
+        isSelectionMode={isSelectionMode}
+        selectedIds={selectedIds}
+        onToggleSelection={toggleSelection}
+        // Quick action handlers - Requirements: 1.1, 1.2, 1.3
+        onMarkRead={async (id) => {
+          await chatApi.markConversationAsRead(id)
+          queryClient.invalidateQueries({ queryKey: ['conversations'] })
+        }}
+        onMute={async (id, currentMuted) => {
+          await chatApi.muteConversation(id, !currentMuted)
+          queryClient.invalidateQueries({ queryKey: ['conversations'] })
+        }}
+        onResolve={async (id) => {
+          await chatApi.updateConversation(id, { status: 'resolved' })
+          queryClient.invalidateQueries({ queryKey: ['conversations'] })
+        }}
       />
     </div>
   )
@@ -446,6 +604,14 @@ interface VirtualizedConversationListProps {
   searchQuery: string
   showInboxBadges: boolean
   inboxes: Array<{ id: number; name: string }>
+  // Selection mode props - Requirements: 2.2, 3.1, 5.1, 5.2
+  isSelectionMode: boolean
+  selectedIds: Set<number>
+  onToggleSelection: (id: number) => void
+  // Quick action handlers - Requirements: 1.1, 1.2, 1.3
+  onMarkRead: (id: number) => Promise<void>
+  onMute: (id: number, currentMuted: boolean) => Promise<void>
+  onResolve: (id: number) => Promise<void>
 }
 
 function VirtualizedConversationList({
@@ -458,7 +624,13 @@ function VirtualizedConversationList({
   activeTab,
   searchQuery,
   showInboxBadges,
-  inboxes
+  inboxes,
+  isSelectionMode,
+  selectedIds,
+  onToggleSelection,
+  onMarkRead,
+  onMute,
+  onResolve
 }: VirtualizedConversationListProps) {
   const parentRef = useRef<HTMLDivElement>(null)
   
@@ -546,6 +718,12 @@ function VirtualizedConversationList({
                 onClick={() => onSelectConversation(conversation)}
                 showInboxBadge={showInboxBadges}
                 inboxName={inbox?.name}
+                isSelectionMode={isSelectionMode}
+                isChecked={selectedIds.has(conversation.id)}
+                onToggleSelection={() => onToggleSelection(conversation.id)}
+                onMarkRead={() => onMarkRead(conversation.id)}
+                onMute={() => onMute(conversation.id, conversation.isMuted || false)}
+                onResolve={() => onResolve(conversation.id)}
               />
             </div>
           )
@@ -577,78 +755,111 @@ function EmptyState({ type, searchQuery }: EmptyStateProps) {
 }
 
 // Task 1.3: QuickActions Component for conversation item hover
+// Requirements: 1.1, 1.2, 1.3, 1.4, 1.5
 interface QuickActionsProps {
-  conversationId: number
-  isMuted?: boolean
-  onMarkRead?: () => void
-  onMute?: () => void
-  onArchive?: () => void
+  conversation: Conversation
+  onMarkRead: () => Promise<void>
+  onMute: () => Promise<void>
+  onResolve: () => Promise<void>
 }
 
-function QuickActions({ conversationId, isMuted, onMarkRead, onMute, onArchive }: QuickActionsProps) {
+function QuickActions({ conversation, onMarkRead, onMute, onResolve }: QuickActionsProps) {
+  const [isLoading, setIsLoading] = useState<string | null>(null)
+
+  const handleAction = async (action: string, fn: () => Promise<void>, successMsg: string) => {
+    setIsLoading(action)
+    try {
+      await fn()
+      toast.success(successMsg)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Falha ao executar ação')
+    } finally {
+      setIsLoading(null)
+    }
+  }
+
   return (
-    <div className="flex items-center gap-0.5 bg-card border border-border/50 rounded-md shadow-sm p-0.5">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 hover:bg-accent/80"
-            onClick={(e) => {
-              e.stopPropagation()
-              onMarkRead?.()
-            }}
-          >
-            <Mail className="h-3 w-3 text-muted-foreground" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" className="text-xs">
-          Marcar como lida
-        </TooltipContent>
-      </Tooltip>
-      
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 hover:bg-accent/80"
-            onClick={(e) => {
-              e.stopPropagation()
-              onMute?.()
-            }}
-          >
-            {isMuted ? (
-              <Bell className="h-3 w-3 text-muted-foreground" />
-            ) : (
-              <BellOff className="h-3 w-3 text-muted-foreground" />
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" className="text-xs">
-          {isMuted ? 'Ativar notificações' : 'Silenciar'}
-        </TooltipContent>
-      </Tooltip>
-      
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 hover:bg-accent/80"
-            onClick={(e) => {
-              e.stopPropagation()
-              onArchive?.()
-            }}
-          >
-            <CheckCircle className="h-3 w-3 text-muted-foreground" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" className="text-xs">
-          Resolver
-        </TooltipContent>
-      </Tooltip>
-    </div>
+    <TooltipProvider delayDuration={300}>
+      <div className="flex items-center gap-0.5 bg-card border border-border/50 rounded-md shadow-sm p-0.5">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 hover:bg-accent/80"
+              disabled={isLoading !== null}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleAction('read', onMarkRead, 'Conversa marcada como lida')
+              }}
+            >
+              {isLoading === 'read' ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <MailCheck className="h-3 w-3 text-muted-foreground" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-xs">
+            Marcar como lida
+          </TooltipContent>
+        </Tooltip>
+        
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 hover:bg-accent/80"
+              disabled={isLoading !== null}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleAction(
+                  'mute', 
+                  onMute, 
+                  conversation.isMuted ? 'Notificações ativadas' : 'Conversa silenciada'
+                )
+              }}
+            >
+              {isLoading === 'mute' ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : conversation.isMuted ? (
+                <Bell className="h-3 w-3 text-muted-foreground" />
+              ) : (
+                <BellOff className="h-3 w-3 text-muted-foreground" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-xs">
+            {conversation.isMuted ? 'Ativar notificações' : 'Silenciar'}
+          </TooltipContent>
+        </Tooltip>
+        
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 hover:bg-accent/80"
+              disabled={isLoading !== null || conversation.status === 'resolved'}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleAction('resolve', onResolve, 'Conversa resolvida')
+              }}
+            >
+              {isLoading === 'resolve' ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <CheckCircle className="h-3 w-3 text-muted-foreground" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-xs">
+            Resolver
+          </TooltipContent>
+        </Tooltip>
+      </div>
+    </TooltipProvider>
   )
 }
 
@@ -667,6 +878,7 @@ function TypingIndicator() {
 }
 
 // Conversation Item Component - Task 1.1: Updated layout with new visual hierarchy
+// Requirements: 2.2, 3.1, 5.1, 5.2
 interface ConversationItemProps {
   conversation: Conversation
   isSelected: boolean
@@ -674,9 +886,30 @@ interface ConversationItemProps {
   showInboxBadge?: boolean
   inboxName?: string
   isTyping?: boolean
+  // Selection mode props
+  isSelectionMode?: boolean
+  isChecked?: boolean
+  onToggleSelection?: () => void
+  // Quick action handlers
+  onMarkRead?: () => Promise<void>
+  onMute?: () => Promise<void>
+  onResolve?: () => Promise<void>
 }
 
-function ConversationItem({ conversation, isSelected, onClick, showInboxBadge, inboxName, isTyping = false }: ConversationItemProps) {
+function ConversationItem({ 
+  conversation, 
+  isSelected, 
+  onClick, 
+  showInboxBadge, 
+  inboxName, 
+  isTyping = false,
+  isSelectionMode = false,
+  isChecked = false,
+  onToggleSelection,
+  onMarkRead,
+  onMute,
+  onResolve
+}: ConversationItemProps) {
   const initials = conversation.contactName
     ? conversation.contactName.slice(0, 2).toUpperCase()
     : conversation.contactJid.slice(0, 2).toUpperCase()
@@ -701,28 +934,48 @@ function ConversationItem({ conversation, isSelected, onClick, showInboxBadge, i
   const isMuted = conversation.isMuted || false
   const hasUnread = conversation.unreadCount > 0
 
+  const handleClick = () => {
+    if (isSelectionMode && onToggleSelection) {
+      onToggleSelection()
+    } else {
+      onClick()
+    }
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
-      onClick()
+      handleClick()
     }
   }
 
   return (
     <div
-      onClick={onClick}
+      onClick={handleClick}
       onKeyDown={handleKeyDown}
       role="button"
       tabIndex={0}
       className={cn(
         'group relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 cursor-pointer',
-        isSelected
-          ? 'bg-primary/10 border-l-2 border-primary'
-          : hasUnread 
-            ? 'bg-muted/60 hover:bg-muted/80' 
-            : 'hover:bg-muted/80'
+        // Selection mode highlight - Requirement 5.1
+        isChecked && 'bg-primary/20',
+        // Normal selection highlight
+        !isChecked && isSelected && 'bg-primary/10 border-l-2 border-primary',
+        // Unread highlight
+        !isChecked && !isSelected && hasUnread && 'bg-muted/60 hover:bg-muted/80',
+        // Default hover
+        !isChecked && !isSelected && !hasUnread && 'hover:bg-muted/80'
       )}
     >
+      {/* Checkbox - shown in selection mode - Requirement 2.2, 5.2 */}
+      {isSelectionMode && (
+        <Checkbox
+          checked={isChecked}
+          onCheckedChange={() => onToggleSelection?.()}
+          onClick={(e) => e.stopPropagation()}
+          className="shrink-0 transition-all duration-200"
+        />
+      )}
       {/* Avatar with status indicator - Task 1.1: Increased to 44px (h-11 w-11) with ring */}
       <div className="relative flex-shrink-0">
         <Avatar className="h-11 w-11 ring-2 ring-background">
@@ -849,13 +1102,17 @@ function ConversationItem({ conversation, isSelected, onClick, showInboxBadge, i
         )}
       </div>
       
-      {/* Task 1.3: QuickActions on hover */}
-      <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
-        <QuickActions 
-          conversationId={conversation.id} 
-          isMuted={isMuted}
-        />
-      </div>
+      {/* Task 1.3: QuickActions on hover - hidden in selection mode */}
+      {!isSelectionMode && onMarkRead && onMute && onResolve && (
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <QuickActions 
+            conversation={conversation}
+            onMarkRead={onMarkRead}
+            onMute={onMute}
+            onResolve={onResolve}
+          />
+        </div>
+      )}
     </div>
   )
 }

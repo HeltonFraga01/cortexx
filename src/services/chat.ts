@@ -112,7 +112,7 @@ export async function getConversation(conversationId: string | number): Promise<
 
 export async function updateConversation(
   conversationId: number,
-  data: { status?: string; assignedBotId?: number | null; isMuted?: boolean }
+  data: { status?: string; assignedBotId?: number | null; isMuted?: boolean; unreadCount?: number }
 ): Promise<Conversation> {
   const response = await backendApi.patch(`${BASE_URL}/conversations/${conversationId}`, data)
   return extractAndTransform<Conversation>(response)
@@ -123,6 +123,10 @@ export async function muteConversation(
   muted: boolean
 ): Promise<Conversation> {
   return updateConversation(conversationId, { isMuted: muted })
+}
+
+export async function markConversationAsUnread(conversationId: number): Promise<Conversation> {
+  return updateConversation(conversationId, { unreadCount: 1 })
 }
 
 export async function markConversationAsRead(conversationId: number): Promise<void> {

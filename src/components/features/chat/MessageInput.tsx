@@ -440,7 +440,7 @@ export function MessageInput({ onSend, isLoading, conversationId, onTyping, onPr
                          sendLocationMutation.isPending || sendAudioMutation.isPending
 
   return (
-    <div className="border-t bg-background p-4">
+    <div className="flex-shrink-0 border-t bg-background p-4">
       {/* Hidden file inputs */}
       <input
         ref={imageInputRef}

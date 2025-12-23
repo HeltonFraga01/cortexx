@@ -14,6 +14,7 @@ import {
   getConversation,
   updateConversation,
   markConversationAsRead,
+  markConversationAsUnread,
   searchConversations,
   startConversation,
   getMessages,
@@ -121,8 +122,9 @@ export interface ChatApi {
   // Conversations
   getConversations: (filters?: ConversationFilters, pagination?: { limit?: number; offset?: number }) => Promise<ConversationsResponse>
   getConversation: (id: string | number) => Promise<Conversation>
-  updateConversation: (id: string | number, data: { status?: string; assignedBotId?: number | null; isMuted?: boolean }) => Promise<Conversation>
+  updateConversation: (id: string | number, data: { status?: string; assignedBotId?: number | null; isMuted?: boolean; unreadCount?: number }) => Promise<Conversation>
   markConversationAsRead: (id: number) => Promise<void>
+  markConversationAsUnread: (id: number) => Promise<Conversation>
   searchConversations: (query: string, limit?: number) => Promise<Conversation[]>
   startConversation: (phone: string, contactInfo?: { name?: string; avatarUrl?: string }) => Promise<Conversation>
   
@@ -279,6 +281,7 @@ export function useChatApi(): ChatApi {
       getConversation,
       updateConversation,
       markConversationAsRead,
+      markConversationAsUnread,
       searchConversations,
       startConversation,
       

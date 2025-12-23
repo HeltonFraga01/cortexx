@@ -653,12 +653,15 @@ class ChatService {
         token
       );
 
-      // Send read receipt to WUZAPI
-      await wuzapiClient.post('/chat/markread', {
-        Phone: conversation.contact_jid.replace('@s.whatsapp.net', '')
-      }, {
-        headers: { 'Token': userToken }
-      });
+      // Send read receipt to WUZAPI (use camelCase contactJid from formatted conversation)
+      const contactJid = conversation.contactJid || conversation.contact_jid;
+      if (contactJid) {
+        await wuzapiClient.post('/chat/markread', {
+          Phone: contactJid.replace('@s.whatsapp.net', '')
+        }, {
+          headers: { 'Token': userToken }
+        });
+      }
 
       logger.info('Messages marked as read', { conversationId, userId });
     } catch (error) {
@@ -761,6 +764,67 @@ class ChatService {
       return data || [];
     } catch (error) {
       logger.error('Failed to search messages', { conversationId, query, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Update conversation with arbitrary fields
+   * Uses queryAsAdmin with account_id filter for security (same pattern as deleteConversation)
+   * 
+   * @param {string} userToken - WUZAPI token (used to resolve accountId if not provided)
+   * @param {string} conversationId - Conversation ID (UUID)
+   * @param {Object} updates - Fields to update
+   * @param {string} [accountId] - Account ID (optional, resolved from userToken if not provided)
+   * @returns {Promise<Object>} Updated conversation
+   */
+  async updateConversation(userToken, conversationId, updates, accountId = null) {
+    try {
+      // Resolve accountId if not provided
+      const resolvedAccountId = accountId || await this.getAccountIdFromToken(userToken);
+      
+      if (!resolvedAccountId) {
+        throw new Error('Could not resolve account from token');
+      }
+
+      // Build update object with timestamp
+      const updateData = {
+        ...updates,
+        updated_at: new Date().toISOString()
+      };
+
+      // Use queryAsAdmin with account_id filter (same pattern as deleteConversation)
+      // This bypasses RLS but ensures security via account_id filter
+      const { data, error } = await supabaseService.queryAsAdmin('conversations', (query) =>
+        query
+          .update(updateData)
+          .eq('id', conversationId)
+          .eq('account_id', resolvedAccountId)
+          .select()
+          .single()
+      );
+
+      if (error) {
+        throw error;
+      }
+
+      if (!data) {
+        throw new Error('Record not found or access denied');
+      }
+
+      logger.info('Conversation updated', { 
+        conversationId, 
+        accountId: resolvedAccountId,
+        updates: Object.keys(updates) 
+      });
+
+      return this.formatConversation(data);
+    } catch (error) {
+      logger.error('Failed to update conversation', { 
+        conversationId, 
+        error: error.message,
+        stack: error.stack 
+      });
       throw error;
     }
   }
@@ -1540,6 +1604,30 @@ class ChatService {
       }));
     } catch (error) {
       logger.error('Failed to get transfer history', { conversationId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Mark a conversation as read (wrapper for route compatibility)
+   * @param {string} userToken - WUZAPI user token
+   * @param {string} conversationId - Conversation ID (UUID)
+   * @returns {Promise<void>}
+   */
+  async markConversationAsRead(userToken, conversationId) {
+    try {
+      // Get account ID from token
+      const accountId = await this.getAccountIdFromToken(userToken);
+      if (!accountId) {
+        throw new Error('Account not found for the provided token');
+      }
+
+      // Call the existing markAsRead method
+      await this.markAsRead(conversationId, accountId, userToken, null);
+      
+      logger.info('Conversation marked as read via wrapper', { conversationId });
+    } catch (error) {
+      logger.error('Failed to mark conversation as read', { conversationId, error: error.message });
       throw error;
     }
   }

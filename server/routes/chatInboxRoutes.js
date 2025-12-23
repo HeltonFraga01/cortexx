@@ -253,21 +253,35 @@ router.get('/conversations/:id', verifyUserToken, async (req, res) => {
 router.patch('/conversations/:id', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params
-    const { status, assignedBotId, isMuted } = req.body
+    const { status, assignedBotId, isMuted, unreadCount } = req.body
     
     // Using SupabaseService directly
     if (!supabaseService) {
       return res.status(500).json({ success: false, error: 'Database not available' })
     }
 
+    // Get accountId from middleware context
+    const accountId = req.accountId || req.context?.accountId
+    if (!accountId) {
+      logger.warn('No accountId available for conversation update', {
+        hasContext: !!req.context,
+        hasUserToken: !!req.userToken,
+        conversationId: id
+      })
+      return res.status(401).json({ success: false, error: 'Account context not available' })
+    }
+
     const chatService = new ChatService()
     
+    // Map camelCase to snake_case for database
     const updates = {}
     if (status) updates.status = status
-    if (assignedBotId !== undefined) updates.assignedBotId = assignedBotId
-    if (isMuted !== undefined) updates.isMuted = isMuted
+    if (assignedBotId !== undefined) updates.assigned_bot_id = assignedBotId
+    if (isMuted !== undefined) updates.is_muted = isMuted
+    if (unreadCount !== undefined) updates.unread_count = unreadCount
 
-    const conversation = await chatService.updateConversation(req.userToken, id, updates)
+    // Pass accountId for secure update (bypasses RLS but uses account_id filter)
+    const conversation = await chatService.updateConversation(req.userToken, id, updates, accountId)
 
     // Broadcast update via WebSocket
     const chatHandler = req.app.locals.chatHandler
