@@ -23,5 +23,8 @@ export { ParticipantsSection } from './ParticipantsSection'
 export { ConversationActionsSection } from './ConversationActionsSection'
 export { MacrosSection } from './MacrosSection'
 
+// Inbox Transfer
+export { InboxTransferSelector } from './InboxTransferSelector'
+
 // Settings components
 export { BotSettings, WebhookSettings, LabelManager, CannedResponseManager } from './settings'

@@ -31,6 +31,7 @@ import { useChatApi } from '@/hooks/useChatApi'
 import type { Conversation, ConversationsResponse } from '@/types/chat'
 import { updateConversationBotInCache, updateConversationStatusInCache } from '@/lib/conversation-cache'
 import { ExternalLink, CheckCircle, Bot, UserPlus, Hand, Loader2 } from 'lucide-react'
+import { InboxTransferSelector } from './InboxTransferSelector'
 
 interface ConversationActionsSectionProps {
   conversation: Conversation
@@ -219,6 +220,9 @@ export function ConversationActionsSection({ conversation }: ConversationActions
           Marcar como resolvida
         </Button>
       )}
+
+      {/* Inbox transfer - available for all users */}
+      <InboxTransferSelector conversation={conversation} />
 
       {/* Bot assignment */}
       {showBotSelect ? (

@@ -1360,6 +1360,220 @@ class ChatService {
       } : null
     };
   }
+
+  // ==================== TRANSFER METHODS ====================
+
+  /**
+   * Transfer a conversation to another inbox
+   * @param {string} accountId - Account ID (UUID)
+   * @param {string} conversationId - Conversation ID (UUID)
+   * @param {string} targetInboxId - Target inbox ID (UUID)
+   * @param {Object} options - Transfer options
+   * @param {string} [options.reason] - Reason for transfer
+   * @param {string} [options.transferredBy] - Agent ID who performed the transfer
+   * @returns {Promise<Object>} Transfer result with conversation and transfer record
+   */
+  async transferConversation(accountId, conversationId, targetInboxId, options = {}) {
+    const { reason = null, transferredBy = null } = options;
+
+    try {
+      logger.info('Starting conversation transfer', {
+        accountId: accountId?.substring(0, 8),
+        conversationId,
+        targetInboxId: targetInboxId?.substring(0, 8)
+      });
+
+      // 1. Get the conversation and verify ownership
+      const { data: conversation, error: convError } = await supabaseService.queryAsAdmin('conversations', (query) =>
+        query.select('id, inbox_id, account_id, contact_name, contact_jid')
+          .eq('id', conversationId)
+          .eq('account_id', accountId)
+          .single()
+      );
+
+      if (convError || !conversation) {
+        logger.warn('Conversation not found for transfer', { conversationId, accountId: accountId?.substring(0, 8) });
+        throw new Error('Conversation not found or unauthorized');
+      }
+
+      const fromInboxId = conversation.inbox_id;
+
+      // 2. Validate target inbox is different from current
+      if (fromInboxId === targetInboxId) {
+        throw new Error('Target inbox is the same as current inbox');
+      }
+
+      // 3. Validate target inbox belongs to the same account
+      const { data: targetInbox, error: inboxError } = await supabaseService.queryAsAdmin('inboxes', (query) =>
+        query.select('id, name, account_id, wuzapi_token')
+          .eq('id', targetInboxId)
+          .eq('account_id', accountId)
+          .single()
+      );
+
+      if (inboxError || !targetInbox) {
+        logger.warn('Target inbox not found or unauthorized', { targetInboxId, accountId: accountId?.substring(0, 8) });
+        throw new Error('Target inbox not found or you do not have permission');
+      }
+
+      // 4. Validate target inbox has a valid WUZAPI token
+      if (!targetInbox.wuzapi_token) {
+        throw new Error('Target inbox does not have a valid WhatsApp connection');
+      }
+
+      // 5. Update conversation's inbox_id
+      const { error: updateError } = await supabaseService.queryAsAdmin('conversations', (query) =>
+        query.update({ 
+          inbox_id: targetInboxId,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', conversationId)
+        .eq('account_id', accountId)
+      );
+
+      if (updateError) {
+        logger.error('Failed to update conversation inbox', { conversationId, error: updateError.message });
+        throw new Error('Failed to transfer conversation');
+      }
+
+      // 6. Record the transfer in history
+      const transferRecord = {
+        conversation_id: conversationId,
+        from_inbox_id: fromInboxId,
+        to_inbox_id: targetInboxId,
+        transferred_by: transferredBy,
+        reason: reason,
+        transferred_at: new Date().toISOString()
+      };
+
+      const { data: transfer, error: transferError } = await supabaseService.insert('conversation_transfers', transferRecord);
+
+      if (transferError) {
+        logger.error('Failed to record transfer history', { conversationId, error: transferError.message });
+        // Don't throw - the transfer itself succeeded
+      }
+
+      // 7. Get updated conversation with inbox info
+      const { data: updatedConversation } = await supabaseService.queryAsAdmin('conversations', (query) =>
+        query.select(`
+          *,
+          inboxes(id, name, phone_number)
+        `)
+        .eq('id', conversationId)
+        .single()
+      );
+
+      logger.info('Conversation transferred successfully', {
+        conversationId,
+        fromInboxId: fromInboxId?.substring(0, 8),
+        toInboxId: targetInboxId?.substring(0, 8),
+        transferId: transfer?.id
+      });
+
+      return {
+        conversation: updatedConversation ? this.formatConversation(updatedConversation) : null,
+        transfer: transfer ? {
+          id: transfer.id,
+          fromInboxId: transfer.from_inbox_id,
+          toInboxId: transfer.to_inbox_id,
+          transferredAt: transfer.transferred_at,
+          reason: transfer.reason
+        } : null
+      };
+    } catch (error) {
+      logger.error('Failed to transfer conversation', {
+        accountId: accountId?.substring(0, 8),
+        conversationId,
+        targetInboxId: targetInboxId?.substring(0, 8),
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get transfer history for a conversation
+   * @param {string} accountId - Account ID (UUID)
+   * @param {string} conversationId - Conversation ID (UUID)
+   * @returns {Promise<Array>} List of transfers
+   */
+  async getTransferHistory(accountId, conversationId) {
+    try {
+      // Verify conversation belongs to account
+      const { data: conversation, error: convError } = await supabaseService.queryAsAdmin('conversations', (query) =>
+        query.select('id').eq('id', conversationId).eq('account_id', accountId).single()
+      );
+
+      if (convError || !conversation) {
+        throw new Error('Conversation not found or unauthorized');
+      }
+
+      // Get transfer history with inbox names
+      const { data: transfers, error } = await supabaseService.queryAsAdmin('conversation_transfers', (query) =>
+        query.select(`
+          id,
+          from_inbox_id,
+          to_inbox_id,
+          transferred_by,
+          transferred_at,
+          reason,
+          from_inbox:inboxes!conversation_transfers_from_inbox_id_fkey(id, name),
+          to_inbox:inboxes!conversation_transfers_to_inbox_id_fkey(id, name),
+          agent:agents!conversation_transfers_transferred_by_fkey(id, name)
+        `)
+        .eq('conversation_id', conversationId)
+        .order('transferred_at', { ascending: false })
+      );
+
+      if (error) {
+        logger.error('Failed to get transfer history', { conversationId, error: error.message });
+        throw error;
+      }
+
+      return (transfers || []).map(t => ({
+        id: t.id,
+        fromInbox: t.from_inbox ? { id: t.from_inbox.id, name: t.from_inbox.name } : null,
+        toInbox: t.to_inbox ? { id: t.to_inbox.id, name: t.to_inbox.name } : null,
+        transferredBy: t.agent ? { id: t.agent.id, name: t.agent.name } : null,
+        transferredAt: t.transferred_at,
+        reason: t.reason
+      }));
+    } catch (error) {
+      logger.error('Failed to get transfer history', { conversationId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Get inbox details by ID
+   * @param {string} inboxId - Inbox ID (UUID)
+   * @param {string} accountId - Account ID for authorization
+   * @returns {Promise<Object|null>} Inbox details or null
+   */
+  async getInboxById(inboxId, accountId) {
+    try {
+      const { data, error } = await supabaseService.queryAsAdmin('inboxes', (query) =>
+        query.select('id, name, phone_number, wuzapi_token, account_id')
+          .eq('id', inboxId)
+          .eq('account_id', accountId)
+          .single()
+      );
+
+      if (error || !data) {
+        return null;
+      }
+
+      return {
+        id: data.id,
+        name: data.name,
+        phoneNumber: data.phone_number,
+        hasToken: !!data.wuzapi_token
+      };
+    } catch (error) {
+      logger.error('Failed to get inbox', { inboxId, error: error.message });
+      return null;
+    }
+  }
 }
 
 module.exports = ChatService;

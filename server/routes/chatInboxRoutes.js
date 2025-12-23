@@ -3154,4 +3154,124 @@ router.get('/test-group-info/:groupJid', verifyUserToken, async (req, res) => {
   }
 })
 
+// ==================== Transfer Routes ====================
+
+/**
+ * PATCH /api/chat/inbox/conversations/:id/transfer
+ * Transfer a conversation to another inbox
+ * Requirements: REQ-1.1, REQ-1.2, REQ-1.5, REQ-1.6
+ */
+router.patch('/conversations/:id/transfer', verifyUserToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { targetInboxId, reason } = req.body
+    
+    if (!targetInboxId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'targetInboxId is required' 
+      })
+    }
+
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (!uuidRegex.test(targetInboxId)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid targetInboxId format' 
+      })
+    }
+
+    // Use accountId from middleware context
+    const accountId = req.accountId || req.context?.accountId
+    
+    if (!accountId) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'Account context not available' 
+      })
+    }
+
+    const chatService = new ChatService()
+    
+    // Get agent ID if available (for audit)
+    const transferredBy = req.user?.id || null
+
+    const result = await chatService.transferConversation(
+      accountId,
+      id,
+      targetInboxId,
+      { reason, transferredBy }
+    )
+
+    logger.info('Conversation transferred via API', {
+      conversationId: id,
+      fromInboxId: result.transfer?.fromInboxId?.substring(0, 8),
+      toInboxId: result.transfer?.toInboxId?.substring(0, 8),
+      accountId: accountId?.substring(0, 8)
+    })
+
+    res.json({
+      success: true,
+      data: result
+    })
+  } catch (error) {
+    logger.error('Error transferring conversation', { 
+      error: error.message, 
+      conversationId: req.params.id,
+      targetInboxId: req.body?.targetInboxId
+    })
+    
+    // Return appropriate status code based on error
+    if (error.message.includes('not found') || error.message.includes('unauthorized')) {
+      return res.status(404).json({ success: false, error: error.message })
+    }
+    if (error.message.includes('same as current') || error.message.includes('permission')) {
+      return res.status(400).json({ success: false, error: error.message })
+    }
+    
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+/**
+ * GET /api/chat/inbox/conversations/:id/transfers
+ * Get transfer history for a conversation
+ * Requirements: REQ-4.1, REQ-4.2
+ */
+router.get('/conversations/:id/transfers', verifyUserToken, async (req, res) => {
+  try {
+    const { id } = req.params
+    
+    // Use accountId from middleware context
+    const accountId = req.accountId || req.context?.accountId
+    
+    if (!accountId) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'Account context not available' 
+      })
+    }
+
+    const chatService = new ChatService()
+    const transfers = await chatService.getTransferHistory(accountId, id)
+
+    res.json({
+      success: true,
+      data: { transfers }
+    })
+  } catch (error) {
+    logger.error('Error fetching transfer history', { 
+      error: error.message, 
+      conversationId: req.params.id 
+    })
+    
+    if (error.message.includes('not found') || error.message.includes('unauthorized')) {
+      return res.status(404).json({ success: false, error: error.message })
+    }
+    
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
 module.exports = router

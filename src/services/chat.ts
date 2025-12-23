@@ -139,6 +139,66 @@ export async function deleteConversation(conversationId: number): Promise<void> 
   }
 }
 
+// ==================== Inbox Transfer ====================
+
+export interface TransferResult {
+  conversation: Conversation
+  transfer: {
+    id: string
+    fromInboxId: string
+    toInboxId: string
+    transferredAt: string
+    reason?: string
+  }
+}
+
+export interface TransferHistoryItem {
+  id: string
+  fromInbox: { id: string; name: string } | null
+  toInbox: { id: string; name: string } | null
+  transferredBy: { id: string; name: string } | null
+  transferredAt: string
+  reason?: string
+}
+
+/**
+ * Transfer a conversation to another inbox
+ * @param conversationId - Conversation ID to transfer
+ * @param targetInboxId - Target inbox ID
+ * @param reason - Optional reason for transfer
+ * @returns Transfer result with updated conversation
+ * 
+ * Requirements: REQ-1.1, REQ-1.2, REQ-1.4
+ */
+export async function transferConversation(
+  conversationId: number,
+  targetInboxId: string,
+  reason?: string
+): Promise<TransferResult> {
+  const response = await backendApi.patch(
+    `${BASE_URL}/conversations/${conversationId}/transfer`,
+    { targetInboxId, reason }
+  )
+  return extractAndTransform<TransferResult>(response)
+}
+
+/**
+ * Get transfer history for a conversation
+ * @param conversationId - Conversation ID
+ * @returns List of transfers
+ * 
+ * Requirements: REQ-4.1, REQ-4.2
+ */
+export async function getTransferHistory(
+  conversationId: number
+): Promise<TransferHistoryItem[]> {
+  const response = await backendApi.get(
+    `${BASE_URL}/conversations/${conversationId}/transfers`
+  )
+  const data = extractData<{ transfers: TransferHistoryItem[] }>(response)
+  return data.transfers || []
+}
+
 export async function searchConversations(query: string, limit = 20): Promise<Conversation[]> {
   const response = await backendApi.get(
     `${BASE_URL}/conversations/search?q=${encodeURIComponent(query)}&limit=${limit}`
