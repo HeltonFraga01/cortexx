@@ -50,6 +50,7 @@ const adminAuditRoutes = require('./adminAuditRoutes');
 const adminReportRoutes = require('./adminReportRoutes');
 const adminSettingsRoutes = require('./adminSettingsRoutes');
 const adminApiSettingsRoutes = require('./adminApiSettingsRoutes');
+const adminTenantApiSettingsRoutes = require('./adminTenantApiSettingsRoutes');
 const adminStripeRoutes = require('./adminStripeRoutes');
 const adminCreditPackagesRoutes = require('./adminCreditPackagesRoutes');
 const stripeWebhookRoutes = require('./stripeWebhookRoutes');
@@ -79,6 +80,7 @@ const publicRoutes = require('./publicRoutes');
 
 // Inbox Context Routes (Supabase Auth)
 const inboxContextRoutes = require('./inboxContextRoutes');
+const sessionInboxWebhookRoutes = require('./sessionInboxWebhookRoutes');
 
 logger.debug('contactImportRoutes loaded', { 
   type: typeof contactImportRoutes, 
@@ -128,6 +130,7 @@ function setupRoutes(app) {
   app.use('/api/admin/reports', adminReportRoutes);
   app.use('/api/admin/settings', adminSettingsRoutes);
   app.use('/api/admin/api-settings', adminApiSettingsRoutes);
+  app.use('/api/admin/tenant/api-settings', adminTenantApiSettingsRoutes);
   app.use('/api/admin/stripe', adminStripeRoutes);
   app.use('/api/admin/credit-packages', adminCreditPackagesRoutes);
   
@@ -160,6 +163,8 @@ function setupRoutes(app) {
   app.use('/api/user/drafts', userDraftRoutes);
   // Inbox Context Routes (Supabase Auth user inbox binding)
   app.use('/api/user', inboxContextRoutes);
+  // Session Inbox Webhook Routes (tenant-scoped webhook configuration)
+  app.use('/api/session/inboxes', sessionInboxWebhookRoutes);
   // IMPORTANT: userBotTestRoutes MUST come BEFORE userBotRoutes
   // because userBotRoutes has a /:id catch-all route that would intercept test routes
   app.use('/api/user/bots', userBotTestRoutes); // Bot test chat routes

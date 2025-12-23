@@ -90,6 +90,7 @@ const accountRoleRoutes = require('./routes/accountRoleRoutes');
 const accountAuditRoutes = require('./routes/accountAuditRoutes');
 const agentAuthRoutes = require('./routes/agentAuthRoutes');
 const sessionAccountRoutes = require('./routes/sessionAccountRoutes');
+const sessionInboxWebhookRoutes = require('./routes/sessionInboxWebhookRoutes');
 const resellerRoutes = require('./routes/resellerRoutes');
 const databaseRoutes = require('./routes/databaseRoutes');
 
@@ -657,6 +658,9 @@ const agentMessagingRoutes = require('./routes/agentMessagingRoutes');
 app.use('/api/agent/messaging', agentMessagingRoutes);
 
 // Session-based Account Management Routes (for admin/user dashboards)
+// IMPORTANT: sessionInboxWebhookRoutes MUST come BEFORE sessionAccountRoutes
+// because sessionAccountRoutes has /inboxes/:id catch-all that would intercept webhook routes
+app.use('/api/session/inboxes', sessionInboxWebhookRoutes);
 app.use('/api/session', sessionAccountRoutes);
 
 // Rotas de monitoramento

@@ -16,6 +16,7 @@ import { WebhookSettings } from '@/components/features/chat/settings/WebhookSett
 import { LabelManager } from '@/components/features/chat/settings/LabelManager';
 import { CannedResponseManager } from '@/components/features/chat/settings/CannedResponseManager';
 import { NotificationSettings } from '@/components/features/chat/settings/NotificationSettings';
+import { InboxProvider } from '@/contexts/InboxContext';
 import { Save, Webhook, Settings as SettingsIcon, Eye, EyeOff, Copy, User as UserIcon, Loader2, AlertCircle, CheckCircle2, Bot, Tags, MessageSquareText, Bell, CreditCard } from 'lucide-react';
 import { SubscriptionManager } from '@/components/user/billing/SubscriptionManager';
 import { toast } from 'sonner';
@@ -348,7 +349,9 @@ const UserSettings = () => {
 
         {/* Tab: Webhooks de Chat */}
         <TabsContent value="webhooks-chat" className="space-y-6">
-          <WebhookSettings />
+          <InboxProvider>
+            <WebhookSettings />
+          </InboxProvider>
         </TabsContent>
 
         {/* Tab: Etiquetas */}

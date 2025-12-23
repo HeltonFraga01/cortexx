@@ -8,8 +8,9 @@ import BrandingSettings from './BrandingSettings';
 import CustomLinksManager from './CustomLinksManager';
 import AdminAutomationSettings from './AdminAutomationSettings';
 import ApiSettingsForm from './ApiSettingsForm';
+import TenantApiSettings from './TenantApiSettings';
 
-import { Settings, Info, Bot } from 'lucide-react';
+import { Settings, Info, Bot, Server } from 'lucide-react';
 
 const AdminSettings = () => {
   const brandingConfig = useBrandingConfig();
@@ -46,6 +47,10 @@ const AdminSettings = () => {
             <Settings className="h-4 w-4 mr-2" />
             Geral
           </TabsTrigger>
+          <TabsTrigger value="api">
+            <Server className="h-4 w-4 mr-2" />
+            API
+          </TabsTrigger>
           <TabsTrigger value="automation">
             <Bot className="h-4 w-4 mr-2" />
             Automações
@@ -56,8 +61,6 @@ const AdminSettings = () => {
           <BrandingSettings />
 
       <CustomLinksManager />
-
-      <ApiSettingsForm />
 
       <Card>
         <CardHeaderWithIcon
@@ -108,6 +111,11 @@ const AdminSettings = () => {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="api" className="space-y-6">
+          <TenantApiSettings />
+          <ApiSettingsForm />
         </TabsContent>
 
         <TabsContent value="automation">

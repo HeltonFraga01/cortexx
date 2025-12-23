@@ -4,7 +4,10 @@
  * Shows the webhook URL that needs to be configured in WUZAPI
  * to receive incoming messages for the chat inbox feature.
  * 
- * Also allows automatic configuration via WUZAPI API when a public URL is available.
+ * Uses tenant's webhook configuration from backend instead of
+ * generating URLs client-side.
+ * 
+ * Requirements: 12.1, 12.2, 12.3 (Tenant Webhook Configuration)
  */
 
 import { useState } from 'react'
@@ -16,7 +19,13 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useToast } from '@/hooks/use-toast'
-import { getWebhookStatus, configureWebhook } from '@/services/chat'
+import { useInbox } from '@/contexts/InboxContext'
+import { 
+  getInboxWebhookStatus, 
+  configureInboxWebhook, 
+  generateInboxWebhookUrl,
+  DEFAULT_WEBHOOK_EVENTS
+} from '@/services/inbox-webhook'
 import { 
   Webhook, 
   Copy,
@@ -25,29 +34,57 @@ import {
   ExternalLink,
   RefreshCw,
   Settings2,
-  XCircle
+  XCircle,
+  AlertTriangle
 } from 'lucide-react'
 
 export function IncomingWebhookConfig() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const { currentInbox } = useInbox()
   const [copied, setCopied] = useState(false)
   const [customUrl, setCustomUrl] = useState('')
   const [showCustomUrl, setShowCustomUrl] = useState(false)
 
-  // Fetch current webhook status from WUZAPI
-  const { data: status, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['webhook-status'],
-    queryFn: getWebhookStatus,
+  // Fetch webhook URL from backend (uses tenant configuration)
+  const { 
+    data: webhookUrl, 
+    isLoading: isLoadingUrl, 
+    isError: isUrlError,
+    error: urlError 
+  } = useQuery({
+    queryKey: ['inbox-webhook-url', currentInbox?.id],
+    queryFn: () => generateInboxWebhookUrl(currentInbox!.id),
+    enabled: !!currentInbox?.id,
+    staleTime: 60000,
+    retry: 1
+  })
+
+  // Fetch current webhook status from backend
+  const { 
+    data: status, 
+    isLoading: isLoadingStatus, 
+    isError: isStatusError, 
+    error: statusError, 
+    refetch 
+  } = useQuery({
+    queryKey: ['inbox-webhook-status', currentInbox?.id],
+    queryFn: () => getInboxWebhookStatus(currentInbox!.id),
+    enabled: !!currentInbox?.id,
     staleTime: 30000,
     retry: 1
   })
 
-  // Mutation to configure webhook via WUZAPI API
+  // Mutation to configure webhook
   const configureMutation = useMutation({
-    mutationFn: (webhookUrl?: string) => configureWebhook(webhookUrl),
+    mutationFn: (customWebhookUrl?: string) => 
+      configureInboxWebhook(currentInbox!.id, { 
+        events: DEFAULT_WEBHOOK_EVENTS,
+        customWebhookUrl 
+      }),
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['webhook-status'] })
+      queryClient.invalidateQueries({ queryKey: ['inbox-webhook-status', currentInbox?.id] })
+      queryClient.invalidateQueries({ queryKey: ['inbox-webhook-url', currentInbox?.id] })
       toast.success('Webhook configurado!', {
         description: `URL: ${result.webhookUrl}`
       })
@@ -55,66 +92,70 @@ export function IncomingWebhookConfig() {
       setCustomUrl('')
     },
     onError: (error: Error) => {
-      toast.error('Erro ao configurar webhook', {
-        description: error.message
-      })
+      // Check if it's a tenant config error
+      if (error.message.includes('WUZAPI não configurado') || error.message.includes('WUZAPI_NOT_CONFIGURED')) {
+        toast.error('Configuração necessária', {
+          description: 'Configure as configurações de API do tenant primeiro.'
+        })
+      } else {
+        toast.error('Erro ao configurar webhook', {
+          description: error.message
+        })
+      }
     }
   })
 
-  // Generate the webhook URL based on current server
-  // MULTI-TENANT: The webhook URL should be the main domain (without tenant subdomain)
-  // because WUZAPI identifies the user by token, not by subdomain
-  const getWebhookUrl = () => {
-    const currentOrigin = window.location.origin
-    const hostname = window.location.hostname
-    const protocol = window.location.protocol
-    const port = window.location.port
-    
-    // Check if we're in development (localhost)
-    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.localhost')
-    
-    if (isLocalhost) {
-      // In development, use the configured API URL or construct from current port
-      const baseUrl = import.meta.env.VITE_API_BASE_URL
-      if (baseUrl) {
-        return `${baseUrl}/api/webhook/events`
-      }
-      // Fallback: use current origin (for *.localhost development)
-      return `${currentOrigin}/api/webhook/events`
-    }
-    
-    // PRODUCTION: Extract main domain (remove tenant subdomain)
-    // Example: cortexx.cortexx.online -> cortexx.online
-    // Example: tenant.example.com -> example.com
-    const parts = hostname.split('.')
-    
-    // If we have a subdomain (3+ parts), remove it to get main domain
-    // tenant.cortexx.online -> cortexx.online
-    // www.example.com -> example.com
-    let mainDomain = hostname
-    if (parts.length >= 3) {
-      // Remove first part (subdomain)
-      mainDomain = parts.slice(1).join('.')
-    }
-    
-    // Construct the webhook URL with main domain
-    const portSuffix = port && port !== '80' && port !== '443' ? `:${port}` : ''
-    return `${protocol}//${mainDomain}${portSuffix}/api/webhook/events`
+  // Check if no inbox is selected
+  if (!currentInbox) {
+    return (
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-full bg-muted">
+              <Webhook className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div>
+              <CardTitle className="text-lg">Webhook de Entrada</CardTitle>
+              <CardDescription>
+                Receba mensagens do WhatsApp no chat inbox
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertTitle>Nenhuma caixa de entrada selecionada</AlertTitle>
+            <AlertDescription>
+              Selecione uma caixa de entrada para configurar o webhook.
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    )
   }
 
-  const webhookUrl = getWebhookUrl()
-  const isLocalhost = webhookUrl.includes('localhost') || webhookUrl.includes('127.0.0.1')
-  const isConfigured = status?.isConfigured && status?.webhook
-  const currentWebhookMatchesServer = status?.webhook === webhookUrl
+  const isLoading = isLoadingUrl || isLoadingStatus
+  const isConfigured = status?.isConfigured && status?.url
+  const currentWebhookMatchesServer = status?.url === webhookUrl
+  const isLocalhost = webhookUrl?.includes('localhost') || webhookUrl?.includes('127.0.0.1')
+  
+  // Check if tenant API is not configured
+  const isTenantApiNotConfigured = isUrlError && 
+    (urlError instanceof Error && 
+      (urlError.message.includes('WEBHOOK_URL_NOT_CONFIGURED') || 
+       urlError.message.includes('URL base de webhook')))
 
   const handleCopyUrl = async () => {
+    if (!webhookUrl) return
+    
     try {
       await navigator.clipboard.writeText(webhookUrl)
       setCopied(true)
       toast.success('URL copiada!')
       setTimeout(() => setCopied(false), 2000)
-    } catch (err) {
-      // Fallback para navegadores que não suportam clipboard API
+    } catch {
+      // Fallback for browsers that don't support clipboard API
       const textArea = document.createElement('textarea')
       textArea.value = webhookUrl
       document.body.appendChild(textArea)
@@ -128,52 +169,7 @@ export function IncomingWebhookConfig() {
   }
 
   const handleConfigure = () => {
-    // MULTI-TENANT: Always use the main domain (without tenant subdomain)
-    // because WUZAPI identifies the user by token, not by subdomain
-    let urlToUse: string | undefined
-    
-    if (showCustomUrl && customUrl) {
-      // Custom URL provided by user - use as base (without /api/webhook/events)
-      urlToUse = customUrl.replace(/\/api\/webhook\/events\/?$/, '')
-    } else {
-      const hostname = window.location.hostname
-      const protocol = window.location.protocol
-      const port = window.location.port
-      
-      // Check if localhost/development
-      const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.localhost')
-      
-      if (isLocalhost) {
-        // In development, let backend use WEBHOOK_BASE_URL env var
-        // urlToUse remains undefined
-      } else {
-        // PRODUCTION: Extract main domain (remove tenant subdomain)
-        const parts = hostname.split('.')
-        
-        // If we have a subdomain (3+ parts), remove it to get main domain
-        let mainDomain = hostname
-        if (parts.length >= 3) {
-          mainDomain = parts.slice(1).join('.')
-        }
-        
-        // Construct base URL with main domain (without /api/webhook/events)
-        const portSuffix = port && port !== '80' && port !== '443' ? `:${port}` : ''
-        urlToUse = `${protocol}//${mainDomain}${portSuffix}`
-      }
-    }
-    
-    // Debug log
-    console.log('[IncomingWebhookConfig] Configuring webhook:', {
-      windowOrigin: window.location.origin,
-      hostname: window.location.hostname,
-      webhookUrl,
-      isLocalhost: window.location.hostname.includes('localhost'),
-      showCustomUrl,
-      customUrl,
-      urlToUse,
-      currentWuzapiUrl: status?.webhook
-    })
-    
+    const urlToUse = showCustomUrl && customUrl ? customUrl : undefined
     configureMutation.mutate(urlToUse)
   }
 
@@ -192,17 +188,19 @@ export function IncomingWebhookConfig() {
               </CardDescription>
             </div>
           </div>
-          <Badge variant={isConfigured ? (currentWebhookMatchesServer ? 'default' : 'secondary') : 'destructive'}>
-            {isConfigured ? (
-              currentWebhookMatchesServer ? (
-                <><CheckCircle2 className="h-3 w-3 mr-1" /> Configurado</>
+          {!isLoading && !isTenantApiNotConfigured && (
+            <Badge variant={isConfigured ? (currentWebhookMatchesServer ? 'default' : 'secondary') : 'destructive'}>
+              {isConfigured ? (
+                currentWebhookMatchesServer ? (
+                  <><CheckCircle2 className="h-3 w-3 mr-1" /> Configurado</>
+                ) : (
+                  <><Info className="h-3 w-3 mr-1" /> URL diferente</>
+                )
               ) : (
-                <><Info className="h-3 w-3 mr-1" /> URL diferente</>
-              )
-            ) : (
-              <><XCircle className="h-3 w-3 mr-1" /> Não configurado</>
-            )}
-          </Badge>
+                <><XCircle className="h-3 w-3 mr-1" /> Não configurado</>
+              )}
+            </Badge>
+          )}
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -210,12 +208,26 @@ export function IncomingWebhookConfig() {
           <div className="flex items-center justify-center py-4">
             <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
-        ) : isError ? (
+        ) : isTenantApiNotConfigured ? (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Configuração de API necessária</AlertTitle>
+            <AlertDescription className="space-y-2">
+              <p>
+                A URL base de webhook não está configurada para este tenant.
+              </p>
+              <p className="text-sm">
+                Peça ao administrador para configurar as configurações de API em{' '}
+                <strong>Configurações → API</strong>.
+              </p>
+            </AlertDescription>
+          </Alert>
+        ) : isStatusError ? (
           <Alert variant="destructive">
             <XCircle className="h-4 w-4" />
             <AlertTitle>Erro ao carregar status</AlertTitle>
             <AlertDescription>
-              {error instanceof Error ? error.message : 'Não foi possível verificar o status do webhook'}
+              {statusError instanceof Error ? statusError.message : 'Não foi possível verificar o status do webhook'}
               <Button variant="link" className="p-0 h-auto ml-2" onClick={() => refetch()}>
                 Tentar novamente
               </Button>
@@ -223,20 +235,20 @@ export function IncomingWebhookConfig() {
           </Alert>
         ) : (
           <>
-            {/* Current status from WUZAPI */}
-            {isConfigured && status?.webhook && (
+            {/* Current status from database/WUZAPI */}
+            {isConfigured && status?.url && (
               <div className="space-y-2">
                 <Label>URL configurada no WUZAPI</Label>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 text-sm bg-muted px-3 py-2 rounded truncate">
-                    {status.webhook}
+                    {status.wuzapiStatus?.webhook || status.url}
                   </code>
                 </div>
-                {status.events && status.events.length > 0 && (
+                {status.wuzapiStatus?.events && status.wuzapiStatus.events.length > 0 && (
                   <div className="mt-2">
                     <Label className="text-xs text-muted-foreground">Eventos ativos</Label>
                     <div className="flex flex-wrap gap-1 mt-1">
-                      {status.events.map((event: string) => (
+                      {status.wuzapiStatus.events.map((event: string) => (
                         <Badge key={event} variant="outline" className="text-xs">
                           {event}
                         </Badge>
@@ -247,31 +259,33 @@ export function IncomingWebhookConfig() {
               </div>
             )}
 
-            {/* Server webhook URL */}
-            <div className="space-y-2">
-              <Label>URL do seu servidor</Label>
-              <div className="flex items-center gap-2">
-                <Input 
-                  value={webhookUrl} 
-                  readOnly 
-                  className="font-mono text-sm"
-                />
-                <Button 
-                  variant={copied ? "default" : "outline"}
-                  size="icon"
-                  onClick={handleCopyUrl}
-                >
-                  {copied ? (
-                    <CheckCircle2 className="h-4 w-4" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                </Button>
+            {/* Server webhook URL from tenant config */}
+            {webhookUrl && (
+              <div className="space-y-2">
+                <Label>URL do seu servidor</Label>
+                <div className="flex items-center gap-2">
+                  <Input 
+                    value={webhookUrl} 
+                    readOnly 
+                    className="font-mono text-sm"
+                  />
+                  <Button 
+                    variant={copied ? "default" : "outline"}
+                    size="icon"
+                    onClick={handleCopyUrl}
+                  >
+                    {copied ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  O webhook usa o domínio principal configurado pelo administrador.
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground">
-                O webhook usa o domínio principal. O WUZAPI identifica seu usuário pelo token.
-              </p>
-            </div>
+            )}
 
             {/* Warning for localhost */}
             {isLocalhost && (
@@ -284,7 +298,7 @@ export function IncomingWebhookConfig() {
                   </p>
                   <ul className="list-disc list-inside text-sm space-y-1">
                     <li>Use um serviço de túnel como <strong>ngrok</strong></li>
-                    <li>Ou faça deploy em um servidor público</li>
+                    <li>Ou configure uma URL pública nas configurações de API</li>
                   </ul>
                   <div className="mt-2">
                     <a 
@@ -297,7 +311,7 @@ export function IncomingWebhookConfig() {
                     </a>
                   </div>
                   <p className="text-sm mt-2">
-                    Exemplo: <code className="bg-muted px-1 rounded">ngrok http 3001</code>
+                    Exemplo: <code className="bg-muted px-1 rounded">ngrok http 3000</code>
                   </p>
                 </AlertDescription>
               </Alert>
@@ -324,7 +338,7 @@ export function IncomingWebhookConfig() {
             <div className="flex items-center gap-2 pt-2">
               <Button 
                 onClick={handleConfigure}
-                disabled={configureMutation.isPending}
+                disabled={configureMutation.isPending || !webhookUrl}
               >
                 {configureMutation.isPending ? (
                   <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
@@ -354,10 +368,9 @@ export function IncomingWebhookConfig() {
             <div className="bg-muted/50 rounded-lg p-4 space-y-2">
               <h4 className="font-medium text-sm">Eventos necessários:</h4>
               <div className="flex flex-wrap gap-2">
-                <Badge variant="secondary">Message</Badge>
-                <Badge variant="secondary">ReadReceipt</Badge>
-                <Badge variant="secondary">ChatPresence</Badge>
-                <Badge variant="secondary">MessageStatus</Badge>
+                {DEFAULT_WEBHOOK_EVENTS.map(event => (
+                  <Badge key={event} variant="secondary">{event}</Badge>
+                ))}
               </div>
             </div>
           </>
