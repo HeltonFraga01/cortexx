@@ -182,34 +182,16 @@ export function WuzapiUsersList() {
         adminPlansService.listPlans().catch(() => [] as Plan[])
       ]);
       
-      // Create a map of plan IDs to names
-      const planMap = new Map(plansData.map(p => [p.id, p.name]));
+      // Create a map of plan IDs to names (kept for future use if needed)
+      const _planMap = new Map(plansData.map(p => [p.id, p.name]));
+      void _planMap; // Suppress unused variable warning
       
       const usersWithAvatarState = usersData.map(u => ({ ...u, avatarLoading: true }));
       setUsers(usersWithAvatarState);
       
-      // Fetch subscriptions for each user (in background)
-      usersWithAvatarState.forEach((user) => {
-        // Skip if user.id is undefined
-        if (!user.id) return;
-        
-        void (async () => {
-          try {
-            const subscription = await adminSubscriptionsService.getSubscription(user.id);
-            setUsers(prev => prev.map(u => 
-              u.id === user.id 
-                ? { 
-                    ...u, 
-                    subscription, 
-                    planName: subscription?.planId ? planMap.get(subscription.planId) : undefined 
-                  } 
-                : u
-            ));
-          } catch {
-            // Silently fail - user may not have subscription
-          }
-        })();
-      });
+      // NOTE: WUZAPI users don't have Supabase subscriptions
+      // Subscriptions are managed via Supabase Auth users, not WUZAPI instances
+      // The subscription fetch was removed to prevent 404 errors
       
       // Buscar avatares em paralelo (com limite)
       const loggedInUsers = usersWithAvatarState.filter(u => u.loggedIn && u.jid);

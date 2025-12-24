@@ -248,6 +248,107 @@ class SubscriptionService {
     }
   }
 
+  /**
+   * Get subscriptions for multiple users in batch
+   * Returns a map of userId -> subscription (or null if no subscription)
+   * @param {string[]} userIds - Array of user IDs
+   * @param {string} tenantId - Tenant ID for validation
+   * @returns {Promise<Object>} Map of userId to subscription
+   */
+  async getUserSubscriptionsBatch(userIds, tenantId) {
+    try {
+      if (!userIds || userIds.length === 0) {
+        return {};
+      }
+
+      // Normalize all user IDs to UUID format
+      const normalizedIds = userIds.map(id => normalizeToUUID(id) || id);
+      
+      // Get accounts for all users in one query
+      const { data: accounts, error: accountError } = await SupabaseService.adminClient
+        .from('accounts')
+        .select('id, owner_user_id, wuzapi_token, tenant_id')
+        .or(`owner_user_id.in.(${normalizedIds.join(',')}),wuzapi_token.in.(${userIds.join(',')})`)
+        .eq('tenant_id', tenantId);
+
+      if (accountError) {
+        logger.error('Failed to get accounts for batch subscription lookup', { error: accountError.message });
+        throw accountError;
+      }
+
+      if (!accounts || accounts.length === 0) {
+        // Return empty map for all user IDs
+        return userIds.reduce((acc, id) => ({ ...acc, [id]: null }), {});
+      }
+
+      // Create mapping from account_id to original userId
+      const accountIdToUserId = {};
+      const accountIds = [];
+      
+      for (const account of accounts) {
+        accountIds.push(account.id);
+        // Map back to original userId format
+        const originalUserId = userIds.find(uid => 
+          normalizeToUUID(uid) === account.owner_user_id || 
+          uid === account.wuzapi_token
+        );
+        if (originalUserId) {
+          accountIdToUserId[account.id] = originalUserId;
+        }
+      }
+
+      // Get all subscriptions for these accounts in one query
+      const { data: subscriptions, error: subError } = await SupabaseService.adminClient
+        .from('user_subscriptions')
+        .select(`
+          *,
+          tenant_plans (
+            id,
+            name,
+            price_cents,
+            billing_cycle,
+            quotas,
+            features,
+            tenant_id
+          )
+        `)
+        .in('account_id', accountIds);
+
+      if (subError) {
+        logger.error('Failed to get batch subscriptions', { error: subError.message });
+        throw subError;
+      }
+
+      // Build result map
+      const result = {};
+      
+      // Initialize all requested userIds with null
+      for (const userId of userIds) {
+        result[userId] = null;
+      }
+
+      // Map subscriptions to their user IDs
+      if (subscriptions && subscriptions.length > 0) {
+        for (const sub of subscriptions) {
+          const userId = accountIdToUserId[sub.account_id];
+          if (userId) {
+            result[userId] = this.formatSubscription(sub, userId);
+          }
+        }
+      }
+
+      logger.debug('Batch subscriptions retrieved', {
+        requestedCount: userIds.length,
+        foundCount: subscriptions?.length || 0
+      });
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to get batch subscriptions', { error: error.message });
+      throw error;
+    }
+  }
+
   async updateSubscriptionStatus(userId, status, reason = null) {
     try {
       const validStatuses = Object.values(SUBSCRIPTION_STATUS);

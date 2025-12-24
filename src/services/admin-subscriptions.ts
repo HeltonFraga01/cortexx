@@ -25,6 +25,18 @@ export const adminSubscriptionsService = {
   },
 
   /**
+   * Get subscriptions for multiple users in batch
+   * Returns a map of userId -> subscription (or null if no subscription)
+   */
+  async getSubscriptionsBatch(userIds: string[]): Promise<Record<string, UserSubscription | null>> {
+    const response = await api.post<ApiResponse<Record<string, UserSubscription | null>>>(
+      `${BASE_URL}/subscriptions/batch`,
+      { userIds }
+    )
+    return response.data?.data || {}
+  },
+
+  /**
    * Update subscription status
    */
   async updateSubscription(userId: string, data: UpdateSubscriptionRequest): Promise<UserSubscription> {

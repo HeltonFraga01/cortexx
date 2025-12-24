@@ -9,13 +9,14 @@
  */
 
 const express = require('express');
+const crypto = require('crypto');
 const { requireAdmin } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const SubscriptionService = require('../services/SubscriptionService');
 const TenantPlanService = require('../services/TenantPlanService');
 const AdminAuditService = require('../services/AdminAuditService');
 const SupabaseService = require('../services/SupabaseService');
-const { normalizeToUUID } = require('../utils/userIdHelper');
+const { normalizeToUUID, isUUID } = require('../utils/userIdHelper');
 
 const router = express.Router();
 
@@ -46,8 +47,113 @@ function getTenantId(req) {
 }
 
 /**
+ * Get user from Supabase Auth by ID
+ * @param {string} userId - Supabase Auth user UUID
+ * @returns {Promise<Object|null>} Auth user or null if not found
+ */
+async function getSupabaseAuthUser(userId) {
+  try {
+    // Validate UUID format
+    if (!isUUID(userId)) {
+      logger.debug('Invalid UUID format for Supabase Auth lookup', { 
+        userId: userId?.substring(0, 8) + '...' 
+      });
+      return null;
+    }
+
+    const { data: { user }, error } = await SupabaseService.adminClient.auth.admin.getUserById(userId);
+    
+    if (error) {
+      logger.debug('Supabase Auth user lookup failed', { 
+        userId: userId.substring(0, 8) + '...', 
+        error: error.message 
+      });
+      return null;
+    }
+    
+    if (!user) {
+      return null;
+    }
+
+    logger.debug('Supabase Auth user found', { 
+      userId: userId.substring(0, 8) + '...', 
+      email: user.email 
+    });
+    
+    return user;
+  } catch (error) {
+    logger.error('Error fetching Supabase Auth user', { 
+      userId: userId?.substring(0, 8) + '...', 
+      error: error.message 
+    });
+    return null;
+  }
+}
+
+/**
+ * Create an account for a Supabase Auth user
+ * @param {Object} authUser - Supabase Auth user object
+ * @param {string} tenantId - Tenant ID to associate with the account
+ * @returns {Promise<Object|null>} Created account or null if failed
+ */
+async function createAccountForAuthUser(authUser, tenantId) {
+  try {
+    const now = new Date().toISOString();
+    const accountId = crypto.randomUUID();
+    
+    const accountData = {
+      id: accountId,
+      name: authUser.email || `User ${authUser.id.substring(0, 8)}`,
+      owner_user_id: authUser.id,
+      tenant_id: tenantId,
+      timezone: 'America/Sao_Paulo',
+      locale: 'pt-BR',
+      status: 'active',
+      settings: {
+        maxAgents: 10,
+        maxInboxes: 5,
+        maxTeams: 5,
+        features: ['messaging', 'webhooks', 'contacts']
+      },
+      created_at: now,
+      updated_at: now
+    };
+
+    const { data: newAccount, error } = await SupabaseService.insert('accounts', accountData);
+    
+    if (error) {
+      logger.error('Failed to create account for Supabase Auth user', { 
+        userId: authUser.id, 
+        tenantId, 
+        error: error.message 
+      });
+      return null;
+    }
+    
+    logger.info('Account created automatically for Supabase Auth user', { 
+      accountId, 
+      userId: authUser.id, 
+      tenantId,
+      email: authUser.email 
+    });
+    
+    // Return the account data (insert may not return data depending on Supabase config)
+    return newAccount || accountData;
+  } catch (error) {
+    logger.error('Error creating account for Supabase Auth user', { 
+      userId: authUser.id, 
+      tenantId, 
+      error: error.message 
+    });
+    return null;
+  }
+}
+
+/**
  * Validate that a user belongs to the admin's tenant
- * @param {string} userId - User ID to validate
+ * Falls back to Supabase Auth if no account exists, creating one automatically
+ * 
+ * @param {string} userId - User ID to validate (Supabase Auth UUID or WUZAPI hash)
  * @param {string} tenantId - Admin's tenant ID
  * @returns {Promise<Object|null>} Account if valid, null otherwise
  */
@@ -56,35 +162,113 @@ async function validateUserTenant(userId, tenantId) {
     // Use helper to normalize to UUID format
     const uuidUserId = normalizeToUUID(userId) || userId;
 
-    // Find account by owner_user_id or wuzapi_token
+    // Step 1: Try to find existing account by owner_user_id or wuzapi_token
     const { data: accounts, error } = await SupabaseService.adminClient
       .from('accounts')
       .select('id, tenant_id, owner_user_id, wuzapi_token')
       .or(`owner_user_id.eq.${uuidUserId},wuzapi_token.eq.${userId}`)
       .limit(1);
 
-    if (error || !accounts || accounts.length === 0) {
-      return null;
+    if (!error && accounts && accounts.length > 0) {
+      const account = accounts[0];
+      
+      // Validate tenant ownership
+      if (account.tenant_id !== tenantId) {
+        logger.warn('Cross-tenant user access attempt blocked', {
+          tenantId,
+          userTenantId: account.tenant_id,
+          userId: userId.substring(0, 8) + '...'
+        });
+        return null;
+      }
+
+      return account;
     }
 
-    const account = accounts[0];
+    // Step 2: Fallback - Check if user exists in Supabase Auth
+    logger.debug('Account not found, checking Supabase Auth', { 
+      userId: userId.substring(0, 8) + '...' 
+    });
     
-    // Validate tenant ownership
-    if (account.tenant_id !== tenantId) {
-      logger.warn('Cross-tenant user access attempt blocked', {
-        tenantId,
-        userTenantId: account.tenant_id,
-        userId
+    const authUser = await getSupabaseAuthUser(uuidUserId);
+    if (!authUser) {
+      logger.debug('User not found in Supabase Auth either', { 
+        userId: userId.substring(0, 8) + '...' 
       });
       return null;
     }
 
-    return account;
+    // Step 3: Create account for this Supabase Auth user
+    logger.info('Creating account for Supabase Auth user', { 
+      userId: authUser.id.substring(0, 8) + '...', 
+      email: authUser.email,
+      tenantId 
+    });
+    
+    const newAccount = await createAccountForAuthUser(authUser, tenantId);
+    if (!newAccount) {
+      logger.error('Failed to create account for Supabase Auth user', { 
+        userId: authUser.id,
+        tenantId 
+      });
+      return null;
+    }
+
+    return newAccount;
   } catch (error) {
-    logger.error('Error validating user tenant', { error: error.message, userId, tenantId });
+    logger.error('Error validating user tenant', { 
+      error: error.message, 
+      userId: userId?.substring(0, 8) + '...', 
+      tenantId 
+    });
     return null;
   }
 }
+
+/**
+ * POST /api/admin/users/subscriptions/batch
+ * Get subscriptions for multiple users in batch (tenant-scoped)
+ * Useful for displaying plan info in user lists
+ */
+router.post('/subscriptions/batch', requireAdmin, async (req, res) => {
+  try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'Tenant context required' });
+    }
+
+    const { userIds } = req.body;
+
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({ error: 'userIds array is required' });
+    }
+
+    if (userIds.length > 100) {
+      return res.status(400).json({ error: 'Maximum 100 user IDs per request' });
+    }
+
+    const service = getSubscriptionService();
+    const subscriptions = await service.getUserSubscriptionsBatch(userIds, tenantId);
+
+    logger.info('Batch subscriptions retrieved', {
+      adminId: req.session.userId,
+      tenantId,
+      userCount: userIds.length,
+      subscriptionCount: Object.keys(subscriptions).length,
+      endpoint: '/api/admin/users/subscriptions/batch'
+    });
+
+    res.json({ success: true, data: subscriptions });
+  } catch (error) {
+    logger.error('Failed to get batch subscriptions', {
+      error: error.message,
+      adminId: req.session.userId,
+      tenantId: req.context?.tenantId,
+      endpoint: '/api/admin/users/subscriptions/batch'
+    });
+    res.status(500).json({ error: error.message });
+  }
+});
 
 /**
  * GET /api/admin/users/:userId/subscription

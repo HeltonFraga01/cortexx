@@ -10,8 +10,10 @@
  * Requirements: Multi-tenant isolation audit
  */
 
+const crypto = require('crypto');
 const { logger } = require('../utils/logger');
 const SupabaseService = require('../services/SupabaseService');
+const { normalizeToUUID, isUUID } = require('../utils/userIdHelper');
 
 /**
  * Helper to get user ID from request (JWT or session)
@@ -21,36 +23,152 @@ function getUserId(req) {
 }
 
 /**
+ * Get user from Supabase Auth by ID
+ * @param {string} userId - Supabase Auth user UUID
+ * @returns {Promise<Object|null>} Auth user or null if not found
+ */
+async function getSupabaseAuthUser(userId) {
+  try {
+    // Validate UUID format
+    if (!isUUID(userId)) {
+      return null;
+    }
+
+    const { data: { user }, error } = await SupabaseService.adminClient.auth.admin.getUserById(userId);
+    
+    if (error || !user) {
+      return null;
+    }
+    
+    return user;
+  } catch (error) {
+    logger.debug('Error fetching Supabase Auth user', { 
+      userId: userId?.substring(0, 8) + '...', 
+      error: error.message 
+    });
+    return null;
+  }
+}
+
+/**
+ * Create an account for a Supabase Auth user
+ * @param {Object} authUser - Supabase Auth user object
+ * @param {string} tenantId - Tenant ID to associate with the account
+ * @returns {Promise<Object|null>} Created account or null if failed
+ */
+async function createAccountForAuthUser(authUser, tenantId) {
+  try {
+    const now = new Date().toISOString();
+    const accountId = crypto.randomUUID();
+    
+    const accountData = {
+      id: accountId,
+      name: authUser.email || `User ${authUser.id.substring(0, 8)}`,
+      owner_user_id: authUser.id,
+      tenant_id: tenantId,
+      timezone: 'America/Sao_Paulo',
+      locale: 'pt-BR',
+      status: 'active',
+      settings: {
+        maxAgents: 10,
+        maxInboxes: 5,
+        maxTeams: 5,
+        features: ['messaging', 'webhooks', 'contacts']
+      },
+      created_at: now,
+      updated_at: now
+    };
+
+    const { data: newAccount, error } = await SupabaseService.insert('accounts', accountData);
+    
+    if (error) {
+      logger.error('Failed to create account for Supabase Auth user', { 
+        userId: authUser.id, 
+        tenantId, 
+        error: error.message 
+      });
+      return null;
+    }
+    
+    logger.info('Account created automatically for Supabase Auth user', { 
+      accountId, 
+      userId: authUser.id, 
+      tenantId,
+      email: authUser.email 
+    });
+    
+    // Return the account data (insert may not return data depending on Supabase config)
+    return newAccount || accountData;
+  } catch (error) {
+    logger.error('Error creating account for Supabase Auth user', { 
+      userId: authUser.id, 
+      tenantId, 
+      error: error.message 
+    });
+    return null;
+  }
+}
+
+/**
  * Validate that a user belongs to the specified tenant
- * @param {string} userId - User ID to validate
+ * Falls back to Supabase Auth if no account exists, creating one automatically
+ * 
+ * @param {string} userId - User ID to validate (Supabase Auth UUID or WUZAPI hash)
  * @param {string} tenantId - Tenant ID to check against
+ * @param {object} options - Additional options
+ * @param {boolean} options.createIfMissing - If true, create account for Auth users (default: true)
  * @returns {Promise<{valid: boolean, account: object|null}>}
  */
-async function validateUserTenant(userId, tenantId) {
+async function validateUserTenant(userId, tenantId, options = { createIfMissing: true }) {
   if (!userId || !tenantId) {
     return { valid: false, account: null };
   }
 
   try {
+    // Normalize to UUID format
+    const uuidUserId = normalizeToUUID(userId) || userId;
+
+    // Step 1: Try to find existing account
     const { data: accounts, error } = await SupabaseService.adminClient
       .from('accounts')
       .select('*')
       .eq('tenant_id', tenantId)
-      .or(`owner_user_id.eq.${userId},wuzapi_token.eq.${userId}`)
+      .or(`owner_user_id.eq.${uuidUserId},wuzapi_token.eq.${userId}`)
       .limit(1);
 
     if (error) {
-      logger.error('Failed to validate user tenant', { error: error.message, userId, tenantId });
+      logger.error('Failed to validate user tenant', { error: error.message, userId: userId.substring(0, 8) + '...', tenantId });
       return { valid: false, account: null };
     }
 
-    if (!accounts || accounts.length === 0) {
+    if (accounts && accounts.length > 0) {
+      return { valid: true, account: accounts[0] };
+    }
+
+    // Step 2: Fallback - Check if user exists in Supabase Auth
+    const authUser = await getSupabaseAuthUser(uuidUserId);
+    if (!authUser) {
       return { valid: false, account: null };
     }
 
-    return { valid: true, account: accounts[0] };
+    // Step 3: Create account for this Supabase Auth user (if enabled)
+    if (options.createIfMissing) {
+      logger.info('Creating account for Supabase Auth user', { 
+        userId: authUser.id.substring(0, 8) + '...', 
+        email: authUser.email,
+        tenantId 
+      });
+      
+      const newAccount = await createAccountForAuthUser(authUser, tenantId);
+      if (newAccount) {
+        return { valid: true, account: newAccount };
+      }
+    }
+
+    // User exists in Auth but we couldn't create account
+    return { valid: false, account: null };
   } catch (error) {
-    logger.error('Error in validateUserTenant', { error: error.message, userId, tenantId });
+    logger.error('Error in validateUserTenant', { error: error.message, userId: userId?.substring(0, 8) + '...', tenantId });
     return { valid: false, account: null };
   }
 }
@@ -251,5 +369,8 @@ module.exports = {
   filterUsersByTenant,
   validateTenantResource,
   requireTenantContext,
-  validateUserIdParam
+  validateUserIdParam,
+  // Helper functions for creating accounts
+  getSupabaseAuthUser,
+  createAccountForAuthUser
 };

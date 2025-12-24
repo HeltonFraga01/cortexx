@@ -1387,18 +1387,55 @@ router.delete('/users/:userId/full',
 
 
 /**
- * Rota para listar usuários do Supabase
+ * Helper to get tenant ID from request context
+ * @param {Object} req - Express request object
+ * @returns {string|null} Tenant ID or null
+ */
+function getTenantIdFromRequest(req) {
+  return req.context?.tenantId || req.session?.tenantId || null;
+}
+
+/**
+ * Rota para listar usuários do Supabase (TENANT-SCOPED)
  * GET /api/admin/supabase/users
+ * 
+ * MULTI-TENANT: Filtra usuários para mostrar apenas os que pertencem ao tenant do admin
  */
 router.get('/supabase/users', async (req, res) => {
   try {
+    const tenantId = getTenantIdFromRequest(req);
+    if (!tenantId) {
+      logger.warn('Supabase users list without tenant context', {
+        sessionId: req.sessionID,
+        userId: req.session?.userId
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Tenant context required'
+      });
+    }
+
     const { page = 1, per_page = 50, search = '' } = req.query;
     
     // Obter cliente admin do Supabase
     const supabase = supabaseService.adminClient;
     
-    // Listar usuários (a API de admin do Supabase não suporta filtro por email diretamente na listagem
-    // mas suporta paginação)
+    // Primeiro, buscar todos os user IDs que pertencem a este tenant via accounts
+    const { data: tenantAccounts, error: accountsError } = await supabase
+      .from('accounts')
+      .select('owner_user_id')
+      .eq('tenant_id', tenantId)
+      .not('owner_user_id', 'is', null);
+
+    if (accountsError) {
+      logger.error('Error fetching tenant accounts', { error: accountsError.message, tenantId });
+      throw accountsError;
+    }
+
+    // Extrair IDs de usuários do tenant
+    const tenantUserIds = new Set(tenantAccounts?.map(a => a.owner_user_id) || []);
+
+    // Listar usuários do Supabase Auth
     const { data: { users }, error } = await supabase.auth.admin.listUsers({
       page: parseInt(page),
       perPage: parseInt(per_page)
@@ -1406,16 +1443,26 @@ router.get('/supabase/users', async (req, res) => {
 
     if (error) throw error;
 
-    // Filtrar localmente se houver busca
-    let filteredUsers = users;
+    // Filtrar para mostrar apenas usuários do tenant
+    let filteredUsers = users.filter(user => tenantUserIds.has(user.id));
+
+    // Aplicar filtro de busca se houver
     if (search) {
       const searchLower = search.toLowerCase();
-      filteredUsers = users.filter(user => 
+      filteredUsers = filteredUsers.filter(user => 
         user.email?.toLowerCase().includes(searchLower) || 
         user.id.includes(searchLower) ||
         (user.user_metadata?.wuzapi_id === search)
       );
     }
+
+    logger.debug('Supabase users listed', {
+      tenantId,
+      totalUsers: users.length,
+      tenantUsers: filteredUsers.length,
+      page,
+      per_page
+    });
 
     return res.status(200).json({
       success: true,
@@ -1423,7 +1470,10 @@ router.get('/supabase/users', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error('Erro ao listar usuários do Supabase', { error: error.message });
+    logger.error('Erro ao listar usuários do Supabase', { 
+      error: error.message,
+      tenantId: getTenantIdFromRequest(req)
+    });
     return res.status(500).json({
       success: false,
       error: error.message
@@ -1461,11 +1511,27 @@ router.get('/supabase/users/:id', async (req, res) => {
 /**
  * Rota para criar usuário no Supabase
  * POST /api/admin/supabase/users
+ * 
+ * MULTI-TENANT: Cria o usuário no Supabase Auth E uma entrada na tabela accounts
+ * para associar o usuário ao tenant do admin que está criando
  */
 router.post('/supabase/users', async (req, res) => {
   try {
     const { email, password, email_confirm = true, phone, phone_confirm = true, user_metadata = {} } = req.body;
     const supabase = supabaseService.adminClient;
+    
+    // Get tenant ID from admin context
+    const tenantId = getTenantIdFromRequest(req);
+    if (!tenantId) {
+      logger.warn('Supabase user creation without tenant context', {
+        sessionId: req.sessionID,
+        userId: req.session?.userId
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Tenant context required'
+      });
+    }
 
     if (!email || !password) {
       return res.status(400).json({
@@ -1474,6 +1540,7 @@ router.post('/supabase/users', async (req, res) => {
       });
     }
 
+    // 1. Create user in Supabase Auth
     const { data: { user }, error } = await supabase.auth.admin.createUser({
       email,
       password,
@@ -1492,6 +1559,86 @@ router.post('/supabase/users', async (req, res) => {
         });
       }
       throw error;
+    }
+
+    // 2. Create account entry to associate user with tenant
+    // This is required for the user to appear in tenant-scoped lists
+    try {
+      const accountName = email.split('@')[0]; // Use email prefix as account name
+      // Generate a unique wuzapi_token (required field - NOT NULL constraint)
+      const crypto = require('crypto');
+      const wuzapiToken = crypto.randomBytes(32).toString('hex');
+      
+      // Check if account already exists for this user (in case of retry)
+      const { data: existingAccount } = await supabase
+        .from('accounts')
+        .select('id, tenant_id')
+        .eq('owner_user_id', user.id)
+        .single();
+
+      if (existingAccount) {
+        // Account exists but might not have tenant_id set (created by trigger)
+        // Update tenant_id if it's null
+        if (!existingAccount.tenant_id) {
+          const { error: updateError } = await supabase
+            .from('accounts')
+            .update({ tenant_id: tenantId })
+            .eq('id', existingAccount.id);
+          
+          if (updateError) {
+            logger.error('Failed to update tenant_id for existing account', {
+              userId: user.id,
+              accountId: existingAccount.id,
+              tenantId,
+              error: updateError.message
+            });
+          } else {
+            logger.info('Updated tenant_id for existing account', {
+              userId: user.id,
+              accountId: existingAccount.id,
+              tenantId
+            });
+          }
+        } else {
+          logger.info('Account already exists for user', {
+            userId: user.id,
+            accountId: existingAccount.id,
+            tenantId
+          });
+        }
+      } else {
+        const { error: accountError } = await supabase
+          .from('accounts')
+          .insert({
+            name: accountName,
+            owner_user_id: user.id,
+            tenant_id: tenantId,
+            wuzapi_token: wuzapiToken,
+            status: 'active'
+          });
+
+        if (accountError) {
+          logger.error('Failed to create account for new user', {
+            userId: user.id,
+            tenantId,
+            error: accountError.message
+          });
+          // Don't fail the request - user was created, just log the error
+          // The user can be associated with tenant later
+        } else {
+          logger.info('Account created for new user', {
+            userId: user.id,
+            tenantId,
+            email
+          });
+        }
+      }
+    } catch (accountErr) {
+      logger.error('Exception creating account for new user', {
+        userId: user.id,
+        tenantId,
+        error: accountErr.message
+      });
     }
 
     return res.status(201).json({
@@ -1567,6 +1714,837 @@ router.delete('/supabase/users/:id', async (req, res) => {
     });
   } catch (error) {
     logger.error('Erro ao deletar usuário do Supabase', { error: error.message, id: req.params.id });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rota para obter dados completos de um usuário Supabase (TENANT-SCOPED)
+ * GET /api/admin/supabase/users/:id/full
+ * 
+ * Retorna: user (auth), account, subscription com plan, quotas, inboxes, agents, bots, stats
+ * MULTI-TENANT: Valida que o usuário pertence ao tenant do admin
+ */
+router.get('/supabase/users/:id/full', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const tenantId = getTenantIdFromRequest(req);
+    
+    if (!tenantId) {
+      logger.warn('Full user data request without tenant context', {
+        userId: id,
+        sessionId: req.sessionID
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Tenant context required'
+      });
+    }
+    
+    const supabase = supabaseService.adminClient;
+    
+    // 1. Get Supabase Auth user
+    const { data: { user }, error: userError } = await supabase.auth.admin.getUserById(id);
+    if (userError || !user) {
+      logger.warn('User not found in Supabase Auth', { userId: id });
+      return res.status(404).json({
+        success: false,
+        error: 'Usuário não encontrado'
+      });
+    }
+    
+    // 2. Get account and validate tenant ownership
+    const { data: account, error: accountError } = await supabase
+      .from('accounts')
+      .select('*')
+      .eq('owner_user_id', id)
+      .eq('tenant_id', tenantId)
+      .single();
+    
+    if (accountError && accountError.code !== 'PGRST116') {
+      logger.error('Error fetching account', { error: accountError.message, userId: id });
+    }
+    
+    // If no account found for this tenant, deny access
+    if (!account) {
+      logger.warn('Cross-tenant access attempt blocked', {
+        type: 'security_violation',
+        targetUserId: id,
+        tenantId,
+        adminId: req.session?.userId,
+        endpoint: req.path
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado'
+      });
+    }
+    
+    // 3. Get subscription with plan details (tenant_plans)
+    const { data: subscription } = await supabase
+      .from('user_subscriptions')
+      .select('*, plan:tenant_plans(*)')
+      .eq('account_id', account.id)
+      .single();
+    
+    // 4. Get all quota usage for this account
+    const { data: quotaUsage } = await supabase
+      .from('user_quota_usage')
+      .select('*')
+      .eq('account_id', account.id);
+    
+    // 5. Get inboxes
+    const { data: inboxes } = await supabase
+      .from('inboxes')
+      .select('*')
+      .eq('account_id', account.id)
+      .order('created_at', { ascending: false });
+    
+    // 6. Get agents
+    const { data: agents } = await supabase
+      .from('agents')
+      .select('*')
+      .eq('account_id', account.id)
+      .order('created_at', { ascending: false });
+    
+    // 7. Get bots
+    const { data: bots } = await supabase
+      .from('agent_bots')
+      .select('*')
+      .eq('account_id', account.id)
+      .order('created_at', { ascending: false });
+    
+    // 8. Get conversations count and stats
+    const { data: conversations, count: conversationsCount } = await supabase
+      .from('conversations')
+      .select('id, status, created_at', { count: 'exact' })
+      .eq('account_id', account.id);
+    
+    // 9. Get messages count (last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const { count: messagesCount } = await supabase
+      .from('chat_messages')
+      .select('id', { count: 'exact', head: true })
+      .in('conversation_id', (conversations || []).map(c => c.id));
+    
+    // 10. Get contacts count
+    const { count: contactsCount } = await supabase
+      .from('contacts')
+      .select('id', { count: 'exact', head: true })
+      .eq('account_id', account.id);
+    
+    // 11. Get campaigns
+    const { data: campaigns } = await supabase
+      .from('bulk_campaigns')
+      .select('id, name, status, total_contacts, sent_count, failed_count, created_at')
+      .eq('account_id', account.id)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    
+    // 12. Get webhooks
+    const { data: webhooks } = await supabase
+      .from('outgoing_webhooks')
+      .select('*')
+      .eq('account_id', account.id);
+    
+    // 13. Get teams
+    const { data: teams } = await supabase
+      .from('teams')
+      .select('*')
+      .eq('account_id', account.id);
+    
+    // 14. Get labels
+    const { data: labels } = await supabase
+      .from('labels')
+      .select('*')
+      .eq('account_id', account.id);
+    
+    // 15. Get canned responses count
+    const { count: cannedResponsesCount } = await supabase
+      .from('canned_responses')
+      .select('id', { count: 'exact', head: true })
+      .eq('account_id', account.id);
+    
+    // 16. Get database connections
+    const { data: databaseConnections } = await supabase
+      .from('database_connections')
+      .select('*')
+      .eq('account_id', account.id);
+    
+    // 17. Get credit transactions (last 10)
+    const { data: creditTransactions } = await supabase
+      .from('credit_transactions')
+      .select('*')
+      .eq('account_id', account.id)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    
+    // 18. Get message templates count
+    const { count: templatesCount } = await supabase
+      .from('message_templates')
+      .select('id', { count: 'exact', head: true })
+      .eq('account_id', account.id);
+    
+    // 19. Get scheduled messages count
+    const { count: scheduledMessagesCount } = await supabase
+      .from('scheduled_single_messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('account_id', account.id)
+      .eq('status', 'pending');
+    
+    // 20. Get audit log (last 20 actions)
+    const { data: auditLog } = await supabase
+      .from('audit_log')
+      .select('*')
+      .eq('account_id', account.id)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    
+    // Calculate conversation stats
+    const conversationStats = {
+      total: conversationsCount || 0,
+      open: (conversations || []).filter(c => c.status === 'open').length,
+      resolved: (conversations || []).filter(c => c.status === 'resolved').length,
+      pending: (conversations || []).filter(c => c.status === 'pending').length,
+      snoozed: (conversations || []).filter(c => c.status === 'snoozed').length
+    };
+    
+    // Build quotas object from usage data
+    const quotas = {};
+    if (quotaUsage && quotaUsage.length > 0) {
+      quotaUsage.forEach(q => {
+        quotas[q.quota_key] = {
+          used: q.used_value,
+          period_start: q.period_start,
+          period_end: q.period_end
+        };
+      });
+    }
+    
+    // Get plan limits for comparison
+    const planLimits = subscription?.plan?.quotas || {};
+    
+    logger.info('Full user data fetched', {
+      userId: id,
+      tenantId,
+      hasAccount: !!account,
+      hasSubscription: !!subscription,
+      inboxesCount: inboxes?.length || 0,
+      agentsCount: agents?.length || 0,
+      botsCount: bots?.length || 0
+    });
+    
+    return res.status(200).json({
+      success: true,
+      data: {
+        user,
+        account,
+        subscription,
+        quotas,
+        planLimits,
+        // Resources
+        inboxes: inboxes || [],
+        agents: agents || [],
+        bots: bots || [],
+        teams: teams || [],
+        labels: labels || [],
+        webhooks: webhooks || [],
+        databaseConnections: databaseConnections || [],
+        campaigns: campaigns || [],
+        creditTransactions: creditTransactions || [],
+        auditLog: auditLog || [],
+        // Stats
+        stats: {
+          conversations: conversationStats,
+          messages: messagesCount || 0,
+          contacts: contactsCount || 0,
+          templates: templatesCount || 0,
+          cannedResponses: cannedResponsesCount || 0,
+          scheduledMessages: scheduledMessagesCount || 0
+        }
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error fetching full user data', {
+      error: error.message,
+      userId: req.params.id,
+      tenantId: getTenantIdFromRequest(req)
+    });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rota para resetar senha de usuário Supabase (TENANT-SCOPED)
+ * POST /api/admin/supabase/users/:id/reset-password
+ * 
+ * Body: { sendEmail?: boolean }
+ * Se sendEmail=true, envia email de reset. Caso contrário, gera senha temporária.
+ */
+router.post('/supabase/users/:id/reset-password', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { sendEmail = true } = req.body;
+    const tenantId = getTenantIdFromRequest(req);
+    
+    if (!tenantId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Tenant context required'
+      });
+    }
+    
+    const supabase = supabaseService.adminClient;
+    
+    // Validate tenant access
+    const { data: account } = await supabase
+      .from('accounts')
+      .select('id')
+      .eq('owner_user_id', id)
+      .eq('tenant_id', tenantId)
+      .single();
+    
+    if (!account) {
+      logger.warn('Cross-tenant password reset attempt blocked', {
+        type: 'security_violation',
+        targetUserId: id,
+        tenantId,
+        adminId: req.session?.userId
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado'
+      });
+    }
+    
+    // Get user email
+    const { data: { user }, error: userError } = await supabase.auth.admin.getUserById(id);
+    if (userError || !user) {
+      return res.status(404).json({
+        success: false,
+        error: 'Usuário não encontrado'
+      });
+    }
+    
+    if (sendEmail && user.email) {
+      // Send password reset email via Supabase
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(user.email, {
+        redirectTo: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password`
+      });
+      
+      if (resetError) throw resetError;
+      
+      logger.info('Password reset email sent', {
+        userId: id,
+        email: user.email,
+        adminId: req.session?.userId,
+        tenantId
+      });
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Email de redefinição de senha enviado',
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      // Generate temporary password
+      const crypto = require('crypto');
+      const tempPassword = crypto.randomBytes(12).toString('base64').slice(0, 16);
+      
+      const { error: updateError } = await supabase.auth.admin.updateUserById(id, {
+        password: tempPassword
+      });
+      
+      if (updateError) throw updateError;
+      
+      logger.info('Temporary password generated', {
+        userId: id,
+        adminId: req.session?.userId,
+        tenantId
+      });
+      
+      return res.status(200).json({
+        success: true,
+        tempPassword,
+        message: 'Senha temporária gerada. Informe ao usuário para alterá-la no primeiro acesso.',
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    logger.error('Error resetting password', {
+      error: error.message,
+      userId: req.params.id,
+      tenantId: getTenantIdFromRequest(req)
+    });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rota para suspender usuário Supabase (TENANT-SCOPED)
+ * POST /api/admin/supabase/users/:id/suspend
+ * 
+ * Atualiza status da account para 'suspended'
+ */
+router.post('/supabase/users/:id/suspend', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const tenantId = getTenantIdFromRequest(req);
+    
+    if (!tenantId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Tenant context required'
+      });
+    }
+    
+    const supabase = supabaseService.adminClient;
+    
+    // Update account status with tenant validation
+    const { data: account, error } = await supabase
+      .from('accounts')
+      .update({
+        status: 'suspended',
+        updated_at: new Date().toISOString()
+      })
+      .eq('owner_user_id', id)
+      .eq('tenant_id', tenantId)
+      .select()
+      .single();
+    
+    if (error || !account) {
+      logger.warn('Suspend user failed - access denied or not found', {
+        type: 'security_violation',
+        targetUserId: id,
+        tenantId,
+        adminId: req.session?.userId,
+        error: error?.message
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado ou usuário não encontrado'
+      });
+    }
+    
+    logger.info('User suspended', {
+      userId: id,
+      tenantId,
+      adminId: req.session?.userId
+    });
+    
+    return res.status(200).json({
+      success: true,
+      data: account,
+      message: 'Usuário suspenso com sucesso',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error suspending user', {
+      error: error.message,
+      userId: req.params.id,
+      tenantId: getTenantIdFromRequest(req)
+    });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rota para reativar usuário Supabase (TENANT-SCOPED)
+ * POST /api/admin/supabase/users/:id/reactivate
+ * 
+ * Atualiza status da account para 'active'
+ */
+router.post('/supabase/users/:id/reactivate', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const tenantId = getTenantIdFromRequest(req);
+    
+    if (!tenantId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Tenant context required'
+      });
+    }
+    
+    const supabase = supabaseService.adminClient;
+    
+    // Update account status with tenant validation
+    const { data: account, error } = await supabase
+      .from('accounts')
+      .update({
+        status: 'active',
+        updated_at: new Date().toISOString()
+      })
+      .eq('owner_user_id', id)
+      .eq('tenant_id', tenantId)
+      .select()
+      .single();
+    
+    if (error || !account) {
+      logger.warn('Reactivate user failed - access denied or not found', {
+        type: 'security_violation',
+        targetUserId: id,
+        tenantId,
+        adminId: req.session?.userId,
+        error: error?.message
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado ou usuário não encontrado'
+      });
+    }
+    
+    logger.info('User reactivated', {
+      userId: id,
+      tenantId,
+      adminId: req.session?.userId
+    });
+    
+    return res.status(200).json({
+      success: true,
+      data: account,
+      message: 'Usuário reativado com sucesso',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error reactivating user', {
+      error: error.message,
+      userId: req.params.id,
+      tenantId: getTenantIdFromRequest(req)
+    });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rota para confirmar email de usuário Supabase manualmente (TENANT-SCOPED)
+ * POST /api/admin/supabase/users/:id/confirm-email
+ */
+router.post('/supabase/users/:id/confirm-email', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const tenantId = getTenantIdFromRequest(req);
+    
+    if (!tenantId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Tenant context required'
+      });
+    }
+    
+    const supabase = supabaseService.adminClient;
+    
+    // Validate tenant access
+    const { data: account } = await supabase
+      .from('accounts')
+      .select('id')
+      .eq('owner_user_id', id)
+      .eq('tenant_id', tenantId)
+      .single();
+    
+    if (!account) {
+      logger.warn('Confirm email attempt blocked - access denied', {
+        type: 'security_violation',
+        targetUserId: id,
+        tenantId,
+        adminId: req.session?.userId
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado'
+      });
+    }
+    
+    // Confirm email via Supabase Admin API
+    const { data: { user }, error } = await supabase.auth.admin.updateUserById(id, {
+      email_confirm: true
+    });
+    
+    if (error) throw error;
+    
+    logger.info('Email confirmed manually', {
+      userId: id,
+      email: user?.email,
+      adminId: req.session?.userId,
+      tenantId
+    });
+    
+    return res.status(200).json({
+      success: true,
+      data: user,
+      message: 'Email confirmado com sucesso',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error confirming email', {
+      error: error.message,
+      userId: req.params.id,
+      tenantId: getTenantIdFromRequest(req)
+    });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rota para atualizar account de usuário Supabase (TENANT-SCOPED)
+ * PUT /api/admin/supabase/users/:id/account
+ * 
+ * Body: { name?, status?, timezone?, locale?, settings? }
+ */
+router.put('/supabase/users/:id/account', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, status, timezone, locale, settings } = req.body;
+    const tenantId = getTenantIdFromRequest(req);
+    
+    if (!tenantId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Tenant context required'
+      });
+    }
+    
+    const supabase = supabaseService.adminClient;
+    
+    // Build update object
+    const updates = { updated_at: new Date().toISOString() };
+    if (name !== undefined) updates.name = name;
+    if (status !== undefined) updates.status = status;
+    if (timezone !== undefined) updates.timezone = timezone;
+    if (locale !== undefined) updates.locale = locale;
+    if (settings !== undefined) updates.settings = settings;
+    
+    // Update account with tenant validation
+    const { data: account, error } = await supabase
+      .from('accounts')
+      .update(updates)
+      .eq('owner_user_id', id)
+      .eq('tenant_id', tenantId)
+      .select()
+      .single();
+    
+    if (error || !account) {
+      logger.warn('Update account failed - access denied or not found', {
+        type: 'security_violation',
+        targetUserId: id,
+        tenantId,
+        adminId: req.session?.userId,
+        error: error?.message
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado ou usuário não encontrado'
+      });
+    }
+    
+    logger.info('Account updated', {
+      userId: id,
+      tenantId,
+      adminId: req.session?.userId,
+      updatedFields: Object.keys(updates).filter(k => k !== 'updated_at')
+    });
+    
+    return res.status(200).json({
+      success: true,
+      data: account,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error updating account', {
+      error: error.message,
+      userId: req.params.id,
+      tenantId: getTenantIdFromRequest(req)
+    });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rota para criar inbox para usuário Supabase (TENANT-SCOPED)
+ * POST /api/admin/supabase/users/:id/inboxes
+ * 
+ * Body: { name, phone_number?, wuzapi_token?, channel_type? }
+ */
+router.post('/supabase/users/:id/inboxes', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, phone_number, wuzapi_token, channel_type = 'whatsapp' } = req.body;
+    const tenantId = getTenantIdFromRequest(req);
+    
+    if (!tenantId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Tenant context required'
+      });
+    }
+    
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nome da inbox é obrigatório'
+      });
+    }
+    
+    const supabase = supabaseService.adminClient;
+    
+    // Validate user belongs to tenant
+    const { data: account, error: accountError } = await supabase
+      .from('accounts')
+      .select('id')
+      .eq('owner_user_id', id)
+      .eq('tenant_id', tenantId)
+      .single();
+    
+    if (accountError || !account) {
+      logger.warn('Create inbox failed - access denied', {
+        type: 'security_violation',
+        targetUserId: id,
+        tenantId,
+        adminId: req.session?.userId
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado'
+      });
+    }
+    
+    // Create inbox
+    const { data: inbox, error: inboxError } = await supabase
+      .from('inboxes')
+      .insert({
+        account_id: account.id,
+        name,
+        phone_number: phone_number || null,
+        wuzapi_token: wuzapi_token || null,
+        channel_type,
+        status: 'active'
+      })
+      .select()
+      .single();
+    
+    if (inboxError) {
+      throw inboxError;
+    }
+    
+    logger.info('Inbox created for user', {
+      userId: id,
+      tenantId,
+      inboxId: inbox.id,
+      inboxName: name,
+      adminId: req.session?.userId
+    });
+    
+    return res.status(201).json({
+      success: true,
+      data: inbox,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error creating inbox', {
+      error: error.message,
+      userId: req.params.id,
+      tenantId: getTenantIdFromRequest(req)
+    });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rota para deletar inbox de usuário Supabase (TENANT-SCOPED)
+ * DELETE /api/admin/supabase/users/:id/inboxes/:inboxId
+ */
+router.delete('/supabase/users/:id/inboxes/:inboxId', async (req, res) => {
+  try {
+    const { id, inboxId } = req.params;
+    const tenantId = getTenantIdFromRequest(req);
+    
+    if (!tenantId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Tenant context required'
+      });
+    }
+    
+    const supabase = supabaseService.adminClient;
+    
+    // Validate user belongs to tenant
+    const { data: account, error: accountError } = await supabase
+      .from('accounts')
+      .select('id')
+      .eq('owner_user_id', id)
+      .eq('tenant_id', tenantId)
+      .single();
+    
+    if (accountError || !account) {
+      logger.warn('Delete inbox failed - access denied', {
+        type: 'security_violation',
+        targetUserId: id,
+        tenantId,
+        adminId: req.session?.userId
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado'
+      });
+    }
+    
+    // Delete inbox (only if belongs to this account)
+    const { error: deleteError } = await supabase
+      .from('inboxes')
+      .delete()
+      .eq('id', inboxId)
+      .eq('account_id', account.id);
+    
+    if (deleteError) {
+      throw deleteError;
+    }
+    
+    logger.info('Inbox deleted', {
+      userId: id,
+      tenantId,
+      inboxId,
+      adminId: req.session?.userId
+    });
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Inbox removida com sucesso',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error deleting inbox', {
+      error: error.message,
+      userId: req.params.id,
+      inboxId: req.params.inboxId,
+      tenantId: getTenantIdFromRequest(req)
+    });
     return res.status(500).json({
       success: false,
       error: error.message

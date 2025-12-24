@@ -6,13 +6,13 @@ Este plano implementa as melhorias de UX/UI para a gestão de usuários admin, i
 
 ## Tasks
 
-- [ ] 1. Criar serviço para buscar subscriptions de usuários
+- [x] 1. Criar serviço para buscar subscriptions de usuários
   - Adicionar endpoint no backend para listar subscriptions por user IDs
   - Criar função no `admin-subscriptions.ts` para buscar subscriptions em batch
   - _Requirements: 1.1, 1.3_
 
-- [ ] 2. Criar componente PlanPreviewCard
-  - [ ] 2.1 Implementar componente visual do card de plano
+- [x] 2. Criar componente PlanPreviewCard
+  - [x] 2.1 Implementar componente visual do card de plano
     - Criar `src/components/admin/PlanPreviewCard.tsx`
     - Exibir nome, preço formatado, ciclo de cobrança
     - Exibir lista de features com ícones de check/x
@@ -25,8 +25,8 @@ Este plano implementa as melhorias de UX/UI para a gestão de usuários admin, i
     - **Property 3: Plan preview completeness**
     - **Validates: Requirements 4.1, 4.2**
 
-- [ ] 3. Criar componente PlanAssignmentDialog
-  - [ ] 3.1 Implementar dialog modal de atribuição de plano
+- [x] 3. Criar componente PlanAssignmentDialog
+  - [x] 3.1 Implementar dialog modal de atribuição de plano
     - Criar `src/components/admin/PlanAssignmentDialog.tsx`
     - Buscar lista de planos disponíveis
     - Renderizar PlanPreviewCard para cada plano
@@ -42,8 +42,8 @@ Este plano implementa as melhorias de UX/UI para a gestão de usuários admin, i
     - Testar fluxo de confirmação
     - Testar tratamento de erro
 
-- [ ] 4. Criar componente SupabaseUserCard
-  - [ ] 4.1 Implementar card de usuário
+- [x] 4. Criar componente SupabaseUserCard
+  - [x] 4.1 Implementar card de usuário
     - Criar `src/components/admin/SupabaseUserCard.tsx`
     - Exibir email, role, status de confirmação
     - Exibir badge de plano (nome ou "Sem plano")
@@ -58,8 +58,8 @@ Este plano implementa as melhorias de UX/UI para a gestão de usuários admin, i
     - **Property 2: Plan assignment CTA visibility**
     - **Validates: Requirements 1.1, 1.2, 1.3, 2.1**
 
-- [ ] 5. Refatorar SupabaseUsersList para usar cards
-  - [ ] 5.1 Atualizar componente para layout de cards
+- [x] 5. Refatorar SupabaseUsersList para usar cards
+  - [x] 5.1 Atualizar componente para layout de cards
     - Modificar `src/components/admin/SupabaseUsersList.tsx`
     - Buscar subscriptions junto com usuários
     - Substituir tabela por grid de SupabaseUserCard
@@ -72,18 +72,18 @@ Este plano implementa as melhorias de UX/UI para a gestão de usuários admin, i
     - Testar fluxo de atribuição de plano
     - Testar atualização da lista após atribuição
 
-- [ ] 6. Checkpoint - Verificar lista de usuários
+- [x] 6. Checkpoint - Verificar lista de usuários
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 7. Criar componente UserEditBreadcrumb
-  - [ ] 7.1 Implementar breadcrumb de navegação
+- [x] 7. Criar componente UserEditBreadcrumb
+  - [x] 7.1 Implementar breadcrumb de navegação
     - Criar `src/components/admin/UserEditBreadcrumb.tsx`
     - Exibir caminho: Admin > Multi-Usuário > Editar [userName]
     - Links clicáveis para navegação
     - _Requirements: 5.1_
 
-- [ ] 8. Melhorar seção de plano no UserEditForm
-  - [ ] 8.1 Adicionar destaque visual para usuários sem plano
+- [x] 8. Melhorar seção de plano no UserEditForm
+  - [x] 8.1 Adicionar destaque visual para usuários sem plano
     - Modificar `src/components/admin/UserEditForm.tsx`
     - Adicionar borda/background de destaque quando sem plano
     - Melhorar CTA de atribuição de plano
@@ -96,20 +96,20 @@ Este plano implementa as melhorias de UX/UI para a gestão de usuários admin, i
     - **Property 2: Plan assignment CTA visibility**
     - **Validates: Requirements 3.2, 3.3**
 
-- [ ] 9. Adicionar navegação contextual
-  - [ ] 9.1 Implementar navegação na página de edição
+- [x] 9. Adicionar navegação contextual
+  - [x] 9.1 Implementar navegação na página de edição
     - Adicionar UserEditBreadcrumb no topo
     - Adicionar botão "Voltar para lista"
     - Implementar opções após salvar (voltar ou continuar)
     - _Requirements: 5.2, 5.3_
 
-  - [ ] 9.2 Implementar persistência de estado na lista
+  - [x] 9.2 Implementar persistência de estado na lista
     - Salvar filtros e paginação no URL ou sessionStorage
     - Restaurar estado ao retornar da edição
     - _Requirements: 5.4_
 
-- [ ] 10. Implementar responsividade
-  - [ ] 10.1 Ajustar layout para mobile
+- [x] 10. Implementar responsividade
+  - [x] 10.1 Ajustar layout para mobile
     - Configurar breakpoints no grid de cards
     - Ajustar PlanAssignmentDialog para mobile
     - Reorganizar seções do UserEditForm em coluna
@@ -119,7 +119,7 @@ Este plano implementa as melhorias de UX/UI para a gestão de usuários admin, i
     - Testar layout em diferentes viewports
     - Verificar acessibilidade de funcionalidades
 
-- [ ] 11. Checkpoint final - Verificar implementação completa
+- [x] 11. Checkpoint final - Verificar implementação completa
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

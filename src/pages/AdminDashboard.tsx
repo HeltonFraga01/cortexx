@@ -19,6 +19,7 @@ import MultiUserManagement from '@/pages/admin/MultiUserManagement';
 import BotQuotaConfigPage from '@/pages/admin/BotQuotaConfigPage';
 import StripeAdminPage from '@/pages/admin/StripeAdminPage';
 import AdminSettings from '@/components/admin/AdminSettings';
+import SupabaseUserEditPage from '@/pages/admin/SupabaseUserEditPage';
 
 const AdminDashboard = () => {
   return (
@@ -29,6 +30,7 @@ const AdminDashboard = () => {
         <Route path="/users/new" element={<CreateUserPage />} />
         <Route path="/users/edit/:userId" element={<EditUserPage />} />
         <Route path="/users/:userId" element={<UserDetailPage />} />
+        <Route path="/supabase-users/edit/:userId" element={<SupabaseUserEditPage />} />
         <Route path="/plans" element={<PlansManagementPage />} />
         <Route path="/audit" element={<AdminAuditLogList />} />
         <Route path="/reports" element={<ReportGenerator />} />

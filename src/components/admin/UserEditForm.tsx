@@ -1,8 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { WuzAPIUser, wuzapi } from '@/services/wuzapi';
-import { adminPlansService } from '@/services/admin-plans';
-import { adminSubscriptionsService } from '@/services/admin-subscriptions';
-import type { Plan, UserSubscription } from '@/types/admin-management';
 import { SupabaseUser, CreateSupabaseUserDTO, UpdateSupabaseUserDTO } from '@/services/admin-users';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,8 +30,7 @@ import {
   Copy,
   Check,
   RefreshCw,
-  ImageIcon,
-  CreditCard
+  ImageIcon
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -242,16 +238,6 @@ const UserEditForm = ({
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarLoading, setAvatarLoading] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  
-  // Estado para plano/assinatura
-  const [plans, setPlans] = useState<Plan[]>([]);
-  const [subscription, setSubscription] = useState<UserSubscription | null>(null);
-  const [selectedPlanId, setSelectedPlanId] = useState<string>('');
-  const [planLoading, setPlanLoading] = useState(false);
-  const [showPlanForm, setShowPlanForm] = useState(false);
-  const [assigningPlan, setAssigningPlan] = useState(false);
-  
-
 
   // Buscar avatar do usuário
   const fetchAvatar = useCallback(async () => {
@@ -273,77 +259,16 @@ const UserEditForm = ({
     }
   }, [user.jid, user.loggedIn, user.token]);
 
-  // Buscar planos e assinatura do usuário
-  const fetchPlanData = useCallback(async () => {
-    if (!user.id) return;
-    
-    setPlanLoading(true);
-    try {
-      const [plansData, subscriptionData] = await Promise.all([
-        adminPlansService.listPlans('active').catch(() => [] as Plan[]),
-        adminSubscriptionsService.getSubscription(user.id).catch(() => null)
-      ]);
-      
-      setPlans(plansData);
-      setSubscription(subscriptionData);
-      if (subscriptionData?.planId) {
-        setSelectedPlanId(subscriptionData.planId);
-      }
-    } catch {
-      // Silenciosamente falha
-    } finally {
-      setPlanLoading(false);
-    }
-  }, [user.id]);
-
-  // Função para atribuir plano ao usuário
-  const handleAssignPlan = async () => {
-    if (!selectedPlanId || !user.id) return;
-    
-    try {
-      setAssigningPlan(true);
-      await adminSubscriptionsService.assignPlan(user.id, { planId: selectedPlanId });
-      toast.success('Plano atribuído com sucesso');
-      setShowPlanForm(false);
-      // Recarregar dados da assinatura
-      const newSubscription = await adminSubscriptionsService.getSubscription(user.id);
-      setSubscription(newSubscription);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Falha ao atribuir plano');
-    } finally {
-      setAssigningPlan(false);
-    }
-  };
-
-  // Formatar preço
-  const formatPrice = (cents?: number, cycle?: string) => {
-    if (!cents) return 'Grátis';
-    const price = (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-    const cycleLabel = cycle === 'monthly' ? '/mês' : cycle === 'yearly' ? '/ano' : '';
-    return `${price}${cycleLabel}`;
-  };
-
   // Formatar data
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '-';
     return new Date(dateStr).toLocaleDateString('pt-BR');
   };
 
-  // Status labels
-  const statusLabels: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
-    trial: { label: 'Trial', variant: 'outline' },
-    active: { label: 'Ativo', variant: 'default' },
-    past_due: { label: 'Pagamento Pendente', variant: 'destructive' },
-    canceled: { label: 'Cancelado', variant: 'secondary' },
-    expired: { label: 'Expirado', variant: 'destructive' },
-    suspended: { label: 'Suspenso', variant: 'destructive' },
-  };
-
   // Buscar avatar ao montar
   useEffect(() => {
     fetchAvatar();
-    fetchPlanData();
-  }, [fetchAvatar, fetchPlanData]);
+  }, [fetchAvatar]);
 
   // Função para copiar texto
   const handleCopy = async (text: string, field: string) => {
@@ -999,206 +924,6 @@ const UserEditForm = ({
                  </div>
               )}
             </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Card de Plano/Assinatura - Mantido */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center text-foreground">
-              <CreditCard className="h-5 w-5 mr-2 text-primary" />
-              Plano e Assinatura
-            </CardTitle>
-            {subscription && (
-              <Badge variant={statusLabels[subscription.status]?.variant || 'secondary'}>
-                {statusLabels[subscription.status]?.label || subscription.status}
-              </Badge>
-            )}
-          </div>
-          <CardDescription>
-            Gerencie o plano e a assinatura do usuário
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {planLoading ? (
-            <div className="flex items-center justify-center py-4">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              <span className="ml-2 text-sm text-muted-foreground">Carregando plano...</span>
-            </div>
-          ) : subscription ? (
-            <>
-              {/* Informações da assinatura atual */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-muted/30 rounded-lg border">
-                <div>
-                  <p className="text-xs text-muted-foreground">Plano Atual</p>
-                  <p className="font-medium">{subscription.plan?.name || 'Não definido'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Preço</p>
-                  <p className="font-medium">
-                    {formatPrice(subscription.plan?.priceCents, subscription.plan?.billingCycle)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Início</p>
-                  <p className="font-medium">{formatDate(subscription.startedAt)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Próxima Cobrança</p>
-                  <p className="font-medium">{formatDate(subscription.currentPeriodEnd)}</p>
-                </div>
-              </div>
-
-              {subscription.suspensionReason && (
-                <div className="rounded-lg bg-destructive/10 p-3 text-sm">
-                  <p className="font-medium text-destructive">Motivo da Suspensão:</p>
-                  <p className="text-destructive/80">{subscription.suspensionReason}</p>
-                </div>
-              )}
-
-              {/* Formulário inline para alterar plano */}
-              {showPlanForm ? (
-                <div className="space-y-4 p-4 border-2 border-primary rounded-lg bg-primary/5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium">Selecione o novo plano</Label>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowPlanForm(false)}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <Select value={selectedPlanId} onValueChange={setSelectedPlanId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione um plano" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {plans.map((plan) => (
-                        <SelectItem key={plan.id} value={plan.id}>
-                          {plan.name} - {formatPrice(plan.priceCents, plan.billingCycle)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="flex gap-2 justify-end">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowPlanForm(false)}
-                    >
-                      Cancelar
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => { void handleAssignPlan(); }}
-                      disabled={!selectedPlanId || assigningPlan}
-                    >
-                      {assigningPlan ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Salvando...
-                        </>
-                      ) : (
-                        <>
-                          <Check className="h-4 w-4 mr-2" />
-                          Confirmar
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => setShowPlanForm(true)}
-                >
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Alterar Plano
-                </Button>
-              )}
-            </>
-          ) : (
-            <>
-              {/* Usuário sem assinatura */}
-              <div className="text-center py-4">
-                <CreditCard className="h-10 w-10 mx-auto text-muted-foreground mb-2" />
-                <p className="text-muted-foreground mb-4">Usuário sem plano atribuído</p>
-              </div>
-
-              {/* Formulário inline para atribuir plano */}
-              {showPlanForm ? (
-                <div className="space-y-4 p-4 border-2 border-primary rounded-lg bg-primary/5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium">Selecione um plano</Label>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowPlanForm(false)}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <Select value={selectedPlanId} onValueChange={setSelectedPlanId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione um plano" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {plans.map((plan) => (
-                        <SelectItem key={plan.id} value={plan.id}>
-                          {plan.name} - {formatPrice(plan.priceCents, plan.billingCycle)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="flex gap-2 justify-end">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowPlanForm(false)}
-                    >
-                      Cancelar
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => { void handleAssignPlan(); }}
-                      disabled={!selectedPlanId || assigningPlan}
-                    >
-                      {assigningPlan ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Atribuindo...
-                        </>
-                      ) : (
-                        <>
-                          <Check className="h-4 w-4 mr-2" />
-                          Atribuir Plano
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <Button
-                  type="button"
-                  className="w-full"
-                  onClick={() => setShowPlanForm(true)}
-                >
-                  <CreditCard className="h-4 w-4 mr-2" />
-                  Atribuir Plano
-                </Button>
-              )}
-            </>
           )}
         </CardContent>
       </Card>
