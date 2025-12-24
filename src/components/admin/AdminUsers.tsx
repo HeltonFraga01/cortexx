@@ -28,7 +28,7 @@ import {
   TableRow 
 } from '@/components/ui/table';
 
-import { WuzAPIService, WuzAPIUser } from '@/services/wuzapi';
+import { WuzAPIService, Inbox } from '@/services/wuzapi';
 import { automationService } from '@/services/automation';
 import { adminSubscriptionsService } from '@/services/admin-subscriptions';
 import { adminPlansService } from '@/services/admin-plans';
@@ -61,7 +61,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-interface UserWithAvatar extends WuzAPIUser {
+interface InboxWithAvatar extends Inbox {
   avatarUrl?: string;
   avatarLoading?: boolean;
   subscription?: UserSubscription | null;
@@ -71,14 +71,14 @@ interface UserWithAvatar extends WuzAPIUser {
 const AdminUsers = () => {
   const navigate = useNavigate();
   const brandingConfig = useBrandingConfig();
-  const [users, setUsers] = useState<UserWithAvatar[]>([]);
+  const [inboxes, setInboxes] = useState<InboxWithAvatar[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
+  const [selectedInboxes, setSelectedInboxes] = useState<Set<string>>(new Set());
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const itemsPerPage = 10;
 
@@ -102,13 +102,13 @@ const AdminUsers = () => {
   };
 
   // Bulk action handlers
-  const handleSelectUser = (userId: string, checked: boolean) => {
-    setSelectedUsers(prev => {
+  const handleSelectInbox = (inboxToken: string, checked: boolean) => {
+    setSelectedInboxes(prev => {
       const newSet = new Set(prev);
       if (checked) {
-        newSet.add(userId);
+        newSet.add(inboxToken);
       } else {
-        newSet.delete(userId);
+        newSet.delete(inboxToken);
       }
       return newSet;
     });
@@ -116,34 +116,34 @@ const AdminUsers = () => {
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedUsers(new Set(paginatedUsers.map(u => u.token)));
+      setSelectedInboxes(new Set(paginatedInboxes.map(i => i.token)));
     } else {
-      setSelectedUsers(new Set());
+      setSelectedInboxes(new Set());
     }
   };
 
   const handleBulkAction = async (automationTypes: string[]) => {
-    if (selectedUsers.size === 0) {
-      toast.error('Selecione pelo menos um usuário');
+    if (selectedInboxes.size === 0) {
+      toast.error('Selecione pelo menos uma caixa de entrada');
       return;
     }
 
     try {
       setBulkActionLoading(true);
       const result = await automationService.bulkApply({
-        userIds: Array.from(selectedUsers),
+        userIds: Array.from(selectedInboxes),
         automationTypes
       });
 
       if (result.failureCount === 0) {
-        toast.success(`Automação aplicada com sucesso a ${result.successCount} usuário(s)`);
+        toast.success(`Automação aplicada com sucesso a ${result.successCount} caixa(s) de entrada`);
       } else if (result.successCount > 0) {
-        toast.warning(`Aplicado a ${result.successCount} usuário(s), ${result.failureCount} falha(s)`);
+        toast.warning(`Aplicado a ${result.successCount} caixa(s), ${result.failureCount} falha(s)`);
       } else {
         toast.error(`Falha ao aplicar automação: ${result.failures[0]?.error || 'Erro desconhecido'}`);
       }
 
-      setSelectedUsers(new Set());
+      setSelectedInboxes(new Set());
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Erro ao aplicar automação');
     } finally {
@@ -151,41 +151,41 @@ const AdminUsers = () => {
     }
   };
 
-  // Buscar avatar de um usuário
-  const fetchUserAvatar = useCallback(async (user: UserWithAvatar) => {
+  // Buscar avatar de uma caixa de entrada
+  const fetchInboxAvatar = useCallback(async (inbox: InboxWithAvatar) => {
     // wuzapi is an instance created inside the component, so it might be stable, 
     // but ideally should be memoized or ref derived. 
     // Since it's created with new WuzAPIService(), it changes on every render!
     // This is a performance issue too. 
-    if (!user.jid || !user.loggedIn || user.avatarUrl) return;
+    if (!inbox.jid || !inbox.loggedIn || inbox.avatarUrl) return;
     
     try {
       // Extrair telefone do JID (formato: 5531xxxxx:xx@s.whatsapp.net)
-      const phone = user.jid.split(':')[0];
+      const phone = inbox.jid.split(':')[0];
       if (!phone) return;
       
-      const avatarData = await wuzapi.getAvatar(user.token, phone, false);
+      const avatarData = await wuzapi.getAvatar(inbox.token, phone, false);
       if (avatarData?.URL) {
-        setUsers(prev => prev.map(u => 
-          u.id === user.id ? { ...u, avatarUrl: avatarData.URL, avatarLoading: false } : u
+        setInboxes(prev => prev.map(i => 
+          i.id === inbox.id ? { ...i, avatarUrl: avatarData.URL, avatarLoading: false } : i
         ));
       }
     } catch {
       // Silenciosamente falha - avatar não disponível
-      setUsers(prev => prev.map(u => 
-        u.id === user.id ? { ...u, avatarLoading: false } : u
+      setInboxes(prev => prev.map(i => 
+        i.id === inbox.id ? { ...i, avatarLoading: false } : i
       ));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fetchUsers = async () => {
+  const fetchInboxes = async () => {
     try {
       setLoading(true);
       
-      // Fetch users and plans in parallel
-      const [usersData, plansData] = await Promise.all([
-        wuzapi.getUsers(),
+      // Fetch inboxes and plans in parallel
+      const [inboxesData, plansData] = await Promise.all([
+        wuzapi.listInboxes(),
         adminPlansService.listPlans().catch(() => [] as Plan[])
       ]);
       
@@ -194,47 +194,47 @@ const AdminUsers = () => {
       // Create a map of plan IDs to names
       const planMap = new Map(plansData.map(p => [p.id, p.name]));
       
-      const usersWithAvatarState = usersData.map(u => ({ ...u, avatarLoading: true }));
-      setUsers(usersWithAvatarState);
+      const inboxesWithAvatarState = inboxesData.map(i => ({ ...i, avatarLoading: true }));
+      setInboxes(inboxesWithAvatarState);
       
-      // Fetch subscriptions for each user (in background)
-      usersWithAvatarState.forEach((user) => {
-        // Skip if user.id is undefined
-        if (!user.id) return;
+      // Fetch subscriptions for each inbox (in background)
+      inboxesWithAvatarState.forEach((inbox) => {
+        // Skip if inbox.id is undefined
+        if (!inbox.id) return;
         
         void (async () => {
           try {
-            const subscription = await adminSubscriptionsService.getSubscription(user.id);
-            setUsers(prev => prev.map(u => 
-              u.id === user.id 
+            const subscription = await adminSubscriptionsService.getSubscription(inbox.id);
+            setInboxes(prev => prev.map(i => 
+              i.id === inbox.id 
                 ? { 
-                    ...u, 
+                    ...i, 
                     subscription, 
                     planName: subscription?.planId ? planMap.get(subscription.planId) : undefined 
                   } 
-                : u
+                : i
             ));
           } catch {
-            // Silently fail - user may not have subscription
+            // Silently fail - inbox may not have subscription
           }
         })();
       });
       
       // Buscar avatares em paralelo (com limite)
-      const loggedInUsers = usersWithAvatarState.filter(u => u.loggedIn && u.jid);
-      for (const user of loggedInUsers.slice(0, 10)) {
-        void fetchUserAvatar(user);
+      const loggedInInboxes = inboxesWithAvatarState.filter(i => i.loggedIn && i.jid);
+      for (const inbox of loggedInInboxes.slice(0, 10)) {
+        void fetchInboxAvatar(inbox);
       }
     } catch (error) {
-      console.error('Error fetching users:', error);
-      toast.error('Erro ao carregar usuários');
+      console.error('Error fetching inboxes:', error);
+      toast.error('Erro ao carregar caixas de entrada');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    void fetchUsers();
+    void fetchInboxes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -260,8 +260,8 @@ const AdminUsers = () => {
     }
   };
 
-  const handleGenerateQR = (userId: string) => {
-    navigate(`/admin/users/edit/${userId}?action=qr`);
+  const handleGenerateQR = (inboxId: string) => {
+    navigate(`/admin/inboxes/edit/${inboxId}?action=qr`);
   };
 
   const handleOpenWebhook = (webhookUrl: string) => {
@@ -272,42 +272,42 @@ const AdminUsers = () => {
     }
   };
 
-  const filteredUsers = users.filter(user =>
-    user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.token.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.jid.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredInboxes = inboxes.filter(inbox =>
+    inbox.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    inbox.token.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    inbox.jid.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   // Paginação
-  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
+  const totalPages = Math.ceil(filteredInboxes.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
-  const paginatedUsers = filteredUsers.slice(startIndex, endIndex);
+  const paginatedInboxes = filteredInboxes.slice(startIndex, endIndex);
 
   // Reset para primeira página quando buscar
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm]);
 
-  // Função para navegar para a página de criação de usuário
-  const handleNavigateToCreateUser = () => {
-    navigate(navigationPaths.admin.newUser);
+  // Função para navegar para a página de criação de caixa de entrada
+  const handleNavigateToCreateInbox = () => {
+    navigate(navigationPaths.admin.newUser); // TODO: Atualizar para /admin/inboxes/new
   };
 
   return (
     <div className="space-y-6 w-full max-w-none mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">Gerenciar Usuários</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">Gerenciar Caixas de Entrada</h1>
           <p className="text-muted-foreground text-sm sm:text-base">
-            Gerencie os usuários do sistema {brandingConfig.appName}
+            Gerencie as caixas de entrada do sistema {brandingConfig.appName}
           </p>
         </div>
       </div>
 
       <Tabs defaultValue="wuzapi" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="wuzapi">Usuários do Sistema</TabsTrigger>
+          <TabsTrigger value="wuzapi">Caixas de Entrada</TabsTrigger>
           <TabsTrigger value="supabase">Usuários Supabase</TabsTrigger>
         </TabsList>
 
@@ -315,12 +315,12 @@ const AdminUsers = () => {
           <div className="flex justify-end">
             <div className="flex items-center gap-2">
           {/* Bulk Actions Dropdown - Requirements 8.1, 8.2 */}
-          {selectedUsers.size > 0 && (
+          {selectedInboxes.size > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" disabled={bulkActionLoading}>
                   <Zap className="h-4 w-4 mr-2" />
-                  Ações ({selectedUsers.size})
+                  Ações ({selectedInboxes.size})
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
@@ -344,12 +344,12 @@ const AdminUsers = () => {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          <Button onClick={() => void fetchUsers()} variant="outline" size="icon" className="flex-shrink-0">
+          <Button onClick={() => void fetchInboxes()} variant="outline" size="icon" className="flex-shrink-0">
             <RefreshCw className="h-4 w-4" />
           </Button>
-          <Button onClick={handleNavigateToCreateUser} className="w-full sm:w-auto">
+          <Button onClick={handleNavigateToCreateInbox} className="w-full sm:w-auto">
             <Plus className="h-4 w-4 mr-2" />
-            <span className="sm:inline">Novo Usuário</span>
+            <span className="sm:inline">Nova Caixa de Entrada</span>
           </Button>
             </div>
           </div>
@@ -360,7 +360,7 @@ const AdminUsers = () => {
           <div className="relative">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Buscar usuários..."
+              placeholder="Buscar caixas de entrada..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-8"
@@ -369,26 +369,26 @@ const AdminUsers = () => {
         </CardContent>
       </Card>
 
-      {/* Users Table */}
+      {/* Inboxes Table */}
       <Card className="w-full">
         <CardHeaderWithIcon
           icon={Users}
           iconColor="text-blue-500"
-          title={`Usuários (${filteredUsers.length})`}
+          title={`Caixas de Entrada (${filteredInboxes.length})`}
         >
-          <p className="text-sm text-muted-foreground">Lista de todos os usuários cadastrados no sistema</p>
+          <p className="text-sm text-muted-foreground">Lista de todas as caixas de entrada cadastradas no sistema</p>
         </CardHeaderWithIcon>
         <CardContent className="p-0">
           {loading ? (
             <div className="p-6">
               <LoadingSkeleton variant="list" count={5} />
             </div>
-          ) : filteredUsers.length === 0 ? (
+          ) : filteredInboxes.length === 0 ? (
             <div className="p-6">
               <EmptyState
                 icon={Users}
-                title="Nenhum usuário encontrado"
-                description={searchTerm ? "Tente uma busca diferente" : "Crie o primeiro usuário"}
+                title="Nenhuma caixa de entrada encontrada"
+                description={searchTerm ? "Tente uma busca diferente" : "Crie a primeira caixa de entrada"}
               />
             </div>
           ) : (
@@ -403,12 +403,12 @@ const AdminUsers = () => {
                     <TableRow>
                       <TableHead className="w-[40px] px-2">
                         <Checkbox
-                          checked={paginatedUsers.length > 0 && paginatedUsers.every(u => selectedUsers.has(u.token))}
+                          checked={paginatedInboxes.length > 0 && paginatedInboxes.every(i => selectedInboxes.has(i.token))}
                           onCheckedChange={(checked) => handleSelectAll(checked as boolean)}
                           aria-label="Selecionar todos"
                         />
                       </TableHead>
-                      <TableHead className="w-[18%] px-3 sm:px-6">Usuário</TableHead>
+                      <TableHead className="w-[18%] px-3 sm:px-6">Caixa de Entrada</TableHead>
                       <TableHead className="w-[8%] px-2 sm:px-4">Conexão</TableHead>
                       <TableHead className="w-[10%] px-2 sm:px-4">Plano</TableHead>
                       <TableHead className="w-[8%] px-2 sm:px-4">Assinatura</TableHead>
@@ -419,27 +419,27 @@ const AdminUsers = () => {
                     </TableRow>
                   </TableHeader>
                 <TableBody>
-                  {paginatedUsers.map((user) => (
-                    <TableRow key={user.token || user.id || user.name} className="group hover:bg-muted/50">
+                  {paginatedInboxes.map((inbox) => (
+                    <TableRow key={inbox.token || inbox.id || inbox.name} className="group hover:bg-muted/50">
                       <TableCell className="px-2">
                         <Checkbox
-                          checked={selectedUsers.has(user.token)}
-                          onCheckedChange={(checked) => handleSelectUser(user.token, checked as boolean)}
-                          aria-label={`Selecionar ${user.name}`}
+                          checked={selectedInboxes.has(inbox.token)}
+                          onCheckedChange={(checked) => handleSelectInbox(inbox.token, checked as boolean)}
+                          aria-label={`Selecionar ${inbox.name}`}
                         />
                       </TableCell>
                       <TableCell className="font-medium px-3 sm:px-6">
                         <div className="flex items-center gap-3">
                           <Avatar className="h-10 w-10 border-2 border-background shadow-sm">
-                            {user.avatarUrl ? (
+                            {inbox.avatarUrl ? (
                               <AvatarImage 
-                                src={user.avatarUrl} 
-                                alt={user.name}
+                                src={inbox.avatarUrl} 
+                                alt={inbox.name}
                                 className="object-cover"
                               />
                             ) : null}
-                            <AvatarFallback className={user.loggedIn ? 'bg-green-100 text-green-700' : 'bg-muted'}>
-                              {user.avatarLoading ? (
+                            <AvatarFallback className={inbox.loggedIn ? 'bg-green-100 text-green-700' : 'bg-muted'}>
+                              {inbox.avatarLoading ? (
                                 <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
                               ) : (
                                 <User className="h-4 w-4" />
@@ -447,21 +447,21 @@ const AdminUsers = () => {
                             </AvatarFallback>
                           </Avatar>
                           <div className="min-w-0 flex-1">
-                            <div className="truncate font-semibold text-sm">{user.name}</div>
+                            <div className="truncate font-semibold text-sm">{inbox.name}</div>
                             <div className="text-xs text-muted-foreground truncate">
-                              {user.jid ? user.jid.split(':')[0] : 'Não conectado'}
+                              {inbox.jid ? inbox.jid.split(':')[0] : 'Não conectado'}
                             </div>
                           </div>
                         </div>
                       </TableCell>
                       <TableCell className="px-2 sm:px-4">
-                        {user.loggedIn ? (
+                        {inbox.loggedIn ? (
                           <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 text-xs whitespace-nowrap">
                             <Wifi className="h-3 w-3 mr-1" />
                             <span className="hidden sm:inline">Logado</span>
                             <span className="sm:hidden">On</span>
                           </Badge>
-                        ) : user.connected ? (
+                        ) : inbox.connected ? (
                           <Badge variant="secondary" className="text-xs whitespace-nowrap">
                             <Wifi className="h-3 w-3 mr-1" />
                             <span className="hidden sm:inline">Conectado</span>
@@ -478,27 +478,27 @@ const AdminUsers = () => {
                       <TableCell className="px-2 sm:px-4">
                         <div className="flex items-center gap-1">
                           <CreditCard className="h-3 w-3 text-muted-foreground" />
-                          <span className="text-xs font-medium truncate max-w-[80px]" title={user.planName || 'Sem plano'}>
-                            {user.planName || '-'}
+                          <span className="text-xs font-medium truncate max-w-[80px]" title={inbox.planName || 'Sem plano'}>
+                            {inbox.planName || '-'}
                           </span>
                         </div>
                       </TableCell>
                       <TableCell className="px-2 sm:px-4">
-                        {getSubscriptionStatusBadge(user.subscription?.status)}
+                        {getSubscriptionStatusBadge(inbox.subscription?.status)}
                       </TableCell>
                       <TableCell className="px-2 sm:px-4">
                         <div className="flex items-center gap-1">
-                          <code className="text-xs bg-muted px-1.5 py-1 rounded font-mono truncate max-w-[80px]" title={user.id || ''}>
-                            {user.id?.substring(0, 8) || '-'}...
+                          <code className="text-xs bg-muted px-1.5 py-1 rounded font-mono truncate max-w-[80px]" title={inbox.id || ''}>
+                            {inbox.id?.substring(0, 8) || '-'}...
                           </code>
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={() => void handleCopyId(user.id)}
+                            onClick={() => void handleCopyId(inbox.id)}
                             title="Copiar ID completo"
                           >
-                            {copiedId === user.id ? (
+                            {copiedId === inbox.id ? (
                               <Check className="h-3 w-3 text-green-600" />
                             ) : (
                               <Hash className="h-3 w-3" />
@@ -509,16 +509,16 @@ const AdminUsers = () => {
                       <TableCell className="px-2 sm:px-4">
                         <div className="flex items-center gap-1">
                           <code className="text-xs bg-muted px-1.5 py-1 rounded font-mono">
-                            {user.token?.substring(0, 6) || '-'}...
+                            {inbox.token?.substring(0, 6) || '-'}...
                           </code>
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={() => void handleCopyToken(user.token)}
+                            onClick={() => void handleCopyToken(inbox.token)}
                             title="Copiar token completo"
                           >
-                            {copiedToken === user.token ? (
+                            {copiedToken === inbox.token ? (
                               <Check className="h-3 w-3 text-green-600" />
                             ) : (
                               <Copy className="h-3 w-3" />
@@ -528,8 +528,8 @@ const AdminUsers = () => {
                       </TableCell>
                       <TableCell className="px-2 sm:px-4">
                         <div className="min-w-0">
-                          <span className="text-xs text-muted-foreground block truncate max-w-[150px]" title={user.jid || 'Não conectado'}>
-                            {user.jid || 'Não conectado'}
+                          <span className="text-xs text-muted-foreground block truncate max-w-[150px]" title={inbox.jid || 'Não conectado'}>
+                            {inbox.jid || 'Não conectado'}
                           </span>
                         </div>
                       </TableCell>
@@ -538,7 +538,7 @@ const AdminUsers = () => {
                           <Button 
                             variant="outline" 
                             size="sm"
-                            onClick={() => navigate(`/admin/users/edit/${user.id}`)}
+                            onClick={() => navigate(`/admin/inboxes/edit/${inbox.id}`)}
                             className="h-8"
                           >
                             <Edit className="h-4 w-4 sm:mr-1" />
@@ -551,39 +551,39 @@ const AdminUsers = () => {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-48">
-                              <DropdownMenuItem onClick={() => navigate(`/admin/users/${user.id}`)}>
+                              <DropdownMenuItem onClick={() => navigate(`/admin/inboxes/${inbox.id}`)}>
                                 <Eye className="h-4 w-4 mr-2" />
                                 Ver Detalhes
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => navigate(`/admin/users/edit/${user.id}`)}>
+                              <DropdownMenuItem onClick={() => navigate(`/admin/inboxes/edit/${inbox.id}`)}>
                                 <Settings className="h-4 w-4 mr-2" />
                                 Configurações
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleGenerateQR(user.id)}>
+                              <DropdownMenuItem onClick={() => handleGenerateQR(inbox.id)}>
                                 <QrCode className="h-4 w-4 mr-2" />
                                 Gerar QR Code
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => void handleCopyId(user.id)}>
+                              <DropdownMenuItem onClick={() => void handleCopyId(inbox.id)}>
                                 <Hash className="h-4 w-4 mr-2" />
                                 Copiar ID
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => void handleCopyToken(user.token)}>
+                              <DropdownMenuItem onClick={() => void handleCopyToken(inbox.token)}>
                                 <Copy className="h-4 w-4 mr-2" />
                                 Copiar Token
                               </DropdownMenuItem>
-                              {user.webhook && (
-                                <DropdownMenuItem onClick={() => handleOpenWebhook(user.webhook)}>
+                              {inbox.webhook && (
+                                <DropdownMenuItem onClick={() => handleOpenWebhook(inbox.webhook)}>
                                   <ExternalLink className="h-4 w-4 mr-2" />
                                   Abrir Webhook
                                 </DropdownMenuItem>
                               )}
                               <DropdownMenuSeparator />
                               <DropdownMenuItem 
-                                onClick={() => navigate(`/admin/users/edit/${user.id}?action=delete`)}
+                                onClick={() => navigate(`/admin/inboxes/edit/${inbox.id}?action=delete`)}
                                 className="text-destructive focus:text-destructive"
                               >
                                 <Trash2 className="h-4 w-4 mr-2" />
-                                Remover Usuário
+                                Remover Caixa de Entrada
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -599,10 +599,10 @@ const AdminUsers = () => {
         </CardContent>
 
         {/* Paginação */}
-        {!loading && filteredUsers.length > itemsPerPage && (
+        {!loading && filteredInboxes.length > itemsPerPage && (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-4 sm:px-6 py-4 border-t">
             <div className="text-sm text-muted-foreground text-center sm:text-left">
-              Mostrando {startIndex + 1} a {Math.min(endIndex, filteredUsers.length)} de {filteredUsers.length} usuários
+              Mostrando {startIndex + 1} a {Math.min(endIndex, filteredInboxes.length)} de {filteredInboxes.length} caixas de entrada
             </div>
             <div className="flex items-center gap-2 flex-wrap justify-center">
               <Button

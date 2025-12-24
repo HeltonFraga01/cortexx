@@ -1,10 +1,9 @@
 /**
  * SupabaseUserInboxesCard
  * 
- * Displays user's inboxes (WhatsApp channels) with navigation to create page
+ * Displays user's inboxes (WhatsApp channels) with dialog to create new inbox
  */
 
-import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useState } from 'react'
 import { Inbox, Phone, CheckCircle, XCircle, Plus, Trash2, Loader2 } from 'lucide-react'
@@ -12,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { supabaseUserService } from '@/services/supabase-user'
+import { CreateUserInboxDialog } from './CreateUserInboxDialog'
 import type { UserInbox } from '@/types/supabase-user'
 
 interface SupabaseUserInboxesCardProps {
@@ -21,15 +21,14 @@ interface SupabaseUserInboxesCardProps {
 }
 
 export function SupabaseUserInboxesCard({ inboxes, userId, onUpdate }: SupabaseUserInboxesCardProps) {
-  const navigate = useNavigate()
-  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
 
   const handleCreateInbox = () => {
-    // Navigate to the WUZAPI user creation page
-    navigate('/admin/users/new')
+    setCreateDialogOpen(true)
   }
 
-  const handleDelete = async (inboxId: number) => {
+  const handleDelete = async (inboxId: string) => {
     try {
       setDeletingId(inboxId)
       await supabaseUserService.deleteInbox(userId, inboxId)
@@ -113,6 +112,13 @@ export function SupabaseUserInboxesCard({ inboxes, userId, onUpdate }: SupabaseU
           </div>
         )}
       </CardContent>
+
+      <CreateUserInboxDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        userId={userId}
+        onSuccess={onUpdate}
+      />
     </Card>
   )
 }

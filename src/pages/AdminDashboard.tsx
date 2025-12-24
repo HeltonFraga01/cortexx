@@ -1,10 +1,6 @@
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import AdminLayout from '@/components/admin/AdminLayout';
 import AdminOverview from '@/components/admin/AdminOverview';
-import AdminUsers from '@/components/admin/AdminUsers';
-import CreateUserPage from '@/components/admin/CreateUserPage';
-import EditUserPage from '@/components/admin/EditUserPage';
-import { UserDetailPage } from '@/components/admin/UserDetailPage';
 import PlansManagementPage from '@/pages/admin/PlansManagementPage';
 import { AdminAuditLogList } from '@/components/admin/AdminAuditLogList';
 import { ReportGenerator } from '@/components/admin/ReportGenerator';
@@ -26,10 +22,19 @@ const AdminDashboard = () => {
     <AdminLayout>
       <Routes>
         <Route path="/" element={<AdminOverview />} />
-        <Route path="/users" element={<AdminUsers />} />
-        <Route path="/users/new" element={<CreateUserPage />} />
-        <Route path="/users/edit/:userId" element={<EditUserPage />} />
-        <Route path="/users/:userId" element={<UserDetailPage />} />
+        
+        {/* Rotas de Caixas de Entrada - Redirect para multi-user (funcionalidade centralizada) */}
+        <Route path="/inboxes" element={<Navigate to="/admin/multi-user" replace />} />
+        <Route path="/inboxes/new" element={<Navigate to="/admin/multi-user" replace />} />
+        <Route path="/inboxes/edit/:userId" element={<Navigate to="/admin/multi-user" replace />} />
+        <Route path="/inboxes/:userId" element={<Navigate to="/admin/multi-user" replace />} />
+        
+        {/* Rotas antigas de "users" - Redirects para multi-user */}
+        <Route path="/users" element={<Navigate to="/admin/multi-user" replace />} />
+        <Route path="/users/new" element={<Navigate to="/admin/multi-user" replace />} />
+        <Route path="/users/edit/:userId" element={<Navigate to="/admin/multi-user" replace />} />
+        <Route path="/users/:userId" element={<Navigate to="/admin/multi-user" replace />} />
+        
         <Route path="/supabase-users/edit/:userId" element={<SupabaseUserEditPage />} />
         <Route path="/plans" element={<PlansManagementPage />} />
         <Route path="/audit" element={<AdminAuditLogList />} />

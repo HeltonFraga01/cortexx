@@ -404,15 +404,15 @@ export function BotQuotaConfig() {
         </CardContent>
       </Card>
 
-      {/* Users Table */}
+      {/* Inboxes Table */}
       <Card>
         <CardHeaderWithIcon
           icon={Users}
           iconColor="text-blue-500"
-          title={`Usuários (${filteredUsers.length})`}
+          title={`Caixas de Entrada (${filteredUsers.length})`}
         >
           <p className="text-sm text-muted-foreground">
-            Clique em um usuário para configurar suas cotas de bot
+            Clique em uma caixa de entrada para configurar suas cotas de bot
           </p>
         </CardHeaderWithIcon>
         <CardContent className="p-0">
@@ -424,8 +424,8 @@ export function BotQuotaConfig() {
             <div className="p-6">
               <EmptyState
                 icon={Users}
-                title="Nenhum usuário encontrado"
-                description={searchTerm ? "Tente uma busca diferente" : "Nenhum usuário cadastrado"}
+                title="Nenhuma caixa de entrada encontrada"
+                description={searchTerm ? "Tente uma busca diferente" : "Nenhuma caixa de entrada cadastrada"}
               />
             </div>
           ) : (
@@ -433,7 +433,7 @@ export function BotQuotaConfig() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[40%]">Usuário</TableHead>
+                    <TableHead className="w-[40%]">Caixa de Entrada</TableHead>
                     <TableHead className="w-[20%]">Status</TableHead>
                     <TableHead className="w-[30%]">JID WhatsApp</TableHead>
                     <TableHead className="w-[10%] text-right">Ação</TableHead>

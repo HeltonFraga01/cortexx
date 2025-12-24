@@ -71,12 +71,17 @@ export interface QuotaUsageItem {
 
 // Inbox
 export interface UserInbox {
-  id: number
+  id: string
   name: string
   channel_type: string
   phone_number?: string
   status?: string
   enabled?: boolean
+  account_id?: string
+  wuzapi_token?: string
+  wuzapi_user_id?: string
+  wuzapi_connected?: boolean
+  description?: string
   created_at: string
   updated_at?: string
 }
@@ -255,4 +260,14 @@ export interface ActionResponse {
   success: boolean
   message?: string
   data?: unknown
+}
+
+// Unassigned inbox (not linked to any user)
+export interface UnassignedInbox {
+  id: string
+  name: string
+  channel_type: 'whatsapp' | 'email' | 'web' | 'api'
+  phone_number?: string
+  status?: string
+  created_at: string
 }

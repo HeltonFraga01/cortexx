@@ -42,9 +42,9 @@ const CreateUserPage = () => {
         <div className="px-6">
           {/* Page Header */}
           <PageHeader
-            title="Criar Novo Usuário"
-            subtitle={`Adicionar usuário ao sistema ${brandingConfig.appName}`}
-            description="Configure uma nova instância com configurações avançadas de webhook, eventos e informações básicas."
+            title="Nova Caixa de Entrada"
+            subtitle={`Adicionar caixa de entrada ao sistema ${brandingConfig.appName}`}
+            description="Configure uma nova conexão WhatsApp com configurações avançadas de webhook, eventos e informações básicas."
             backButton={{
               label: 'Voltar à Lista',
               onClick: handleBackToList

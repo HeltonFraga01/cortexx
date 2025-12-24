@@ -1796,12 +1796,82 @@ router.get('/supabase/users/:id/full', async (req, res) => {
       .select('*')
       .eq('account_id', account.id);
     
-    // 5. Get inboxes
-    const { data: inboxes } = await supabase
+    // 5. Get inboxes via user_inboxes relationship
+    // First get user record from users table
+    const { data: userRecord } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .single();
+    
+    // Get inboxes assigned to this user via user_inboxes
+    let inboxes = [];
+    if (userRecord) {
+      const { data: userInboxes, error: userInboxesError } = await supabase
+        .from('user_inboxes')
+        .select(`
+          inbox:inboxes(
+            id,
+            account_id,
+            name,
+            channel_type,
+            phone_number,
+            status,
+            wuzapi_token,
+            wuzapi_user_id,
+            wuzapi_connected,
+            description,
+            created_at,
+            updated_at
+          )
+        `)
+        .eq('user_id', userRecord.id);
+      
+      if (userInboxesError) {
+        logger.error('Error fetching user_inboxes', { 
+          error: userInboxesError.message, 
+          userId: id,
+          userRecordId: userRecord.id 
+        });
+      }
+      
+      // Flatten the inbox data
+      inboxes = (userInboxes || [])
+        .map(ui => ui.inbox)
+        .filter(Boolean)
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      
+      logger.debug('User inboxes fetched via user_inboxes', {
+        userId: id,
+        userRecordId: userRecord.id,
+        count: inboxes.length,
+        inboxIds: inboxes.map(i => i.id)
+      });
+    }
+    
+    // Also get inboxes directly linked to account (legacy support)
+    const { data: accountInboxes } = await supabase
       .from('inboxes')
       .select('*')
       .eq('account_id', account.id)
       .order('created_at', { ascending: false });
+    
+    // Merge both sources, avoiding duplicates
+    const inboxIds = new Set(inboxes.map(i => i.id));
+    const mergedInboxes = [
+      ...inboxes,
+      ...(accountInboxes || []).filter(i => !inboxIds.has(i.id))
+    ];
+    
+    logger.debug('Merged inboxes', {
+      userId: id,
+      userInboxesCount: inboxes.length,
+      accountInboxesCount: (accountInboxes || []).length,
+      mergedCount: mergedInboxes.length,
+      userInboxIds: inboxes.map(i => i.id),
+      accountInboxIds: (accountInboxes || []).map(i => i.id)
+    });
     
     // 6. Get agents
     const { data: agents } = await supabase
@@ -1948,7 +2018,7 @@ router.get('/supabase/users/:id/full', async (req, res) => {
         quotas,
         planLimits,
         // Resources
-        inboxes: inboxes || [],
+        inboxes: mergedInboxes || [],
         agents: agents || [],
         bots: bots || [],
         teams: teams || [],
@@ -2477,8 +2547,12 @@ router.post('/supabase/users/:id/inboxes', async (req, res) => {
 });
 
 /**
- * Rota para deletar inbox de usuário Supabase (TENANT-SCOPED)
+ * Rota para deletar/desassociar inbox de usuário Supabase (TENANT-SCOPED)
  * DELETE /api/admin/supabase/users/:id/inboxes/:inboxId
+ * 
+ * Comportamento:
+ * - Se a inbox pertence ao account do usuário: deleta a inbox completamente
+ * - Se a inbox foi atribuída via user_inboxes (pertence a outro account): apenas remove a associação
  */
 router.delete('/supabase/users/:id/inboxes/:inboxId', async (req, res) => {
   try {
@@ -2515,23 +2589,83 @@ router.delete('/supabase/users/:id/inboxes/:inboxId', async (req, res) => {
       });
     }
     
-    // Delete inbox (only if belongs to this account)
-    const { error: deleteError } = await supabase
+    // Check if inbox belongs to user's account or was assigned via user_inboxes
+    const { data: inbox, error: inboxError } = await supabase
       .from('inboxes')
-      .delete()
+      .select('id, account_id')
       .eq('id', inboxId)
-      .eq('account_id', account.id);
+      .single();
     
-    if (deleteError) {
-      throw deleteError;
+    if (inboxError || !inbox) {
+      return res.status(404).json({
+        success: false,
+        error: 'Inbox não encontrada'
+      });
     }
     
-    logger.info('Inbox deleted', {
-      userId: id,
-      tenantId,
-      inboxId,
-      adminId: req.session?.userId
-    });
+    // Get user record
+    const { data: userRecord } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .single();
+    
+    if (inbox.account_id === account.id) {
+      // Inbox belongs to user's account - delete completely
+      // First remove from user_inboxes if exists
+      if (userRecord) {
+        await supabase
+          .from('user_inboxes')
+          .delete()
+          .eq('inbox_id', inboxId)
+          .eq('user_id', userRecord.id);
+      }
+      
+      // Then delete the inbox
+      const { error: deleteError } = await supabase
+        .from('inboxes')
+        .delete()
+        .eq('id', inboxId)
+        .eq('account_id', account.id);
+      
+      if (deleteError) {
+        throw deleteError;
+      }
+      
+      logger.info('Inbox deleted completely', {
+        userId: id,
+        tenantId,
+        inboxId,
+        adminId: req.session?.userId
+      });
+    } else {
+      // Inbox belongs to another account - just remove the association
+      if (!userRecord) {
+        return res.status(404).json({
+          success: false,
+          error: 'Usuário não encontrado'
+        });
+      }
+      
+      const { error: unassignError } = await supabase
+        .from('user_inboxes')
+        .delete()
+        .eq('inbox_id', inboxId)
+        .eq('user_id', userRecord.id);
+      
+      if (unassignError) {
+        throw unassignError;
+      }
+      
+      logger.info('Inbox unassigned from user', {
+        userId: id,
+        tenantId,
+        inboxId,
+        inboxAccountId: inbox.account_id,
+        adminId: req.session?.userId
+      });
+    }
     
     return res.status(200).json({
       success: true,
@@ -2539,10 +2673,247 @@ router.delete('/supabase/users/:id/inboxes/:inboxId', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error('Error deleting inbox', {
+    logger.error('Error deleting/unassigning inbox', {
       error: error.message,
       userId: req.params.id,
       inboxId: req.params.inboxId,
+      tenantId: getTenantIdFromRequest(req)
+    });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rota para listar inboxes não atribuídas a nenhum usuário (TENANT-SCOPED)
+ * GET /api/admin/inboxes/unassigned
+ * 
+ * Retorna inboxes que existem na tabela inboxes mas não estão na tabela user_inboxes
+ */
+router.get('/inboxes/unassigned', async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromRequest(req);
+    
+    if (!tenantId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Tenant context required'
+      });
+    }
+    
+    const supabase = supabaseService.adminClient;
+    
+    // Get all inboxes for this tenant's accounts
+    const { data: allInboxes, error: inboxError } = await supabase
+      .from('inboxes')
+      .select(`
+        id,
+        name,
+        channel_type,
+        phone_number,
+        status,
+        created_at,
+        account:accounts!inner(
+          id,
+          tenant_id
+        )
+      `)
+      .eq('accounts.tenant_id', tenantId)
+      .eq('status', 'active');
+    
+    if (inboxError) {
+      throw inboxError;
+    }
+    
+    // Get all inbox IDs that are already assigned to users
+    const { data: assignedInboxes, error: assignedError } = await supabase
+      .from('user_inboxes')
+      .select('inbox_id');
+    
+    if (assignedError) {
+      throw assignedError;
+    }
+    
+    const assignedInboxIds = new Set(assignedInboxes?.map(ui => ui.inbox_id) || []);
+    
+    // Filter to get only unassigned inboxes
+    const unassignedInboxes = (allInboxes || [])
+      .filter(inbox => !assignedInboxIds.has(inbox.id))
+      .map(inbox => ({
+        id: inbox.id,
+        name: inbox.name,
+        channel_type: inbox.channel_type,
+        phone_number: inbox.phone_number,
+        status: inbox.status,
+        created_at: inbox.created_at
+      }));
+    
+    logger.info('Listed unassigned inboxes', {
+      tenantId,
+      count: unassignedInboxes.length,
+      adminId: req.session?.userId
+    });
+    
+    return res.status(200).json({
+      success: true,
+      data: unassignedInboxes,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error listing unassigned inboxes', {
+      error: error.message,
+      tenantId: getTenantIdFromRequest(req)
+    });
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Rota para atribuir inbox existente a um usuário (TENANT-SCOPED)
+ * POST /api/admin/supabase/users/:id/inboxes/assign
+ * 
+ * Body: { inbox_id: string }
+ */
+router.post('/supabase/users/:id/inboxes/assign', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { inbox_id } = req.body;
+    const tenantId = getTenantIdFromRequest(req);
+    
+    if (!tenantId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Tenant context required'
+      });
+    }
+    
+    if (!inbox_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'inbox_id é obrigatório'
+      });
+    }
+    
+    const supabase = supabaseService.adminClient;
+    
+    // Validate user belongs to tenant
+    const { data: account, error: accountError } = await supabase
+      .from('accounts')
+      .select('id')
+      .eq('owner_user_id', id)
+      .eq('tenant_id', tenantId)
+      .single();
+    
+    if (accountError || !account) {
+      logger.warn('Assign inbox failed - user access denied', {
+        type: 'security_violation',
+        targetUserId: id,
+        tenantId,
+        adminId: req.session?.userId
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado ao usuário'
+      });
+    }
+    
+    // Validate inbox belongs to tenant and is not already assigned
+    const { data: inbox, error: inboxError } = await supabase
+      .from('inboxes')
+      .select(`
+        id,
+        name,
+        account:accounts!inner(tenant_id)
+      `)
+      .eq('id', inbox_id)
+      .eq('accounts.tenant_id', tenantId)
+      .single();
+    
+    if (inboxError || !inbox) {
+      logger.warn('Assign inbox failed - inbox access denied', {
+        type: 'security_violation',
+        inboxId: inbox_id,
+        tenantId,
+        adminId: req.session?.userId
+      });
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado à inbox'
+      });
+    }
+    
+    // Check if inbox is already assigned to another user
+    const { data: existingAssignment, error: existingError } = await supabase
+      .from('user_inboxes')
+      .select('id, user_id')
+      .eq('inbox_id', inbox_id)
+      .maybeSingle();
+    
+    if (existingError) {
+      throw existingError;
+    }
+    
+    if (existingAssignment) {
+      return res.status(400).json({
+        success: false,
+        error: 'Esta inbox já está atribuída a outro usuário'
+      });
+    }
+    
+    // Get user record
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .single();
+    
+    if (userError || !user) {
+      return res.status(404).json({
+        success: false,
+        error: 'Usuário não encontrado'
+      });
+    }
+    
+    // Create user_inbox assignment
+    const { data: userInbox, error: assignError } = await supabase
+      .from('user_inboxes')
+      .insert({
+        user_id: user.id,
+        inbox_id: inbox_id,
+        is_primary: false
+      })
+      .select()
+      .single();
+    
+    if (assignError) {
+      throw assignError;
+    }
+    
+    logger.info('Inbox assigned to user', {
+      userId: id,
+      tenantId,
+      inboxId: inbox_id,
+      userInboxId: userInbox.id,
+      adminId: req.session?.userId
+    });
+    
+    return res.status(200).json({
+      success: true,
+      data: userInbox,
+      message: 'Inbox atribuída com sucesso',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error assigning inbox to user', {
+      error: error.message,
+      userId: req.params.id,
+      inboxId: req.body.inbox_id,
       tenantId: getTenantIdFromRequest(req)
     });
     return res.status(500).json({

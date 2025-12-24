@@ -124,6 +124,115 @@ export interface UpdateUserPayload {
 }
 
 // ============================================================================
+// INBOX (CAIXA DE ENTRADA WHATSAPP)
+// ============================================================================
+
+/**
+ * Representa uma caixa de entrada WhatsApp conectada via WUZAPI.
+ * 
+ * Um Inbox é uma instância de conexão WhatsApp que pode enviar e receber mensagens.
+ * Anteriormente chamado de "WuzAPIUser" - o termo "Inbox" é mais preciso pois
+ * representa uma caixa de entrada de mensagens, não um usuário do sistema.
+ * 
+ * @example
+ * ```typescript
+ * const inbox: Inbox = {
+ *   phone: '5511999999999',
+ *   name: 'Atendimento Principal',
+ *   token: 'abc123...',
+ *   status: 'connected',
+ *   // ...
+ * };
+ * ```
+ */
+export interface Inbox {
+  /** Número de telefone associado ao WhatsApp */
+  phone: string;
+  /** Nome identificador da caixa de entrada */
+  name: string;
+  /** Token de autenticação para operações via WUZAPI */
+  token: string;
+  /** URL do webhook para receber eventos */
+  webhook?: string;
+  /** Receber eventos de mensagens */
+  webhook_message?: boolean;
+  /** Receber eventos de conexão */
+  webhook_connect?: boolean;
+  /** Receber eventos de desconexão */
+  webhook_disconnect?: boolean;
+  /** Receber eventos de mensagens recebidas */
+  webhook_received?: boolean;
+  /** Receber eventos de mensagens enviadas */
+  webhook_sent?: boolean;
+  /** Receber eventos de confirmação de leitura */
+  webhook_ack?: boolean;
+  /** Receber eventos de digitação */
+  webhook_typing?: boolean;
+  /** Receber eventos de presença */
+  webhook_presence?: boolean;
+  /** Receber eventos de estado do chat */
+  webhook_chatstate?: boolean;
+  /** Receber eventos de grupo */
+  webhook_group?: boolean;
+  /** Receber eventos de chamada */
+  webhook_call?: boolean;
+  /** Status atual da conexão */
+  status: 'connected' | 'disconnected' | 'connecting' | 'error';
+  /** QR Code para autenticação (quando status = 'connecting') */
+  qr_code?: string;
+  /** Data de criação */
+  created_at: string;
+  /** Data da última atualização */
+  updated_at: string;
+}
+
+/**
+ * Payload para criar uma nova caixa de entrada.
+ */
+export interface CreateInboxPayload {
+  /** Número de telefone (formato: 5511999999999) */
+  phone: string;
+  /** Nome identificador da caixa de entrada */
+  name: string;
+  /** URL do webhook para receber eventos */
+  webhook?: string;
+  /** Configurações de eventos do webhook */
+  webhook_message?: boolean;
+  webhook_connect?: boolean;
+  webhook_disconnect?: boolean;
+  webhook_received?: boolean;
+  webhook_sent?: boolean;
+  webhook_ack?: boolean;
+  webhook_typing?: boolean;
+  webhook_presence?: boolean;
+  webhook_chatstate?: boolean;
+  webhook_group?: boolean;
+  webhook_call?: boolean;
+}
+
+/**
+ * Payload para atualizar uma caixa de entrada existente.
+ */
+export interface UpdateInboxPayload {
+  /** Nome identificador da caixa de entrada */
+  name?: string;
+  /** URL do webhook para receber eventos */
+  webhook?: string;
+  /** Configurações de eventos do webhook */
+  webhook_message?: boolean;
+  webhook_connect?: boolean;
+  webhook_disconnect?: boolean;
+  webhook_received?: boolean;
+  webhook_sent?: boolean;
+  webhook_ack?: boolean;
+  webhook_typing?: boolean;
+  webhook_presence?: boolean;
+  webhook_chatstate?: boolean;
+  webhook_group?: boolean;
+  webhook_call?: boolean;
+}
+
+// ============================================================================
 // MENSAGENS
 // ============================================================================
 
@@ -421,6 +530,47 @@ export type WuzAPIStatusResponse = WuzAPIResponse<WuzAPIStatus>;
 export type WuzAPIMediaResponse = WuzAPIResponse<WuzAPIMedia>;
 export type WuzAPISettingsResponse = WuzAPIResponse<WuzAPISettings>;
 export type WuzAPIStatsResponse = WuzAPIResponse<WuzAPIStats>;
+
+// ============================================================================
+// TIPOS DE RESPOSTA PARA INBOX
+// ============================================================================
+
+/** Resposta contendo uma única caixa de entrada */
+export type InboxResponse = WuzAPIResponse<Inbox>;
+/** Resposta contendo lista de caixas de entrada */
+export type InboxListResponse = WuzAPIResponse<Inbox[]>;
+
+// ============================================================================
+// ALIASES DEPRECATED (COMPATIBILIDADE RETROATIVA)
+// ============================================================================
+
+/**
+ * @deprecated Use `Inbox` instead. Este tipo será removido em versão futura.
+ * 
+ * O termo "WuzAPIUser" era confuso pois sugeria um usuário do sistema,
+ * quando na verdade representa uma caixa de entrada WhatsApp.
+ */
+export type DeprecatedWuzAPIUser = Inbox;
+
+/**
+ * @deprecated Use `CreateInboxPayload` instead. Este tipo será removido em versão futura.
+ */
+export type DeprecatedCreateUserPayload = CreateInboxPayload;
+
+/**
+ * @deprecated Use `UpdateInboxPayload` instead. Este tipo será removido em versão futura.
+ */
+export type DeprecatedUpdateUserPayload = UpdateInboxPayload;
+
+/**
+ * @deprecated Use `InboxResponse` instead. Este tipo será removido em versão futura.
+ */
+export type DeprecatedWuzAPIUserResponse = InboxResponse;
+
+/**
+ * @deprecated Use `InboxListResponse` instead. Este tipo será removido em versão futura.
+ */
+export type DeprecatedWuzAPIUsersResponse = InboxListResponse;
 
 // ============================================================================
 // TIPOS AUXILIARES PARA MIGRAÇÃO

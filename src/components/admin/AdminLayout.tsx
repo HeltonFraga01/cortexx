@@ -52,11 +52,10 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
 
   const navigation = [
     { name: 'Overview', href: '/admin', icon: BarChart3 },
-    { name: 'Usuários', href: '/admin/users', icon: Users },
+    { name: 'Usuários & Inboxes', href: '/admin/multi-user', icon: Users },
     { name: 'Planos', href: '/admin/plans', icon: CreditCard },
     { name: 'Stripe & Pagamentos', href: '/admin/stripe', icon: Wallet },
     { name: 'Cotas de Bot', href: '/admin/bot-quotas', icon: Bot },
-    { name: 'Multi-Usuário', href: '/admin/multi-user', icon: Shield },
     { name: 'Bancos de Dados', href: '/admin/databases', icon: Database },
     { name: 'Page Builder', href: '/admin/page-builder', icon: Blocks },
     { name: 'Permissões de Tabela', href: '/admin/table-permissions', icon: Lock },

@@ -15,7 +15,8 @@ import type {
   UpdateAccountDTO,
   CreateInboxDTO,
   PasswordResetResponse,
-  ActionResponse
+  ActionResponse,
+  UnassignedInbox
 } from '@/types/supabase-user'
 
 class SupabaseUserService {
@@ -139,9 +140,31 @@ class SupabaseUserService {
   /**
    * Delete inbox from user
    */
-  async deleteInbox(userId: string, inboxId: number): Promise<void> {
+  async deleteInbox(userId: string, inboxId: string): Promise<void> {
     const response = await backendApi.delete(
       `/admin/supabase/users/${userId}/inboxes/${inboxId}`
+    )
+    if (!response.success) throw new Error(response.error)
+  }
+
+  /**
+   * Get unassigned inboxes (not linked to any user)
+   */
+  async getUnassignedInboxes(): Promise<UnassignedInbox[]> {
+    const response = await backendApi.get<{ data: UnassignedInbox[] }>(
+      '/admin/inboxes/unassigned'
+    )
+    if (!response.success) throw new Error(response.error)
+    return response.data?.data || []
+  }
+
+  /**
+   * Assign existing inbox to user
+   */
+  async assignInboxToUser(userId: string, inboxId: string): Promise<void> {
+    const response = await backendApi.post(
+      `/admin/supabase/users/${userId}/inboxes/assign`,
+      { inbox_id: inboxId }
     )
     if (!response.success) throw new Error(response.error)
   }

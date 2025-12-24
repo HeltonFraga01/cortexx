@@ -248,14 +248,14 @@ const AdminOverview = () => {
         />
 
         <StatsCard
-          title="Total de Usuários"
+          title="Total de Caixas de Entrada"
           value={health?.total_users || 0}
           icon={Users}
           variant="blue"
         />
 
         <StatsCard
-          title="Usuários Conectados"
+          title="Caixas Conectadas"
           value={connectedUsers}
           icon={Wifi}
           variant="orange"

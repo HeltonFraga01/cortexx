@@ -84,8 +84,8 @@ export function SupabaseUsersList() {
         }
       }
     } catch (error) {
-      console.error('Erro ao buscar usuários Supabase:', error)
-      toast.error('Erro ao carregar usuários do Supabase')
+      console.error('Erro ao buscar usuários:', error)
+      toast.error('Erro ao carregar usuários')
     } finally {
       setLoading(false)
     }
@@ -168,7 +168,7 @@ export function SupabaseUsersList() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-xl font-semibold">Usuários do Supabase</h2>
+        <h2 className="text-xl font-semibold">Usuários</h2>
         <div className="flex gap-2 w-full sm:w-auto">
           <Button onClick={() => void fetchUsers()} variant="outline" size="icon">
             <RefreshCw className="h-4 w-4" />
@@ -182,7 +182,7 @@ export function SupabaseUsersList() {
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Criar Novo Usuário Supabase</DialogTitle>
+                <DialogTitle>Criar Novo Usuário</DialogTitle>
                 <DialogDescription>
                   Este usuário poderá fazer login no sistema.
                 </DialogDescription>

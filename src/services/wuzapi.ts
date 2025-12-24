@@ -27,7 +27,69 @@ export interface WuzAPIUser {
   };
 }
 
+/**
+ * Representa uma caixa de entrada WhatsApp conectada via WUZAPI.
+ * 
+ * Um Inbox é uma instância de conexão WhatsApp que pode enviar e receber mensagens.
+ * Este é o tipo preferido - use em vez de WuzAPIUser.
+ */
+export interface Inbox {
+  id: string;
+  name: string;
+  token: string;
+  webhook: string;
+  events: string;
+  connected: boolean;
+  loggedIn: boolean;
+  jid: string;
+  qrcode: string;
+  expiration: number;
+  proxy_config: {
+    enabled: boolean;
+    proxy_url: string;
+  };
+  s3_config: {
+    enabled: boolean;
+    endpoint: string;
+    region: string;
+    bucket: string;
+    access_key: string;
+    path_style: boolean;
+    public_url: string;
+    media_delivery: string;
+    retention_days: number;
+  };
+}
+
 export interface CreateUserRequest {
+  name: string;
+  token: string;
+  webhook?: string;
+  events?: string;
+  proxyConfig?: {
+    enabled: boolean;
+    proxyURL: string;
+  };
+  s3Config?: {
+    enabled: boolean;
+    endpoint: string;
+    region: string;
+    bucket: string;
+    accessKey: string;
+    secretKey: string;
+    pathStyle: boolean;
+    publicURL: string;
+    mediaDelivery: string;
+    retentionDays: number;
+  };
+  history?: number;
+}
+
+/**
+ * Payload para criar uma nova caixa de entrada.
+ * Este é o tipo preferido - use em vez de CreateUserRequest.
+ */
+export interface CreateInboxRequest {
   name: string;
   token: string;
   webhook?: string;
@@ -99,51 +161,119 @@ export class WuzAPIService {
     return response.data;
   }
 
-  async getUsers(): Promise<WuzAPIUser[]> {
+  // ============================================================================
+  // MÉTODOS DE INBOX (CAIXA DE ENTRADA) - NOMENCLATURA PREFERIDA
+  // ============================================================================
+
+  /**
+   * Lista todas as caixas de entrada (inboxes) do sistema.
+   * Este é o método preferido - use em vez de getUsers().
+   */
+  async listInboxes(): Promise<Inbox[]> {
     const response = await backendApi.get<any>(`${this.baseUrl}/admin/users`);
     
     if (!response.success) {
-      throw new Error(response.error || 'Failed to fetch users');
+      throw new Error(response.error || 'Falha ao buscar caixas de entrada');
     }
     
     // A resposta pode ter 'data' ou 'filtered_data'
     return response.data?.data || response.data?.filtered_data || [];
   }
 
-  async getUser(id: string): Promise<WuzAPIUser> {
+  /**
+   * Obtém uma caixa de entrada específica pelo ID.
+   * Este é o método preferido - use em vez de getUser().
+   */
+  async getInbox(id: string): Promise<Inbox> {
     const response = await backendApi.get<any>(`${this.baseUrl}/admin/users/${id}`);
     
     if (!response.success || !response.data) {
-      throw new Error(response.error || 'Failed to fetch user');
+      throw new Error(response.error || 'Falha ao buscar caixa de entrada');
     }
     
     return response.data.data;
   }
 
-  async createUser(userData: CreateUserRequest): Promise<WuzAPIUser> {
-    const response = await backendApi.post<any>(`${this.baseUrl}/admin/users`, userData);
+  /**
+   * Cria uma nova caixa de entrada.
+   * Este é o método preferido - use em vez de createUser().
+   */
+  async createInbox(inboxData: CreateInboxRequest): Promise<Inbox> {
+    const response = await backendApi.post<any>(`${this.baseUrl}/admin/users`, inboxData);
     
     if (!response.success || !response.data) {
-      throw new Error(response.error || 'Failed to create user');
+      throw new Error(response.error || 'Falha ao criar caixa de entrada');
     }
     
     return response.data.data;
   }
 
-  async deleteUser(id: string): Promise<void> {
+  /**
+   * Remove uma caixa de entrada.
+   * Este é o método preferido - use em vez de deleteUser().
+   */
+  async deleteInbox(id: string): Promise<void> {
     const response = await backendApi.delete<void>(`${this.baseUrl}/admin/users/${id}`);
     
     if (!response.success) {
-      throw new Error(response.error || 'Failed to delete user');
+      throw new Error(response.error || 'Falha ao remover caixa de entrada');
     }
   }
 
-  async deleteUserFull(id: string): Promise<void> {
+  /**
+   * Remove uma caixa de entrada completamente (incluindo dados).
+   * Este é o método preferido - use em vez de deleteUserFull().
+   */
+  async deleteInboxFull(id: string): Promise<void> {
     const response = await backendApi.delete<void>(`${this.baseUrl}/admin/users/${id}/full`);
     
     if (!response.success) {
-      throw new Error(response.error || 'Failed to delete user completely');
+      throw new Error(response.error || 'Falha ao remover caixa de entrada completamente');
     }
+  }
+
+  // ============================================================================
+  // MÉTODOS DEPRECATED (COMPATIBILIDADE RETROATIVA)
+  // ============================================================================
+
+  /**
+   * @deprecated Use listInboxes() instead. Este método será removido em versão futura.
+   */
+  async getUsers(): Promise<WuzAPIUser[]> {
+    console.warn('[DEPRECATED] getUsers() is deprecated. Use listInboxes() instead.');
+    return this.listInboxes();
+  }
+
+  /**
+   * @deprecated Use getInbox() instead. Este método será removido em versão futura.
+   */
+  async getUser(id: string): Promise<WuzAPIUser> {
+    console.warn('[DEPRECATED] getUser() is deprecated. Use getInbox() instead.');
+    return this.getInbox(id);
+  }
+
+  /**
+   * @deprecated Use createInbox() instead. Este método será removido em versão futura.
+   */
+  async createUser(userData: CreateUserRequest): Promise<WuzAPIUser> {
+    console.warn('[DEPRECATED] createUser() is deprecated. Use createInbox() instead.');
+    return this.createInbox(userData);
+  }
+
+  /**
+   * @deprecated Use deleteInbox() instead. Este método será removido em versão futura.
+   */
+  async deleteUser(id: string): Promise<void> {
+    console.warn('[DEPRECATED] deleteUser() is deprecated. Use deleteInbox() instead.');
+    return this.deleteInbox(id);
+  }
+
+  /**
+   * @deprecated Use deleteInboxFull() instead. Este método será removido em versão futura.
+   */
+  async deleteUserFull(id: string): Promise<void> {
+    console.warn('[DEPRECATED] deleteUserFull() is deprecated. Use deleteInboxFull() instead.');
+    return this.deleteInboxFull(id);
   }
 
   // Métodos de Usuário
