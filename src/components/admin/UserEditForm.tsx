@@ -33,6 +33,17 @@ import {
   ImageIcon
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { 
+  InboxInfoCard,
+  WebhookConfigCard,
+  DEFAULT_AVAILABLE_EVENTS
+} from '@/components/shared/inbox';
+import type { WebhookConfigData } from '@/components/shared/inbox';
+import { 
+  adaptWuzapiUserToInboxInfo,
+  adaptWuzapiUserToWebhookConfig,
+  adaptWebhookConfigToWuzapi
+} from '@/lib/adapters/inbox-adapters';
 
 // Interface para os dados do formulário de edição
 export interface EditUserFormData {
@@ -62,77 +73,6 @@ interface UserEditFormProps {
   onUnlinkSupabaseUser?: () => Promise<void>;
 }
 
-// Lista de eventos disponíveis (baseada no CreateUserForm)
-const availableEvents = [
-  // Mensagens
-  { value: "Message", label: "Message", category: "Mensagens" },
-  { value: "UndecryptableMessage", label: "Undecryptable Message", category: "Mensagens" },
-  { value: "Receipt", label: "Receipt", category: "Mensagens" },
-  { value: "ReadReceipt", label: "Read Receipt", category: "Mensagens" },
-  { value: "MediaRetry", label: "Media Retry", category: "Mensagens" },
-  
-  // Grupos
-  { value: "GroupInfo", label: "Group Info", category: "Grupos" },
-  { value: "JoinedGroup", label: "Joined Group", category: "Grupos" },
-  
-  // Newsletter
-  { value: "NewsletterMuteChange", label: "Newsletter Mute Change", category: "Newsletter" },
-  { value: "NewsletterLiveUpdate", label: "Newsletter Live Update", category: "Newsletter" },
-  { value: "NewsletterJoin", label: "Newsletter Join", category: "Newsletter" },
-  { value: "NewsletterLeave", label: "Newsletter Leave", category: "Newsletter" },
-  { value: "FBMessage", label: "FB Message", category: "Newsletter" },
-  
-  // Presença
-  { value: "Presence", label: "Presence", category: "Presença" },
-  { value: "ChatPresence", label: "Chat Presence", category: "Presença" },
-  
-  // Identidade e Mudanças
-  { value: "IdentityChange", label: "Identity Change", category: "Sistema" },
-  { value: "CATRefreshError", label: "CAT Refresh Error", category: "Sistema" },
-  
-  // Sincronização
-  { value: "OfflineSyncPreview", label: "Offline Sync Preview", category: "Sincronização" },
-  { value: "OfflineSyncCompleted", label: "Offline Sync Completed", category: "Sincronização" },
-  { value: "HistorySync", label: "History Sync", category: "Sincronização" },
-  { value: "AppState", label: "App State", category: "Sincronização" },
-  { value: "AppStateSyncComplete", label: "App State Sync Complete", category: "Sincronização" },
-  
-  // Chamadas
-  { value: "CallOffer", label: "Call Offer", category: "Chamadas" },
-  { value: "CallAccept", label: "Call Accept", category: "Chamadas" },
-  { value: "CallTerminate", label: "Call Terminate", category: "Chamadas" },
-  { value: "CallOfferNotice", label: "Call Offer Notice", category: "Chamadas" },
-  { value: "CallRelayLatency", label: "Call Relay Latency", category: "Chamadas" },
-  
-  // Conexão
-  { value: "Connected", label: "Connected", category: "Conexão" },
-  { value: "Disconnected", label: "Disconnected", category: "Conexão" },
-  { value: "ConnectFailure", label: "Connect Failure", category: "Conexão" },
-  { value: "LoggedOut", label: "Logged Out", category: "Conexão" },
-  { value: "ClientOutdated", label: "Client Outdated", category: "Conexão" },
-  { value: "TemporaryBan", label: "Temporary Ban", category: "Conexão" },
-  { value: "StreamError", label: "Stream Error", category: "Conexão" },
-  { value: "StreamReplaced", label: "Stream Replaced", category: "Conexão" },
-  
-  // Keep Alive
-  { value: "KeepAliveRestored", label: "Keep Alive Restored", category: "Keep Alive" },
-  { value: "KeepAliveTimeout", label: "Keep Alive Timeout", category: "Keep Alive" },
-  
-  // Pairing
-  { value: "PairSuccess", label: "Pair Success", category: "Pairing" },
-  { value: "PairError", label: "Pair Error", category: "Pairing" },
-  { value: "QR", label: "QR", category: "Pairing" },
-  { value: "QRScannedWithoutMultidevice", label: "QR Scanned Without Multidevice", category: "Pairing" },
-  
-  // Outros
-  { value: "Picture", label: "Picture", category: "Outros" },
-  { value: "BlocklistChange", label: "Blocklist Change", category: "Outros" },
-  { value: "Blocklist", label: "Blocklist", category: "Outros" },
-  { value: "PrivacySettings", label: "Privacy Settings", category: "Outros" },
-  { value: "PushNameSetting", label: "Push Name Setting", category: "Outros" },
-  { value: "UserAbout", label: "User About", category: "Outros" },
-];
-
 const UserEditForm = ({ 
   user, 
   formData, 
@@ -155,6 +95,11 @@ const UserEditForm = ({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   
+  // Estado para webhook config usando componente compartilhado
+  const [localWebhookConfig, setLocalWebhookConfig] = useState<WebhookConfigData>(() => 
+    adaptWuzapiUserToWebhookConfig(user)
+  );
+  
   // Estado para Supabase User Form
   const [supabaseLoading, setSupabaseLoading] = useState(false);
   const [showLinkUser, setShowLinkUser] = useState(false);
@@ -168,6 +113,11 @@ const UserEditForm = ({
   const [updateEmail, setUpdateEmail] = useState('');
   const [updatePassword, setUpdatePassword] = useState('');
 
+  // Sincronizar webhook config local quando user muda
+  useEffect(() => {
+    setLocalWebhookConfig(adaptWuzapiUserToWebhookConfig(user));
+  }, [user]);
+
   // Inicializar email para novo usuário/vínculo com o email do WuzAPI (se houver, assumindo que nome pode ser email ou user.id)
   useEffect(() => {
     // Tentar inferir email se o nome parecer um email
@@ -177,6 +127,27 @@ const UserEditForm = ({
       setNewUserEmail(email);
     }
   }, [user.name]);
+
+  // Handler para mudanças no webhook config
+  const handleWebhookConfigChange = (config: WebhookConfigData) => {
+    setLocalWebhookConfig(config);
+    // Sincronizar com formData para manter compatibilidade
+    const { webhook, events } = adaptWebhookConfigToWuzapi(config);
+    onFormChange({
+      ...formData,
+      webhook,
+      events: events.join(', ')
+    });
+  };
+
+  // Verificar se há mudanças no webhook
+  const hasWebhookChanges = (): boolean => {
+    const originalConfig = adaptWuzapiUserToWebhookConfig(user);
+    return (
+      localWebhookConfig.webhookUrl !== originalConfig.webhookUrl ||
+      JSON.stringify(localWebhookConfig.events.sort()) !== JSON.stringify(originalConfig.events.sort())
+    );
+  };
 
   // Handlers para Supabase Actions
   const handleLinkSupabaseUser = async () => {
@@ -430,30 +401,6 @@ const UserEditForm = ({
     if (validateForm()) {
       onSubmit();
     }
-  };
-
-  // Função para toggle de eventos
-  const toggleEvent = (eventValue: string) => {
-    if (eventValue === 'All') {
-      // Se selecionou "All", limpar outros eventos
-      updateFormData('events', formData.events === 'All' ? '' : 'All');
-    } else {
-      const currentEvents = formData.events === 'All' ? [] : 
-        formData.events.split(',').map(e => e.trim()).filter(e => e);
-      
-      const newEvents = currentEvents.includes(eventValue)
-        ? currentEvents.filter(e => e !== eventValue)
-        : [...currentEvents, eventValue];
-      
-      updateFormData('events', newEvents.join(', '));
-    }
-  };
-
-  // Verificar se um evento está selecionado
-  const isEventSelected = (eventValue: string): boolean => {
-    if (formData.events === 'All') return eventValue === 'All';
-    const currentEvents = formData.events.split(',').map(e => e.trim());
-    return currentEvents.includes(eventValue);
   };
 
   return (
@@ -928,139 +875,15 @@ const UserEditForm = ({
         </CardContent>
       </Card>
 
-      {/* Card de Configurações de Webhook */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center text-foreground">
-            <Globe className="h-5 w-5 mr-2 text-primary" />
-            Configurações de Webhook
-          </CardTitle>
-          <CardDescription>
-            Configure a URL do webhook e os eventos que serão enviados
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Webhook URL */}
-          <div className="space-y-2">
-            <Label htmlFor="edit-webhook" className="text-sm font-medium text-foreground">
-              URL do Webhook
-            </Label>
-            <Input
-              id="edit-webhook"
-              value={formData.webhook}
-              onChange={(e) => updateFormData('webhook', e.target.value)}
-              onBlur={() => handleBlur('webhook')}
-              placeholder="https://example.com/webhook"
-              className={`h-10 ${errors.webhook ? 'border-destructive focus:border-destructive' : ''}`}
-              disabled={loading}
-              aria-invalid={!!errors.webhook}
-              aria-describedby={errors.webhook ? 'webhook-error' : undefined}
-            />
-            {errors.webhook && (
-              <p id="webhook-error" className="text-xs text-destructive flex items-center mt-1">
-                <AlertCircle className="h-3 w-3 mr-1" />
-                {errors.webhook}
-              </p>
-            )}
-            <p className="text-xs text-muted-foreground">
-              URL onde os eventos serão enviados via POST
-            </p>
-          </div>
-
-          <Separator />
-
-          {/* Eventos */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <Label className="text-sm font-medium text-foreground">
-                Eventos do Webhook
-              </Label>
-              <div className="flex items-center space-x-2">
-                {formData.events === 'All' ? (
-                  <Badge variant="default" className="text-xs">
-                    Todos os eventos ({availableEvents.length})
-                  </Badge>
-                ) : formData.events ? (
-                  <Badge variant="secondary" className="text-xs">
-                    {formData.events.split(',').filter(e => e.trim()).length} eventos selecionados
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="text-xs text-destructive border-destructive">
-                    Nenhum evento selecionado
-                  </Badge>
-                )}
-              </div>
-            </div>
-            
-            {/* Descrição dos eventos */}
-            <div className="text-xs text-muted-foreground bg-muted/50 p-3 rounded-lg">
-              <p className="font-medium mb-1">ℹ️ Sobre os eventos:</p>
-              <p>
-                {formData.events === 'All' 
-                  ? 'Todos os eventos disponíveis serão enviados para o webhook. Isso inclui mensagens, chamadas, mudanças de status e muito mais.'
-                  : formData.events && formData.events.split(',').filter(e => e.trim()).length > 0
-                  ? 'Apenas os eventos selecionados serão enviados para o webhook. Você pode adicionar ou remover eventos a qualquer momento.'
-                  : 'Selecione pelo menos um evento para que o webhook funcione corretamente. Recomendamos começar com "Message" para mensagens básicas.'
-                }
-              </p>
-            </div>
-
-            <div className={`border rounded-md p-4 space-y-4 bg-background max-h-80 overflow-y-auto ${
-              errors.events ? 'border-destructive' : 'border-border'
-            }`}>
-              {/* Opção "All Events" */}
-              <div className="flex items-center space-x-2 p-2 bg-primary/5 rounded border border-primary/20">
-                <input
-                  type="checkbox"
-                  id="event-all"
-                  checked={isEventSelected('All')}
-                  onChange={() => toggleEvent('All')}
-                  disabled={loading}
-                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
-                />
-                <Label 
-                  htmlFor="event-all"
-                  className="text-sm font-medium cursor-pointer text-primary flex-1"
-                >
-                  All Events (Todos os Eventos)
-                </Label>
-              </div>
-
-              {/* Eventos individuais */}
-              {formData.events !== 'All' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                  {availableEvents.map((event) => (
-                    <div key={event.value} className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id={`event-${event.value}`}
-                        checked={isEventSelected(event.value)}
-                        onChange={() => toggleEvent(event.value)}
-                        disabled={loading}
-                        className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
-                      />
-                      <Label 
-                        htmlFor={`event-${event.value}`}
-                        className="text-xs cursor-pointer flex-1"
-                        title={`Categoria: ${event.category}`}
-                      >
-                        {event.label}
-                      </Label>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            
-            {errors.events && (
-              <p className="text-xs text-destructive flex items-center mt-2">
-                <AlertCircle className="h-3 w-3 mr-1" />
-                {errors.events}
-              </p>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      {/* Card de Configurações de Webhook - usando componente compartilhado */}
+      <WebhookConfigCard
+        config={localWebhookConfig}
+        availableEvents={DEFAULT_AVAILABLE_EVENTS}
+        onChange={handleWebhookConfigChange}
+        isLoading={loading}
+        readOnly={false}
+        hasChanges={hasWebhookChanges()}
+      />
 
       {/* Botões de Ação */}
       <Card>

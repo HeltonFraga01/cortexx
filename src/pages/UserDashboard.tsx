@@ -25,6 +25,7 @@ import InboxManagementPage from '@/pages/user/InboxManagementPage';
 import RoleManagementPage from '@/pages/user/RoleManagementPage';
 import AuditLogPage from '@/pages/user/AuditLogPage';
 import ResellerDashboardPage from '@/pages/user/ResellerDashboardPage';
+import UserInboxEditPage from '@/components/user/UserInboxEditPage';
 
 const UserDashboard = () => {
   return (
@@ -69,6 +70,7 @@ const UserDashboard = () => {
           <Route path="/agents" element={<AgentManagementPage />} />
           <Route path="/teams" element={<TeamManagementPage />} />
           <Route path="/inboxes" element={<InboxManagementPage />} />
+          <Route path="/inboxes/edit/:inboxId" element={<UserInboxEditPage />} />
           <Route path="/roles" element={<RoleManagementPage />} />
           <Route path="/audit" element={<AuditLogPage />} />
           <Route path="/reseller" element={<ResellerDashboardPage />} />

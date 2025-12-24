@@ -87,6 +87,7 @@ const publicRoutes = require('./publicRoutes');
 // Inbox Context Routes (Supabase Auth)
 const inboxContextRoutes = require('./inboxContextRoutes');
 const sessionInboxWebhookRoutes = require('./sessionInboxWebhookRoutes');
+const userInboxStatusRoutes = require('./userInboxStatusRoutes');
 
 logger.debug('contactImportRoutes loaded', { 
   type: typeof contactImportRoutes, 
@@ -169,6 +170,8 @@ function setupRoutes(app) {
   app.use('/api/user/drafts', userDraftRoutes);
   // Inbox Context Routes (Supabase Auth user inbox binding)
   app.use('/api/user', inboxContextRoutes);
+  // Inbox Status Routes (Provider API as source of truth)
+  app.use('/api/user', userInboxStatusRoutes);
   // Session Inbox Webhook Routes (tenant-scoped webhook configuration)
   app.use('/api/session/inboxes', sessionInboxWebhookRoutes);
   // IMPORTANT: userBotTestRoutes MUST come BEFORE userBotRoutes

@@ -4,6 +4,7 @@ const { logger } = require('../utils/logger');
 const { requireAuth } = require('../middleware/auth');
 const { validateSupabaseToken } = require('../middleware/supabaseAuth');
 const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
+const { skipCsrf } = require('../middleware/csrf');
 const UserDataService = require('../services/UserDataService');
 
 const router = express.Router();
@@ -1015,8 +1016,13 @@ router.get('/messages/stats', verifyUserToken, async (req, res) => {
 });
 
 // POST /api/user/avatar - Buscar foto de perfil do WhatsApp
-router.post('/avatar', verifyUserToken, async (req, res) => {
-  const userToken = req.userToken;
+// skipCsrf needed because this is called from frontend with JWT auth (not session-based)
+// IMPORTANT: This route prioritizes the 'token' header over the inbox context token
+// because the user may be editing a different inbox than the active one
+router.post('/avatar', skipCsrf, verifyUserToken, async (req, res) => {
+  // Prioritize explicit token header over inbox context token
+  // This allows fetching avatar for any inbox, not just the active one
+  const userToken = req.headers.token || req.userToken;
   const { Phone, Preview = true } = req.body;
   
   if (!Phone) {

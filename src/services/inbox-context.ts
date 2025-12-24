@@ -8,6 +8,23 @@
 
 import { supabase } from '@/lib/supabase'
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
+
+/**
+ * Obtém o token CSRF do servidor
+ */
+async function getCsrfToken(): Promise<string | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/auth/csrf-token`, {
+      credentials: 'include'
+    })
+    const data = await response.json()
+    return data.csrfToken || null
+  } catch {
+    return null
+  }
+}
+
 /**
  * Resumo de uma inbox disponível
  */
@@ -16,6 +33,7 @@ export interface InboxSummary {
   name: string
   phoneNumber?: string
   isConnected: boolean
+  isLoggedIn: boolean  // Indica se está autenticado no WhatsApp (LoggedIn no WUZAPI)
   isPrimary: boolean
   unreadCount?: number
   channelType?: string
@@ -112,14 +130,25 @@ async function authenticatedFetch<T>(
     }
   }
 
+  // Obter CSRF token para requisições que modificam dados
+  const method = options.method?.toUpperCase() || 'GET'
+  const needsCsrf = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
+  const csrfToken = needsCsrf ? await getCsrfToken() : null
+
   try {
-    const response = await fetch(`/api/user${endpoint}`, {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      ...(options.headers as Record<string, string>)
+    }
+    
+    if (csrfToken) {
+      headers['CSRF-Token'] = csrfToken
+    }
+
+    const response = await fetch(`${API_BASE}/api/user${endpoint}`, {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        ...options.headers
-      },
+      headers,
       credentials: 'include'
     })
 

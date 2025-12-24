@@ -199,20 +199,32 @@ export class BackendApiClient {
             message = data?.error || 'Dados inválidos enviados para o servidor';
             break;
           case 401:
-            // Mostrar toast para 401 para informar o usuário sobre sessão expirada
-            shouldShowToast = true;
-            if (data?.code === 'TOKEN_MISSING') {
-              message = 'Sessão expirada. Por favor, faça login novamente.';
-            } else if (data?.code === 'AUTH_REQUIRED') {
-              message = 'Sessão expirada ou inválida. Por favor, faça login novamente.';
-            } else {
-              message = data?.error || 'Sessão expirada. Por favor, faça login novamente.';
-            }
+            // Check if this is a WUZAPI-related endpoint (session/connect, session/disconnect, etc.)
+            const isWuzapiEndpoint = url.includes('/session/') || 
+                                     url.includes('/webhook') || 
+                                     url.includes('/chat/') ||
+                                     url.includes('/user/avatar');
             
-            // Disparar evento para que o AuthContext possa reagir
-            window.dispatchEvent(new CustomEvent('auth:session-expired', { 
-              detail: { code: data?.code, message } 
-            }));
+            if (isWuzapiEndpoint) {
+              // WUZAPI 401 means invalid WUZAPI token, not session expiration
+              message = data?.error || 'Token WUZAPI inválido ou não autorizado';
+              shouldShowToast = false; // Let the component handle the toast with more context
+            } else {
+              // Regular auth 401 - session expired
+              shouldShowToast = true;
+              if (data?.code === 'TOKEN_MISSING') {
+                message = 'Sessão expirada. Por favor, faça login novamente.';
+              } else if (data?.code === 'AUTH_REQUIRED') {
+                message = 'Sessão expirada ou inválida. Por favor, faça login novamente.';
+              } else {
+                message = data?.error || 'Sessão expirada. Por favor, faça login novamente.';
+              }
+              
+              // Disparar evento para que o AuthContext possa reagir
+              window.dispatchEvent(new CustomEvent('auth:session-expired', { 
+                detail: { code: data?.code, message } 
+              }));
+            }
             break;
           case 403:
             // Se for erro de CSRF, tentar renovar token

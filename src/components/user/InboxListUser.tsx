@@ -63,24 +63,30 @@ import {
   listInboxes, 
   deleteInbox, 
   createDefaultInbox,
-  getInboxStatus,
   getInboxQRCode,
   connectInbox,
   disconnectInbox,
   logoutInbox
 } from '@/services/account-inboxes'
+import { 
+  getInboxStatus as getProviderInboxStatus,
+  getStatusMessage,
+  hasStatusError,
+  type InboxStatusResult
+} from '@/services/inbox-status'
+import { useInboxQuota } from '@/hooks/useInboxQuota'
 
 interface InboxListUserProps {
   onCreateInbox?: () => void
   onEditInbox?: (inbox: InboxWithStats) => void
   onManageAgents?: (inbox: InboxWithStats) => void
-  maxInboxesReached?: boolean
 }
 
 interface InboxStatus {
   connected: boolean
   loggedIn: boolean
-  status: 'connected' | 'connecting' | 'disconnected' | 'not_configured'
+  status: 'connected' | 'connecting' | 'disconnected' | 'not_configured' | 'unknown'
+  hasError?: boolean
 }
 
 const CHANNEL_LABELS: Record<string, string> = {
@@ -100,8 +106,7 @@ const CHANNEL_ICONS: Record<string, string> = {
 export function InboxListUser({ 
   onCreateInbox, 
   onEditInbox, 
-  onManageAgents,
-  maxInboxesReached = false 
+  onManageAgents
 }: InboxListUserProps) {
   const [inboxes, setInboxes] = useState<InboxWithStats[]>([])
   const [loading, setLoading] = useState(true)
@@ -117,17 +122,57 @@ export function InboxListUser({
   const [connectingInbox, setConnectingInbox] = useState<string | null>(null)
   const itemsPerPage = 10
 
+  // Quota management
+  const { quota, refresh: refreshQuota, canCreate } = useInboxQuota()
+  const maxInboxesReached = !canCreate
+
   const fetchInboxStatus = useCallback(async (inboxId: string) => {
     try {
-      const status = await getInboxStatus(inboxId)
+      // Usar o novo serviço de status baseado no Provider (fonte única de verdade)
+      const result: InboxStatusResult = await getProviderInboxStatus(inboxId)
+      
+      // Mapear resultado para o formato esperado pelo componente
+      let statusValue: InboxStatus['status'] = 'disconnected'
+      
+      if (hasStatusError(result)) {
+        statusValue = 'unknown'
+      } else if (result.status.loggedIn) {
+        statusValue = 'connected'
+      } else if (result.status.connected) {
+        statusValue = 'connecting'
+      } else {
+        statusValue = 'disconnected'
+      }
+      
+      const status: InboxStatus = {
+        connected: result.status.connected,
+        loggedIn: result.status.loggedIn,
+        status: statusValue,
+        hasError: hasStatusError(result)
+      }
+      
       setInboxStatuses(prev => ({ ...prev, [inboxId]: status }))
       
-      // If connected but not logged in, fetch QR code
-      if (status.connected && !status.loggedIn) {
+      // If status includes QR code, use it directly
+      if (result.status.qrCode) {
+        setQrCodes(prev => ({ ...prev, [inboxId]: result.status.qrCode! }))
+      }
+      // If connected but not logged in and no QR code in status, fetch QR code separately
+      else if (status.connected && !status.loggedIn) {
         fetchQRCode(inboxId)
       }
     } catch (error) {
       console.error('Error fetching inbox status:', error)
+      // Em caso de erro, marcar como desconhecido
+      setInboxStatuses(prev => ({ 
+        ...prev, 
+        [inboxId]: {
+          connected: false,
+          loggedIn: false,
+          status: 'unknown',
+          hasError: true
+        }
+      }))
     }
   }, [])
 
@@ -136,9 +181,13 @@ export function InboxListUser({
       const result = await getInboxQRCode(inboxId)
       if (result.qrCode) {
         setQrCodes(prev => ({ ...prev, [inboxId]: result.qrCode! }))
+      } else if (result.connected && !result.loggedIn) {
+        // QR code not ready yet, will be fetched on next status poll
+        console.log('QR code not ready yet for inbox:', inboxId)
       }
     } catch (error) {
       console.error('Error fetching QR code:', error)
+      // Don't show error toast - QR code fetch is best-effort
     }
   }
 
@@ -186,18 +235,54 @@ export function InboxListUser({
   }, [expandedInbox, fetchInboxStatus])
 
   const handleConnect = async (inbox: InboxWithStats) => {
+    // Verificar status atual antes de tentar conectar (Property 7: Pre-Action Status Check)
+    const currentStatus = inboxStatuses[inbox.id]
+    if (currentStatus?.connected && currentStatus?.loggedIn) {
+      toast.info('Já conectado', {
+        description: 'A sessão WhatsApp já está conectada'
+      })
+      return
+    }
+    
     try {
       setConnectingInbox(inbox.id)
       await connectInbox(inbox.id, { Subscribe: ['Message', 'ReadReceipt'], Immediate: false })
       toast.success('Conectando ao WhatsApp...')
       
-      // Wait a bit then fetch status and QR code
-      setTimeout(() => {
-        fetchInboxStatus(inbox.id)
-        fetchQRCode(inbox.id)
-      }, 2000)
+      // Update status to show connecting state immediately
+      setInboxStatuses(prev => ({ 
+        ...prev, 
+        [inbox.id]: {
+          connected: true,
+          loggedIn: false,
+          status: 'connecting',
+          hasError: false
+        }
+      }))
+      
+      // Wait a bit then fetch status and QR code with retries
+      const fetchWithRetry = async () => {
+        for (let i = 0; i < 3; i++) {
+          await new Promise(resolve => setTimeout(resolve, 2000))
+          await fetchInboxStatus(inbox.id)
+          await fetchQRCode(inbox.id)
+        }
+      }
+      
+      fetchWithRetry()
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Erro ao conectar')
+      const errorMessage = error instanceof Error ? error.message : 'Erro ao conectar'
+      
+      // Tratar "already connected" como sucesso (Property 6: Already Connected Handling)
+      if (errorMessage.toLowerCase().includes('already connected')) {
+        toast.info('Já conectado', {
+          description: 'A sessão WhatsApp já está conectada'
+        })
+        fetchInboxStatus(inbox.id)
+        return
+      }
+      
+      toast.error(errorMessage)
     } finally {
       setConnectingInbox(null)
     }
@@ -253,6 +338,7 @@ export function InboxListUser({
       setDeleteDialogOpen(false)
       setSelectedInbox(null)
       fetchInboxes()
+      refreshQuota() // Refresh quota after deletion
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Erro ao excluir caixa de entrada')
     } finally {
@@ -282,6 +368,10 @@ export function InboxListUser({
     
     if (!status || status.status === 'not_configured') {
       return <Badge variant="outline"><WifiOff className="h-3 w-3 mr-1" />Não configurado</Badge>
+    }
+    
+    if (status.status === 'unknown' || status.hasError) {
+      return <Badge variant="outline" className="bg-gray-100 dark:bg-gray-800"><AlertTriangle className="h-3 w-3 mr-1" />Status desconhecido</Badge>
     }
     
     if (status.loggedIn) {
@@ -319,6 +409,12 @@ export function InboxListUser({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Quota Display */}
+          {quota && (
+            <Badge variant={maxInboxesReached ? 'destructive' : 'secondary'} className="text-sm px-3 py-1">
+              {quota.current}/{quota.limit} caixas
+            </Badge>
+          )}
           <Button onClick={fetchInboxes} variant="outline" size="icon" className="flex-shrink-0">
             <RefreshCw className="h-4 w-4" />
           </Button>
@@ -335,7 +431,7 @@ export function InboxListUser({
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
           <AlertDescription>
-            Você atingiu o limite de caixas de entrada do seu plano. 
+            Você atingiu o limite de {quota?.limit} caixa{quota?.limit !== 1 ? 's' : ''} de entrada do seu plano. 
             Faça upgrade para criar mais caixas.
           </AlertDescription>
         </Alert>

@@ -7,6 +7,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { InboxListUser } from '@/components/user/InboxListUser'
 import { InboxDialogUser } from '@/components/user/InboxDialogUser'
 import { QuotaWarning } from '@/components/user/QuotaGate'
@@ -14,6 +15,7 @@ import { useAgentContext } from '@/contexts/AgentContext'
 import type { InboxWithStats } from '@/types/multi-user'
 
 export default function InboxManagementPage() {
+  const navigate = useNavigate()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [selectedInbox, setSelectedInbox] = useState<InboxWithStats | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -37,11 +39,12 @@ export default function InboxManagementPage() {
   }
 
   const handleEdit = (inbox: InboxWithStats) => {
-    setSelectedInbox(inbox)
-    setDialogOpen(true)
+    // Navigate to the new inline edit page
+    navigate(`/user/inboxes/edit/${inbox.id}`)
   }
 
   const handleManageAgents = (inbox: InboxWithStats) => {
+    // For agent management, still use the dialog
     setSelectedInbox(inbox)
     setDialogOpen(true)
   }

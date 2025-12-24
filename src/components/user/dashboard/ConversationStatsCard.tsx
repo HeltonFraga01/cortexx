@@ -73,11 +73,11 @@ export function ConversationStatsCard({
 }: ConversationStatsProps) {
   if (isLoading) {
     return (
-      <Card>
+      <Card className="h-full">
         <CardHeader className="pb-1 pt-3">
           <Skeleton className="h-4 w-32" />
         </CardHeader>
-        <CardContent className="space-y-2 pb-3">
+        <CardContent className="space-y-3 pb-3">
           {[1, 2, 3, 4].map((i) => (
             <div key={i} className="flex items-center gap-2">
               <Skeleton className="h-8 w-8 rounded-lg" />
@@ -93,38 +93,40 @@ export function ConversationStatsCard({
   }
 
   return (
-    <Card>
+    <Card className="h-full flex flex-col">
       <CardHeader className="pb-1 pt-3">
         <CardTitle className="text-sm flex items-center gap-2">
           <MessageSquare className="h-4 w-4 text-primary" />
           Conversas
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-2 pb-3">
-        <StatItem
-          label="Abertas"
-          value={stats.openCount}
-          previousValue={previousPeriodStats?.openCount}
-          icon={MessageSquare}
-          iconColor="bg-blue-100 text-blue-600"
-        />
-        <StatItem
-          label="Resolvidas"
-          value={stats.resolvedCount}
-          previousValue={previousPeriodStats?.resolvedCount}
-          icon={CheckCircle}
-          iconColor="bg-green-100 text-green-600"
-        />
-        <StatItem
-          label="Pendentes"
-          value={stats.pendingCount}
-          previousValue={previousPeriodStats?.pendingCount}
-          icon={Clock}
-          iconColor="bg-orange-100 text-orange-600"
-        />
-        <div className="pt-1.5 border-t">
+      <CardContent className="space-y-3 pb-3 flex-1 flex flex-col justify-between">
+        <div className="space-y-3">
+          <StatItem
+            label="Abertas"
+            value={stats.openCount}
+            previousValue={previousPeriodStats?.openCount}
+            icon={MessageSquare}
+            iconColor="bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400"
+          />
+          <StatItem
+            label="Resolvidas"
+            value={stats.resolvedCount}
+            previousValue={previousPeriodStats?.resolvedCount}
+            icon={CheckCircle}
+            iconColor="bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400"
+          />
+          <StatItem
+            label="Pendentes"
+            value={stats.pendingCount}
+            previousValue={previousPeriodStats?.pendingCount}
+            icon={Clock}
+            iconColor="bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400"
+          />
+        </div>
+        <div className="pt-2 border-t">
           <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-lg bg-purple-100 text-purple-600">
+            <div className="p-1.5 rounded-lg bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400">
               <Clock className="h-3.5 w-3.5" />
             </div>
             <div>

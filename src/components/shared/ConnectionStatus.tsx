@@ -3,12 +3,13 @@
  * 
  * Mostra se a inbox ativa está conectada ao WhatsApp.
  * Inclui tooltip com detalhes e opção de reconectar.
+ * Suporta estado "desconhecido" quando há erro na consulta de status.
  * 
- * Requirements: 8.2, 8.3
+ * Requirements: 8.2, 8.3, 3.3, 6.3, 6.4 (wuzapi-status-source-of-truth spec)
  */
 
 import { useState } from 'react'
-import { Wifi, WifiOff, RefreshCw, AlertCircle } from 'lucide-react'
+import { Wifi, WifiOff, RefreshCw, AlertCircle, HelpCircle, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -18,6 +19,9 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useSupabaseInbox } from '@/contexts/SupabaseInboxContext'
+
+/** Status de conexão possíveis */
+type ConnectionState = 'connected' | 'disconnected' | 'unknown' | 'loading'
 
 interface ConnectionStatusProps {
   /** Classe CSS adicional */
@@ -40,17 +44,34 @@ export function ConnectionStatus({
     context, 
     isConnected, 
     refreshContext, 
-    isLoading 
+    refreshInboxStatus,
+    isLoading,
+    error,
+    hasDisconnectedInbox
   } = useSupabaseInbox()
   
   const [isRefreshing, setIsRefreshing] = useState(false)
 
   if (!context) return null
 
+  // Determinar estado de conexão
+  const getConnectionState = (): ConnectionState => {
+    if (isLoading || isRefreshing) return 'loading'
+    if (error) return 'unknown'
+    return isConnected ? 'connected' : 'disconnected'
+  }
+
+  const connectionState = getConnectionState()
+
   const handleRefresh = async () => {
     setIsRefreshing(true)
     try {
-      await refreshContext()
+      // Usar refreshInboxStatus para a inbox ativa (fonte única de verdade)
+      if (context.inboxId) {
+        await refreshInboxStatus(context.inboxId)
+      } else {
+        await refreshContext()
+      }
     } finally {
       setIsRefreshing(false)
     }
@@ -64,38 +85,115 @@ export function ConnectionStatus({
 
   const iconSize = sizeClasses[size]
 
+  // Renderizar ícone baseado no estado
+  const renderIcon = () => {
+    switch (connectionState) {
+      case 'loading':
+        return (
+          <div className="relative">
+            <Loader2 className={cn(iconSize, 'text-muted-foreground animate-spin')} />
+          </div>
+        )
+      case 'connected':
+        return (
+          <div className="relative">
+            <Wifi className={cn(iconSize, 'text-green-500')} />
+            <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-green-500 rounded-full animate-pulse" />
+          </div>
+        )
+      case 'unknown':
+        return (
+          <div className="relative">
+            <HelpCircle className={cn(iconSize, 'text-gray-500')} />
+            <AlertCircle className="absolute -top-1 -right-1 h-3 w-3 text-yellow-500" />
+          </div>
+        )
+      case 'disconnected':
+      default:
+        return (
+          <div className="relative">
+            <WifiOff className={cn(iconSize, 'text-red-500')} />
+            <AlertCircle className="absolute -top-1 -right-1 h-3 w-3 text-red-500" />
+          </div>
+        )
+    }
+  }
+
+  // Renderizar label baseado no estado
+  const renderLabel = () => {
+    if (!showLabel) return null
+
+    switch (connectionState) {
+      case 'loading':
+        return (
+          <span className="text-sm text-muted-foreground">
+            Verificando...
+          </span>
+        )
+      case 'connected':
+        return (
+          <span className="text-sm text-green-600 dark:text-green-400">
+            Conectado
+          </span>
+        )
+      case 'unknown':
+        return (
+          <span className="text-sm text-gray-600 dark:text-gray-400">
+            Status desconhecido
+          </span>
+        )
+      case 'disconnected':
+      default:
+        return (
+          <span className="text-sm text-red-600 dark:text-red-400">
+            Desconectado
+          </span>
+        )
+    }
+  }
+
+  // Obter título do tooltip
+  const getTooltipTitle = () => {
+    switch (connectionState) {
+      case 'loading':
+        return 'Verificando conexão...'
+      case 'connected':
+        return 'WhatsApp Conectado'
+      case 'unknown':
+        return 'Status Desconhecido'
+      case 'disconnected':
+      default:
+        return 'WhatsApp Desconectado'
+    }
+  }
+
+  // Obter mensagem de ajuda do tooltip
+  const getTooltipHelp = () => {
+    switch (connectionState) {
+      case 'loading':
+        return 'Consultando status do provedor...'
+      case 'connected':
+        return null
+      case 'unknown':
+        return 'Não foi possível verificar o status. Clique para tentar novamente.'
+      case 'disconnected':
+      default:
+        return 'Reconecte para enviar mensagens'
+    }
+  }
+
+  // Mostrar botão de refresh em estados que permitem
+  const showRefreshButton = showReconnect && (connectionState === 'disconnected' || connectionState === 'unknown')
+
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
           <div className={cn('flex items-center gap-2', className)}>
-            {isConnected ? (
-              <>
-                <div className="relative">
-                  <Wifi className={cn(iconSize, 'text-green-500')} />
-                  <span className="absolute -top-0.5 -right-0.5 h-2 w-2 bg-green-500 rounded-full animate-pulse" />
-                </div>
-                {showLabel && (
-                  <span className="text-sm text-green-600 dark:text-green-400">
-                    Conectado
-                  </span>
-                )}
-              </>
-            ) : (
-              <>
-                <div className="relative">
-                  <WifiOff className={cn(iconSize, 'text-red-500')} />
-                  <AlertCircle className="absolute -top-1 -right-1 h-3 w-3 text-red-500" />
-                </div>
-                {showLabel && (
-                  <span className="text-sm text-red-600 dark:text-red-400">
-                    Desconectado
-                  </span>
-                )}
-              </>
-            )}
+            {renderIcon()}
+            {renderLabel()}
             
-            {showReconnect && !isConnected && (
+            {showRefreshButton && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -115,7 +213,7 @@ export function ConnectionStatus({
         <TooltipContent side="bottom" className="max-w-[250px]">
           <div className="space-y-1">
             <p className="font-medium">
-              {isConnected ? 'WhatsApp Conectado' : 'WhatsApp Desconectado'}
+              {getTooltipTitle()}
             </p>
             <p className="text-xs text-muted-foreground">
               Inbox: {context.inboxName}
@@ -125,9 +223,14 @@ export function ConnectionStatus({
                 Telefone: {context.phoneNumber}
               </p>
             )}
-            {!isConnected && (
+            {hasDisconnectedInbox && connectionState === 'connected' && (
               <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">
-                Reconecte para enviar mensagens
+                Algumas caixas estão desconectadas
+              </p>
+            )}
+            {getTooltipHelp() && (
+              <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">
+                {getTooltipHelp()}
               </p>
             )}
           </div>
@@ -139,9 +242,13 @@ export function ConnectionStatus({
 
 /**
  * Badge simples de status de conexão
+ * Suporta três estados: conectado, desconectado, desconhecido
  */
 interface ConnectionStatusBadgeProps {
-  isConnected: boolean
+  /** Status de conexão: true = conectado, false = desconectado, null/undefined = desconhecido */
+  isConnected: boolean | null | undefined
+  /** Se houve erro ao consultar status */
+  hasError?: boolean
   size?: 'sm' | 'default' | 'lg'
   showLabel?: boolean
   className?: string
@@ -149,6 +256,7 @@ interface ConnectionStatusBadgeProps {
 
 export function ConnectionStatusBadge({ 
   isConnected, 
+  hasError = false,
   size = 'default',
   showLabel = false,
   className 
@@ -159,25 +267,38 @@ export function ConnectionStatusBadge({
     lg: 'h-3 w-3'
   }
 
+  // Determinar estado: unknown se hasError ou isConnected é null/undefined
+  const isUnknown = hasError || isConnected === null || isConnected === undefined
+
+  const getColor = () => {
+    if (isUnknown) return 'bg-gray-500'
+    return isConnected ? 'bg-green-500' : 'bg-red-500'
+  }
+
+  const getTextColor = () => {
+    if (isUnknown) return 'text-gray-600 dark:text-gray-400'
+    return isConnected 
+      ? 'text-green-600 dark:text-green-400' 
+      : 'text-red-600 dark:text-red-400'
+  }
+
+  const getLabel = () => {
+    if (isUnknown) return 'Desconhecido'
+    return isConnected ? 'Online' : 'Offline'
+  }
+
   return (
     <div className={cn('flex items-center gap-1.5', className)}>
       <span 
         className={cn(
           'rounded-full',
           dotSizes[size],
-          isConnected 
-            ? 'bg-green-500' 
-            : 'bg-red-500'
+          getColor()
         )} 
       />
       {showLabel && (
-        <span className={cn(
-          'text-xs',
-          isConnected 
-            ? 'text-green-600 dark:text-green-400' 
-            : 'text-red-600 dark:text-red-400'
-        )}>
-          {isConnected ? 'Online' : 'Offline'}
+        <span className={cn('text-xs', getTextColor())}>
+          {getLabel()}
         </span>
       )}
     </div>

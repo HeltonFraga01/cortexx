@@ -26,7 +26,6 @@ import { toast } from 'sonner'
 import {
   getInboxContext,
   switchInbox as switchInboxApi,
-  getInboxStatus,
   refreshInboxContext,
   hasPermission as checkPermission,
   canSendMessages as checkCanSendMessages,
@@ -35,6 +34,11 @@ import {
   type SessionContext,
   type InboxSummary
 } from '@/services/inbox-context'
+import { 
+  getInboxStatus as getProviderInboxStatus,
+  getAllInboxesStatus,
+  type InboxStatusResult
+} from '@/services/inbox-status'
 
 /**
  * Tipo de seleção: 'all' para todas as caixas ou array de IDs específicos
@@ -63,6 +67,11 @@ interface SupabaseInboxContextValue {
   toggleInbox: (inboxId: string) => void
   isInboxSelected: (inboxId: string) => boolean
   getSelectedCount: () => number
+  
+  // Sincronização de status (connection-status-sync spec)
+  updateInboxStatus: (inboxId: string, status: { isConnected: boolean; isLoggedIn: boolean }) => void
+  // Refresh imediato de status (wuzapi-status-source-of-truth spec)
+  refreshInboxStatus: (inboxId: string) => Promise<InboxStatusResult | null>
   
   // Estatísticas agregadas
   totalUnreadCount: number
@@ -109,6 +118,8 @@ export function SupabaseInboxProvider({
   // Ref para controlar polling
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
   const previousConnectedRef = useRef<boolean | null>(null)
+  const isPageVisibleRef = useRef<boolean>(true)
+  const inFlightRequestRef = useRef<boolean>(false)
 
   /**
    * Carrega o contexto inicial
@@ -127,10 +138,8 @@ export function SupabaseInboxProvider({
       const response = await getInboxContext()
 
       if (response.success && response.data) {
-        setContext(response.data)
-        previousConnectedRef.current = response.data.isConnected
-        
-        // Carregar seleção salva
+        // Carregar seleção salva primeiro para determinar qual inbox será exibida
+        let finalSelection: InboxSelection = 'all'
         try {
           const selectionResponse = await getInboxSelection()
           if (selectionResponse.success && selectionResponse.data) {
@@ -140,15 +149,45 @@ export function SupabaseInboxProvider({
               const validIds = savedSelection.filter(id => 
                 response.data!.availableInboxes.some(inbox => inbox.id === id)
               )
-              setSelection(validIds.length > 0 ? validIds : 'all')
+              finalSelection = validIds.length > 0 ? validIds : 'all'
             } else {
-              setSelection('all')
+              finalSelection = 'all'
             }
           }
         } catch {
           // Se falhar ao carregar seleção, usar 'all' como padrão
-          setSelection('all')
+          finalSelection = 'all'
         }
+        
+        // Determinar qual inbox será exibida na UI
+        let displayedInboxId: string
+        if (finalSelection === 'all') {
+          // Quando "all", a primeira inbox em availableInboxes é exibida
+          displayedInboxId = response.data.availableInboxes[0]?.id || response.data.inboxId
+        } else {
+          // Quando há seleção específica, a primeira selecionada é exibida
+          displayedInboxId = finalSelection[0]
+        }
+        
+        // Obter o status da inbox que será exibida
+        const displayedInbox = response.data.availableInboxes.find(inbox => inbox.id === displayedInboxId)
+        const displayedIsConnected = displayedInbox?.isConnected ?? response.data.isConnected
+        
+        console.log('[SupabaseInboxContext] loadContext - setting isConnected:', {
+          backendActiveInboxId: response.data.inboxId,
+          backendIsConnected: response.data.isConnected,
+          displayedInboxId,
+          displayedIsConnected,
+          finalSelection
+        })
+        
+        // Setar contexto com isConnected da inbox que será exibida
+        setContext({
+          ...response.data,
+          isConnected: displayedIsConnected
+        })
+        previousConnectedRef.current = displayedIsConnected
+        setSelection(finalSelection)
       } else {
         const errorCode = response.error?.code
         
@@ -219,54 +258,111 @@ export function SupabaseInboxProvider({
   }, [isAuthenticated])
 
   /**
-   * Verifica status de conexão periodicamente
+   * Verifica status de conexão de TODAS as inboxes periodicamente
+   * Usa a nova API de status que consulta o Provider (WUZAPI) como fonte única de verdade
+   * Requirements: 3.1, 7.1, 7.2, 7.3 (wuzapi-status-source-of-truth spec)
    */
   const checkStatus = useCallback(async () => {
-    if (!context?.inboxId) return
-
-    try {
-      const response = await getInboxStatus()
-
-      if (response.success && response.data) {
-        const newConnected = response.data.isConnected
-        const wasConnected = previousConnectedRef.current
-
-        // Notificar mudança de status
-        if (wasConnected !== null && wasConnected !== newConnected) {
-          if (newConnected) {
-            toast.success('WhatsApp conectado')
-          } else {
-            toast.warning('WhatsApp desconectado')
-          }
-        }
-
-        previousConnectedRef.current = newConnected
-
-        // Atualizar contexto com novo status
-        setContext(prev => prev ? {
-          ...prev,
-          isConnected: newConnected
-        } : null)
-      }
-    } catch (err) {
-      console.error('Failed to check inbox status:', err)
+    // Evitar requisições duplicadas (deduplication)
+    if (inFlightRequestRef.current) {
+      console.log('[SupabaseInboxContext] checkStatus - skipping, request in flight')
+      return
     }
-  }, [context?.inboxId])
+
+    // Não fazer polling se a página não está visível
+    if (!isPageVisibleRef.current) {
+      console.log('[SupabaseInboxContext] checkStatus - skipping, page not visible')
+      return
+    }
+
+    // Usar setContext com callback para acessar o estado atual sem dependência
+    setContext(currentContext => {
+      if (!currentContext?.availableInboxes?.length) return currentContext
+
+      // Marcar requisição em andamento
+      inFlightRequestRef.current = true
+
+      // Executar a busca de status de forma assíncrona
+      const fetchStatuses = async () => {
+        try {
+          // Buscar status de TODAS as inboxes via Provider API (fonte única de verdade)
+          const result = await getAllInboxesStatus()
+
+          // Atualizar contexto com novos status
+          setContext(prev => {
+            if (!prev) return null
+
+            const updatedInboxes = prev.availableInboxes.map(inbox => {
+              const statusResult = result.statuses.find(s => s.inboxId === inbox.id)
+              if (statusResult?.success) {
+                const newConnected = statusResult.status.loggedIn
+                
+                // Notificar mudança de status apenas para inbox ativa
+                if (inbox.id === prev.inboxId) {
+                  const wasConnected = previousConnectedRef.current
+                  if (wasConnected !== null && wasConnected !== newConnected) {
+                    if (newConnected) {
+                      toast.success('WhatsApp conectado')
+                    } else {
+                      toast.warning('WhatsApp desconectado')
+                    }
+                  }
+                  previousConnectedRef.current = newConnected
+                }
+                
+                return { 
+                  ...inbox, 
+                  isConnected: newConnected,
+                  isLoggedIn: statusResult.status.loggedIn
+                }
+              }
+              return inbox
+            })
+
+            // Atualizar isConnected do contexto se for a inbox ativa
+            const activeInboxStatus = result.statuses.find(s => s.inboxId === prev.inboxId)
+            const newIsConnected = activeInboxStatus?.success 
+              ? activeInboxStatus.status.loggedIn 
+              : prev.isConnected
+
+            return {
+              ...prev,
+              isConnected: newIsConnected,
+              availableInboxes: updatedInboxes
+            }
+          })
+        } catch (err) {
+          console.error('Failed to check inbox statuses:', err)
+        } finally {
+          inFlightRequestRef.current = false
+        }
+      }
+
+      // Executar de forma assíncrona sem bloquear
+      fetchStatuses()
+      
+      // Retornar o contexto atual sem modificação (a atualização será feita pelo fetchStatuses)
+      return currentContext
+    })
+  }, [])
 
   // Carregar contexto quando autenticado
   useEffect(() => {
     loadContext()
   }, [loadContext])
 
-  // Configurar polling de status
+  // Configurar polling de status para TODAS as inboxes
   useEffect(() => {
-    if (!enableStatusPolling || !context?.inboxId) {
+    if (!enableStatusPolling || !context?.availableInboxes?.length) {
       if (pollingRef.current) {
         clearInterval(pollingRef.current)
         pollingRef.current = null
       }
       return
     }
+
+    // Fazer check inicial
+    checkStatus()
 
     pollingRef.current = setInterval(checkStatus, statusPollingInterval)
 
@@ -276,7 +372,29 @@ export function SupabaseInboxProvider({
         pollingRef.current = null
       }
     }
-  }, [enableStatusPolling, context?.inboxId, statusPollingInterval, checkStatus])
+  }, [enableStatusPolling, context?.availableInboxes?.length, statusPollingInterval, checkStatus])
+
+  // Page Visibility API - pausar polling quando página não está visível
+  // Requirements: 7.3, 7.4 (wuzapi-status-source-of-truth spec)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const isVisible = document.visibilityState === 'visible'
+      isPageVisibleRef.current = isVisible
+      
+      console.log('[SupabaseInboxContext] Page visibility changed:', { isVisible })
+      
+      // Quando a página volta a ficar visível, fazer refresh imediato
+      if (isVisible && enableStatusPolling && context?.availableInboxes?.length) {
+        checkStatus()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [enableStatusPolling, context?.availableInboxes?.length, checkStatus])
 
   // Limpar ao desmontar
   useEffect(() => {
@@ -316,18 +434,54 @@ export function SupabaseInboxProvider({
 
   /**
    * Seleciona todas as caixas
+   * Atualiza context.isConnected para refletir a primeira inbox (que será exibida)
    */
   const selectAll = useCallback(() => {
     setSelection('all')
     saveInboxSelection('all').catch(console.error)
+    
+    // Quando seleciona "all", usar o status da primeira inbox (que será exibida)
+    setContext(prev => {
+      if (!prev) return null
+      const firstInbox = prev.availableInboxes[0]
+      if (firstInbox) {
+        console.log('[SupabaseInboxContext] selectAll - updating isConnected:', {
+          firstInboxId: firstInbox.id,
+          newIsConnected: firstInbox.isConnected
+        })
+        return {
+          ...prev,
+          isConnected: firstInbox.isConnected
+        }
+      }
+      return prev
+    })
   }, [])
 
   /**
    * Seleciona apenas uma inbox específica
+   * Também atualiza context.isConnected para refletir o status da inbox selecionada
    */
   const selectSingle = useCallback((inboxId: string) => {
     setSelection([inboxId])
     saveInboxSelection([inboxId]).catch(console.error)
+    
+    // Atualizar context.isConnected para refletir a inbox selecionada
+    setContext(prev => {
+      if (!prev) return null
+      const selectedInbox = prev.availableInboxes.find(inbox => inbox.id === inboxId)
+      if (selectedInbox) {
+        console.log('[SupabaseInboxContext] selectSingle - updating isConnected:', {
+          inboxId,
+          newIsConnected: selectedInbox.isConnected
+        })
+        return {
+          ...prev,
+          isConnected: selectedInbox.isConnected
+        }
+      }
+      return prev
+    })
   }, [])
 
   /**
@@ -384,6 +538,93 @@ export function SupabaseInboxProvider({
     return selection.length
   }, [selection, context?.availableInboxes])
 
+  // === Sincronização de Status (connection-status-sync spec) ===
+  
+  /**
+   * Atualiza o status de conexão de uma inbox específica
+   * Chamado pelo hook useInboxConnectionData quando recebe status do WUZAPI
+   * Requirements: 1.1, 2.1, 2.2 (connection-status-sync spec)
+   * 
+   * IMPORTANTE: Atualiza context.isConnected se:
+   * 1. É a inbox ativa do backend (prev.inboxId === inboxId), OU
+   * 2. É a primeira inbox selecionada na UI:
+   *    - Se selection é array: selection[0] === inboxId
+   *    - Se selection é 'all': primeira inbox em availableInboxes === inboxId
+   * 
+   * Isso garante que o header ConnectionStatus mostre o status correto
+   * mesmo quando o usuário seleciona uma inbox diferente da ativa do backend.
+   */
+  const updateInboxStatus = useCallback((inboxId: string, status: { isConnected: boolean; isLoggedIn: boolean }) => {
+    setContext(prev => {
+      if (!prev) return null
+      
+      // Atualizar a inbox específica em availableInboxes
+      const updatedInboxes = prev.availableInboxes.map(inbox => 
+        inbox.id === inboxId 
+          ? { ...inbox, isConnected: status.isLoggedIn, isLoggedIn: status.isLoggedIn }
+          : inbox
+      )
+      
+      // Verificar se é a inbox ativa do backend
+      const isBackendActiveInbox = prev.inboxId === inboxId
+      
+      // Verificar se é a primeira inbox selecionada na UI
+      // Quando selection é 'all', a primeira inbox em availableInboxes é a que é exibida
+      let isUISelectedInbox = false
+      if (selection === 'all') {
+        // Quando "Todas as Caixas" está selecionado, a primeira inbox é a exibida
+        const firstInbox = prev.availableInboxes[0]
+        isUISelectedInbox = firstInbox?.id === inboxId
+      } else {
+        // Quando há seleção específica, usar a primeira selecionada
+        isUISelectedInbox = selection[0] === inboxId
+      }
+      
+      // Atualizar isConnected se é a inbox relevante para exibição
+      const shouldUpdateContextStatus = isBackendActiveInbox || isUISelectedInbox
+      
+      console.log('[SupabaseInboxContext] updateInboxStatus:', {
+        inboxId,
+        status,
+        isBackendActiveInbox,
+        isUISelectedInbox,
+        shouldUpdateContextStatus,
+        previousIsConnected: prev.isConnected,
+        selection,
+        firstAvailableInboxId: prev.availableInboxes[0]?.id
+      })
+      
+      return {
+        ...prev,
+        isConnected: shouldUpdateContextStatus ? status.isLoggedIn : prev.isConnected,
+        availableInboxes: updatedInboxes
+      }
+    })
+  }, [selection])
+
+  /**
+   * Força refresh imediato do status de uma inbox específica
+   * Chamado após ações de conexão (connect, disconnect, logout)
+   * Requirements: 7.4 (wuzapi-status-source-of-truth spec)
+   */
+  const refreshInboxStatus = useCallback(async (inboxId: string) => {
+    try {
+      const result = await getProviderInboxStatus(inboxId)
+      
+      if (result.success) {
+        updateInboxStatus(inboxId, {
+          isConnected: result.status.loggedIn,
+          isLoggedIn: result.status.loggedIn
+        })
+      }
+      
+      return result
+    } catch (error) {
+      console.error('Failed to refresh inbox status:', error)
+      return null
+    }
+  }, [updateInboxStatus])
+
   // === Estatísticas agregadas ===
   
   /**
@@ -420,6 +661,7 @@ export function SupabaseInboxProvider({
     name: context.inboxName,
     phoneNumber: context.phoneNumber,
     isConnected: context.isConnected,
+    isLoggedIn: context.isConnected, // Usar isConnected como proxy para isLoggedIn
     isPrimary: true
   } : null
 
@@ -438,6 +680,9 @@ export function SupabaseInboxProvider({
     toggleInbox,
     isInboxSelected,
     getSelectedCount,
+    // Sincronização de status
+    updateInboxStatus,
+    refreshInboxStatus,
     // Estatísticas
     totalUnreadCount,
     hasDisconnectedInbox,

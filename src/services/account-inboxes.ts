@@ -202,7 +202,12 @@ export async function removeAgentFromInbox(inboxId: string, agentId: string): Pr
 /**
  * Get QR code for WhatsApp inbox
  */
-export async function getInboxQRCode(inboxId: string): Promise<{ qrCode: string | null; connected: boolean }> {
+export async function getInboxQRCode(inboxId: string): Promise<{ 
+  qrCode: string | null
+  connected: boolean
+  loggedIn?: boolean
+  message?: string 
+}> {
   const options = await getRequestOptions()
   const response = await fetch(`${API_BASE}/api/session/inboxes/${inboxId}/qrcode`, options)
   const result = await response.json()
@@ -290,5 +295,26 @@ export async function logoutInbox(inboxId: string): Promise<unknown> {
   })
   const result = await response.json()
   if (!response.ok) throw new Error(result.error || 'Failed to logout inbox')
+  return result.data
+}
+
+/**
+ * Quota info for inboxes
+ */
+export interface InboxQuotaInfo {
+  current: number
+  limit: number
+  canCreate: boolean
+  remaining: number
+}
+
+/**
+ * Get inbox quota information for current user
+ */
+export async function getInboxQuota(): Promise<InboxQuotaInfo> {
+  const options = await getRequestOptions()
+  const response = await fetch(`${API_BASE}/api/user/inboxes/quota`, options)
+  const result = await response.json()
+  if (!response.ok) throw new Error(result.error?.message || 'Failed to get inbox quota')
   return result.data
 }

@@ -215,6 +215,71 @@ router.get('/assigned', verifyUserToken, async (req, res) => {
 })
 
 /**
+ * GET /api/user/bots/available
+ * Lista bots disponíveis para o usuário (para seleção em inbox)
+ * IMPORTANTE: Esta rota DEVE vir ANTES de /:id para não ser capturada
+ */
+router.get('/available', validateSupabaseToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    logger.debug('Getting available bots', { userId, endpoint: '/bots/available' });
+
+    // Buscar account do usuário
+    const { data: agent } = await SupabaseService.queryAsAdmin('agents', (query) =>
+      query.select('account_id').eq('user_id', userId).single()
+    );
+
+    if (!agent) {
+      return res.json({
+        success: true,
+        data: { bots: [] }
+      });
+    }
+
+    // Buscar bots da account
+    const { data: bots, error } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.select('id, name, description, bot_type, status, avatar_url')
+        .eq('account_id', agent.account_id)
+        .order('name', { ascending: true })
+    );
+
+    if (error) {
+      logger.error('Failed to fetch available bots', { error: error.message, userId });
+      throw error;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        bots: (bots || []).map(bot => ({
+          id: bot.id,
+          name: bot.name,
+          description: bot.description,
+          botType: bot.bot_type,
+          status: bot.status,
+          avatarUrl: bot.avatar_url
+        }))
+      }
+    });
+  } catch (error) {
+    logger.error('Get available bots failed', {
+      userId: req.user?.id,
+      error: error.message,
+      endpoint: '/bots/available'
+    });
+
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'BOTS_FETCH_ERROR',
+        message: 'Erro ao buscar bots disponíveis'
+      }
+    });
+  }
+});
+
+/**
  * GET /api/user/bots/:id
  * Get a specific bot
  */

@@ -62,7 +62,7 @@ export function MessageActivityChart({
 }: MessageActivityChartProps) {
   if (isLoading) {
     return (
-      <Card>
+      <Card className="h-full">
         <CardHeader className="pb-1 pt-3">
           <div className="flex items-center justify-between">
             <Skeleton className="h-4 w-36" />
@@ -70,7 +70,7 @@ export function MessageActivityChart({
           </div>
         </CardHeader>
         <CardContent className="pt-0 pb-2">
-          <Skeleton className="h-[180px] w-full" />
+          <Skeleton className="h-[200px] w-full" />
         </CardContent>
       </Card>
     )
@@ -79,7 +79,7 @@ export function MessageActivityChart({
   const hasData = data.length > 0 && data.some(d => d.incoming > 0 || d.outgoing > 0)
 
   return (
-    <Card>
+    <Card className="h-full flex flex-col">
       <CardHeader className="pb-1 pt-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <CardTitle className="text-sm flex items-center gap-2">
@@ -106,13 +106,13 @@ export function MessageActivityChart({
           </div>
         </div>
       </CardHeader>
-      <CardContent className="pt-0 pb-2">
+      <CardContent className="pt-0 pb-2 flex-1">
         {!hasData ? (
-          <div className="h-[180px] flex items-center justify-center text-muted-foreground text-sm">
+          <div className="h-[200px] flex items-center justify-center text-muted-foreground text-sm">
             Sem dados de mensagens no período
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={180}>
+          <ResponsiveContainer width="100%" height={200}>
             <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
               <XAxis

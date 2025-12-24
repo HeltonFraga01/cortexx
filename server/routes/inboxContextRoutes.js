@@ -450,4 +450,514 @@ router.post('/inbox-selection', skipCsrf, validateSupabaseToken, async (req, res
   }
 });
 
+/**
+ * GET /api/user/inbox/:inboxId/connection
+ * Retorna dados de conexão para uma inbox específica
+ * Requirements: 1.1, 1.2, 1.4 (inbox-connection-sync spec)
+ * 
+ * IMPORTANTE: Busca dados do WUZAPI (source of truth) para JID, Connected, LoggedIn
+ */
+router.get('/inbox/:inboxId/connection', validateSupabaseToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { inboxId } = req.params;
+
+    logger.debug('Getting inbox connection data', { userId, inboxId, endpoint: '/inbox/:inboxId/connection' });
+
+    // Validar UUID
+    if (!z.string().uuid().safeParse(inboxId).success) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_INBOX_ID',
+          message: 'ID da inbox inválido'
+        }
+      });
+    }
+
+    // Verificar acesso à inbox
+    const hasAccess = await InboxContextService.hasInboxAccess(userId, inboxId);
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'INBOX_ACCESS_DENIED',
+          message: 'Acesso negado a esta caixa de entrada'
+        }
+      });
+    }
+
+    // Buscar dados da inbox do Supabase
+    const { data: inbox, error } = await require('../services/SupabaseService').queryAsAdmin('inboxes', (query) =>
+      query.select('*').eq('id', inboxId).single()
+    );
+
+    if (error || !inbox) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'INBOX_NOT_FOUND',
+          message: 'Caixa de entrada não encontrada'
+        }
+      });
+    }
+
+    // Buscar dados do WUZAPI (source of truth para JID, Connected, LoggedIn)
+    let wuzapiStatus = { connected: false, loggedIn: false, jid: null };
+    if (inbox.wuzapi_token) {
+      const wuzapiClient = require('../utils/wuzapiClient');
+      const response = await wuzapiClient.get('/session/status', {
+        headers: { 'token': inbox.wuzapi_token }
+      });
+      
+      if (response.success && response.data) {
+        // WUZAPI response structure: { code, data: { connected, loggedIn, jid, ... }, success }
+        // wuzapiClient wraps it: { success, status, data: <wuzapi response> }
+        const wuzapiResponse = response.data;
+        const statusData = wuzapiResponse?.data || wuzapiResponse;
+        
+        wuzapiStatus = {
+          connected: statusData?.connected === true,
+          loggedIn: statusData?.loggedIn === true,
+          jid: statusData?.jid || null
+        };
+        
+        logger.debug('WUZAPI status fetched', { 
+          inboxId, 
+          connected: wuzapiStatus.connected,
+          loggedIn: wuzapiStatus.loggedIn,
+          jid: wuzapiStatus.jid
+        });
+      } else {
+        logger.warn('WUZAPI status fetch failed', { 
+          inboxId, 
+          success: response.success,
+          error: response.error,
+          endpoint: '/inbox/:inboxId/connection'
+        });
+      }
+    }
+
+    // Extrair phone do JID (formato: 553194974759:64@s.whatsapp.net)
+    const jid = wuzapiStatus.jid || null;
+    const phoneNumber = jid ? jid.split(':')[0] : inbox.phone_number;
+
+    res.json({
+      success: true,
+      data: {
+        inboxId: inbox.id,
+        inboxName: inbox.name,
+        wuzapiUserId: inbox.wuzapi_user_id,
+        wuzapiToken: inbox.wuzapi_token,
+        jid: jid,
+        phoneNumber: phoneNumber,
+        isConnected: wuzapiStatus.connected ?? false,
+        isLoggedIn: wuzapiStatus.loggedIn ?? false,
+        profilePicture: inbox.profile_picture || null
+      }
+    });
+  } catch (error) {
+    logger.error('Get inbox connection failed', {
+      userId: req.user?.id,
+      inboxId: req.params?.inboxId,
+      error: error.message,
+      endpoint: '/inbox/:inboxId/connection'
+    });
+
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'CONNECTION_FETCH_ERROR',
+        message: 'Erro ao buscar dados de conexão'
+      }
+    });
+  }
+});
+
+/**
+ * NOTE: GET /api/user/inbox/:inboxId/status route has been moved to userInboxStatusRoutes.js
+ * The new implementation uses the Provider Adapter pattern (source of truth from WUZAPI API)
+ * See: server/routes/userInboxStatusRoutes.js
+ */
+
+/**
+ * GET /api/user/inboxes/quota
+ * Retorna informações de quota de inboxes do usuário
+ * Requirements: 7.1, 7.4 (connection-status-sync spec)
+ */
+router.get('/inboxes/quota', validateSupabaseToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    logger.debug('Getting inbox quota', { userId, endpoint: '/inboxes/quota' });
+
+    const QuotaService = require('../services/QuotaService');
+    const quotaService = new QuotaService();
+
+    // Get current inbox count and limit
+    const currentCount = await quotaService.countUserInboxes(userId);
+    const limit = await quotaService.getEffectiveLimit(userId, QuotaService.QUOTA_TYPES.MAX_INBOXES);
+
+    res.json({
+      success: true,
+      data: {
+        current: currentCount,
+        limit: limit,
+        canCreate: currentCount < limit,
+        remaining: Math.max(0, limit - currentCount)
+      }
+    });
+  } catch (error) {
+    logger.error('Get inbox quota failed', {
+      userId: req.user?.id,
+      error: error.message,
+      endpoint: '/inboxes/quota'
+    });
+
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'QUOTA_FETCH_ERROR',
+        message: 'Erro ao buscar quota de caixas de entrada'
+      }
+    });
+  }
+});
+
+/**
+ * GET /api/user/inbox/:inboxId/bot-assignment
+ * Retorna o bot atribuído a uma inbox específica
+ */
+router.get('/inbox/:inboxId/bot-assignment', validateSupabaseToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { inboxId } = req.params;
+
+    logger.debug('Getting inbox bot assignment', { userId, inboxId, endpoint: '/inbox/:inboxId/bot-assignment' });
+
+    // Validar UUID
+    if (!z.string().uuid().safeParse(inboxId).success) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_INBOX_ID',
+          message: 'ID da inbox inválido'
+        }
+      });
+    }
+
+    // Verificar acesso à inbox
+    const hasAccess = await InboxContextService.hasInboxAccess(userId, inboxId);
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'INBOX_ACCESS_DENIED',
+          message: 'Acesso negado a esta caixa de entrada'
+        }
+      });
+    }
+
+    // Buscar assignment atual
+    const { data: assignment, error } = await require('../services/SupabaseService').queryAsAdmin('bot_inbox_assignments', (query) =>
+      query.select(`
+        id,
+        bot_id,
+        inbox_id,
+        created_at,
+        agent_bots(id, name, description, bot_type, status, avatar_url)
+      `).eq('inbox_id', inboxId).maybeSingle()
+    );
+
+    if (error) {
+      logger.error('Failed to fetch bot assignment', { error: error.message, inboxId });
+      throw error;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        assignment: assignment ? {
+          id: assignment.id,
+          botId: assignment.bot_id,
+          inboxId: assignment.inbox_id,
+          createdAt: assignment.created_at,
+          bot: assignment.agent_bots ? {
+            id: assignment.agent_bots.id,
+            name: assignment.agent_bots.name,
+            description: assignment.agent_bots.description,
+            botType: assignment.agent_bots.bot_type,
+            status: assignment.agent_bots.status,
+            avatarUrl: assignment.agent_bots.avatar_url
+          } : null
+        } : null
+      }
+    });
+  } catch (error) {
+    logger.error('Get inbox bot assignment failed', {
+      userId: req.user?.id,
+      inboxId: req.params?.inboxId,
+      error: error.message,
+      endpoint: '/inbox/:inboxId/bot-assignment'
+    });
+
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'BOT_ASSIGNMENT_FETCH_ERROR',
+        message: 'Erro ao buscar atribuição de bot'
+      }
+    });
+  }
+});
+
+/**
+ * POST /api/user/inbox/:inboxId/bot-assignment
+ * Atribui ou remove um bot de uma inbox
+ * Note: skipCsrf is used because this endpoint uses JWT authentication (Supabase Auth)
+ */
+router.post('/inbox/:inboxId/bot-assignment', skipCsrf, validateSupabaseToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { inboxId } = req.params;
+    const { botId } = req.body; // null para remover
+
+    logger.info('Setting inbox bot assignment', { userId, inboxId, botId, endpoint: '/inbox/:inboxId/bot-assignment' });
+
+    // Validar UUID da inbox
+    if (!z.string().uuid().safeParse(inboxId).success) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_INBOX_ID',
+          message: 'ID da inbox inválido'
+        }
+      });
+    }
+
+    // Verificar acesso à inbox
+    const hasAccess = await InboxContextService.hasInboxAccess(userId, inboxId);
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'INBOX_ACCESS_DENIED',
+          message: 'Acesso negado a esta caixa de entrada'
+        }
+      });
+    }
+
+    const SupabaseService = require('../services/SupabaseService');
+
+    // Se botId é null, remover assignment existente
+    if (!botId) {
+      await SupabaseService.queryAsAdmin('bot_inbox_assignments', (query) =>
+        query.delete().eq('inbox_id', inboxId)
+      );
+
+      return res.json({
+        success: true,
+        data: { assignment: null },
+        message: 'Bot removido da caixa de entrada'
+      });
+    }
+
+    // Validar UUID do bot
+    if (!z.string().uuid().safeParse(botId).success) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_BOT_ID',
+          message: 'ID do bot inválido'
+        }
+      });
+    }
+
+    // Verificar se o bot pertence ao usuário (via account)
+    const { data: inbox } = await SupabaseService.queryAsAdmin('inboxes', (query) =>
+      query.select('account_id').eq('id', inboxId).single()
+    );
+
+    const { data: bot, error: botError } = await SupabaseService.queryAsAdmin('agent_bots', (query) =>
+      query.select('id, name, account_id').eq('id', botId).single()
+    );
+
+    if (botError || !bot) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'BOT_NOT_FOUND',
+          message: 'Bot não encontrado'
+        }
+      });
+    }
+
+    // Verificar se bot pertence à mesma account da inbox
+    if (bot.account_id !== inbox.account_id) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'BOT_ACCESS_DENIED',
+          message: 'Bot não pertence a esta conta'
+        }
+      });
+    }
+
+    // Remover assignment existente e criar novo (upsert)
+    await SupabaseService.queryAsAdmin('bot_inbox_assignments', (query) =>
+      query.delete().eq('inbox_id', inboxId)
+    );
+
+    const { data: newAssignment, error: insertError } = await SupabaseService.queryAsAdmin('bot_inbox_assignments', (query) =>
+      query.insert({
+        bot_id: botId,
+        inbox_id: inboxId
+      }).select(`
+        id,
+        bot_id,
+        inbox_id,
+        created_at,
+        agent_bots(id, name, description, bot_type, status, avatar_url)
+      `).single()
+    );
+
+    if (insertError) {
+      logger.error('Failed to create bot assignment', { error: insertError.message, inboxId, botId });
+      throw insertError;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        assignment: {
+          id: newAssignment.id,
+          botId: newAssignment.bot_id,
+          inboxId: newAssignment.inbox_id,
+          createdAt: newAssignment.created_at,
+          bot: newAssignment.agent_bots ? {
+            id: newAssignment.agent_bots.id,
+            name: newAssignment.agent_bots.name,
+            description: newAssignment.agent_bots.description,
+            botType: newAssignment.agent_bots.bot_type,
+            status: newAssignment.agent_bots.status,
+            avatarUrl: newAssignment.agent_bots.avatar_url
+          } : null
+        }
+      },
+      message: 'Bot atribuído à caixa de entrada'
+    });
+  } catch (error) {
+    logger.error('Set inbox bot assignment failed', {
+      userId: req.user?.id,
+      inboxId: req.params?.inboxId,
+      error: error.message,
+      endpoint: '/inbox/:inboxId/bot-assignment'
+    });
+
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'BOT_ASSIGNMENT_ERROR',
+        message: 'Erro ao atribuir bot'
+      }
+    });
+  }
+});
+
+/**
+ * GET /api/user/inbox/:inboxId/webhook
+ * Retorna configuração de webhook para uma inbox específica
+ * Requirements: 1.1 (inbox-connection-sync spec)
+ */
+router.get('/inbox/:inboxId/webhook', validateSupabaseToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { inboxId } = req.params;
+
+    logger.debug('Getting inbox webhook config', { userId, inboxId, endpoint: '/inbox/:inboxId/webhook' });
+
+    // Validar UUID
+    if (!z.string().uuid().safeParse(inboxId).success) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_INBOX_ID',
+          message: 'ID da inbox inválido'
+        }
+      });
+    }
+
+    // Verificar acesso à inbox
+    const hasAccess = await InboxContextService.hasInboxAccess(userId, inboxId);
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'INBOX_ACCESS_DENIED',
+          message: 'Acesso negado a esta caixa de entrada'
+        }
+      });
+    }
+
+    // Buscar dados da inbox
+    const { data: inbox, error } = await require('../services/SupabaseService').queryAsAdmin('inboxes', (query) =>
+      query.select('wuzapi_token').eq('id', inboxId).single()
+    );
+
+    if (error || !inbox) {
+      return res.status(404).json({
+        success: false,
+        error: {
+          code: 'INBOX_NOT_FOUND',
+          message: 'Caixa de entrada não encontrada'
+        }
+      });
+    }
+
+    // Buscar webhook config via WUZAPI
+    let webhookConfig = {
+      webhook: '',
+      subscribe: []
+    };
+
+    if (inbox.wuzapi_token) {
+      try {
+        const wuzapiClient = require('../utils/wuzapiClient');
+        const webhookResponse = await wuzapiClient.get('/webhook', {
+          headers: { 'token': inbox.wuzapi_token }
+        });
+
+        if (webhookResponse.success && webhookResponse.data) {
+          webhookConfig = {
+            webhook: webhookResponse.data.Webhook || '',
+            subscribe: webhookResponse.data.Subscribe || []
+          };
+        }
+      } catch (wuzapiError) {
+        logger.warn('Could not fetch WUZAPI webhook config', { inboxId, error: wuzapiError.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: webhookConfig
+    });
+  } catch (error) {
+    logger.error('Get inbox webhook config failed', {
+      userId: req.user?.id,
+      inboxId: req.params?.inboxId,
+      error: error.message,
+      endpoint: '/inbox/:inboxId/webhook'
+    });
+
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'WEBHOOK_FETCH_ERROR',
+        message: 'Erro ao buscar configuração de webhook'
+      }
+    });
+  }
+});
+
 module.exports = router;

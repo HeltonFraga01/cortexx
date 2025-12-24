@@ -106,6 +106,9 @@ const superadminImpersonationRoutes = require('./routes/superadminImpersonationR
 // Public Routes (no auth required)
 const publicRoutes = require('./routes/publicRoutes');
 
+// Inbox Status Routes (Provider API as source of truth)
+const userInboxStatusRoutes = require('./routes/userInboxStatusRoutes');
+
 // Importar sistema de monitoramento
 const { logger, requestLogger } = require('./utils/logger');
 const { metrics } = require('./utils/metrics');
@@ -187,9 +190,17 @@ app.use((req, res, next) => {
     '/api/admin/supabase', // Rotas de gerenciamento de usuários Supabase (conflito com CSRF + JWT)
     '/api/user/inbox-context', // Inbox context routes use JWT auth (Supabase Auth), inherently CSRF-safe
   ];
+  
+  // Rotas que usam JWT auth e não precisam de CSRF (padrão regex)
+  const csrfExemptPatterns = [
+    /^\/api\/session\/inboxes\/[^/]+\/connect$/, // Inbox connect (JWT auth)
+    /^\/api\/session\/inboxes\/[^/]+\/disconnect$/, // Inbox disconnect (JWT auth)
+    /^\/api\/session\/inboxes\/[^/]+\/logout$/, // Inbox logout (JWT auth)
+  ];
 
   // Verificar se a rota atual está na lista de exceções
-  const isExempt = csrfExemptPaths.some(path => req.path.startsWith(path));
+  const isExempt = csrfExemptPaths.some(path => req.path.startsWith(path)) ||
+                   csrfExemptPatterns.some(pattern => pattern.test(req.path));
 
   // DEBUG: Log path and exemption status for Supabase routes
   if (req.path.includes('supabase') || req.originalUrl.includes('supabase')) {
@@ -612,6 +623,10 @@ app.use('/api/user', userBillingRoutes); // Stripe billing routes
 
 // Inbox Context Routes (Supabase Auth user inbox binding)
 app.use('/api/user', require('./routes/inboxContextRoutes'));
+
+// Inbox Status Routes (Provider API as source of truth)
+// MUST come AFTER inboxContextRoutes but BEFORE userRoutes
+app.use('/api/user', userInboxStatusRoutes);
 
 // Rotas de Teste (desenvolvimento)
 if (process.env.NODE_ENV !== 'production') {

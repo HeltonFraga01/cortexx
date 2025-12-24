@@ -253,6 +253,7 @@ class InboxContextService {
       name: inbox.name,
       phoneNumber: inbox.phone_number,
       isConnected: inbox.wuzapi_connected || false,
+      isLoggedIn: inbox.wuzapi_connected || false, // Inicialmente igual a isConnected, será atualizado via polling
       isPrimary: inbox.id === primaryInboxId,
       wuzapi_token: inbox.wuzapi_token,
       wuzapi_user_id: inbox.wuzapi_user_id,
@@ -353,6 +354,17 @@ class InboxContextService {
    * @returns {Promise<boolean>}
    */
   static async hasInboxAccess(userId, inboxId) {
+    return this.userHasAccessToInbox(userId, inboxId);
+  }
+
+  /**
+   * Verifica se usuário tem acesso a uma inbox específica
+   * Alias for hasInboxAccess - used by userInboxStatusRoutes
+   * @param {string} userId
+   * @param {string} inboxId
+   * @returns {Promise<boolean>}
+   */
+  static async userHasAccessToInbox(userId, inboxId) {
     // Verificar se é owner da account que possui a inbox
     const { data: inbox } = await SupabaseService.queryAsAdmin('inboxes', (query) =>
       query.select('account_id').eq('id', inboxId).single()
@@ -444,8 +456,30 @@ class InboxContextService {
       return false;
     }
 
-    // Por enquanto, retornar o status salvo no banco
-    // TODO: Implementar verificação real via WUZAPI
+    // Se não tem token, usar status do banco
+    if (!inbox.wuzapi_token) {
+      return inbox.wuzapi_connected || false;
+    }
+
+    // Verificar status real via WUZAPI
+    try {
+      const wuzapiClient = require('../utils/wuzapiClient');
+      const statusResponse = await wuzapiClient.get('/session/status', {
+        headers: { 'token': inbox.wuzapi_token }
+      });
+
+      if (statusResponse.success && statusResponse.data) {
+        // Retorna true se LoggedIn (conectado e autenticado no WhatsApp)
+        return statusResponse.data.LoggedIn || false;
+      }
+    } catch (wuzapiError) {
+      logger.debug('Could not fetch WUZAPI status, using database value', { 
+        inboxId, 
+        error: wuzapiError.message 
+      });
+    }
+
+    // Fallback para status do banco
     return inbox.wuzapi_connected || false;
   }
 

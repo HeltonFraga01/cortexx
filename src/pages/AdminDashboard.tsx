@@ -16,6 +16,7 @@ import BotQuotaConfigPage from '@/pages/admin/BotQuotaConfigPage';
 import StripeAdminPage from '@/pages/admin/StripeAdminPage';
 import AdminSettings from '@/components/admin/AdminSettings';
 import SupabaseUserEditPage from '@/pages/admin/SupabaseUserEditPage';
+import EditUserPage from '@/components/admin/EditUserPage';
 
 const AdminDashboard = () => {
   return (
@@ -23,17 +24,17 @@ const AdminDashboard = () => {
       <Routes>
         <Route path="/" element={<AdminOverview />} />
         
-        {/* Rotas de Caixas de Entrada - Redirect para multi-user (funcionalidade centralizada) */}
+        {/* Rotas de Caixas de Entrada (Inboxes) - Páginas funcionais */}
         <Route path="/inboxes" element={<Navigate to="/admin/multi-user" replace />} />
         <Route path="/inboxes/new" element={<Navigate to="/admin/multi-user" replace />} />
-        <Route path="/inboxes/edit/:userId" element={<Navigate to="/admin/multi-user" replace />} />
-        <Route path="/inboxes/:userId" element={<Navigate to="/admin/multi-user" replace />} />
+        <Route path="/inboxes/edit/:userId" element={<EditUserPage />} />
+        <Route path="/inboxes/:userId" element={<EditUserPage />} />
         
-        {/* Rotas antigas de "users" - Redirects para multi-user */}
+        {/* Rotas antigas de "users" - Redirects para multi-user ou páginas funcionais */}
         <Route path="/users" element={<Navigate to="/admin/multi-user" replace />} />
         <Route path="/users/new" element={<Navigate to="/admin/multi-user" replace />} />
-        <Route path="/users/edit/:userId" element={<Navigate to="/admin/multi-user" replace />} />
-        <Route path="/users/:userId" element={<Navigate to="/admin/multi-user" replace />} />
+        <Route path="/users/edit/:userId" element={<EditUserPage />} />
+        <Route path="/users/:userId" element={<EditUserPage />} />
         
         <Route path="/supabase-users/edit/:userId" element={<SupabaseUserEditPage />} />
         <Route path="/plans" element={<PlansManagementPage />} />

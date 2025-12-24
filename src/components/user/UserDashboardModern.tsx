@@ -1,16 +1,18 @@
 /**
  * UserDashboardModern Component
  * Main dashboard component composing all sub-components
- * Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 10.1, 10.2, 10.3, 10.4, 10.5
+ * Requirements: 1.1, 1.2, 1.5, 8.1, 9.1, 9.2, 9.3, 9.4, 9.5, 10.1, 10.2, 10.3, 10.4, 10.5
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
-import { RefreshCw, Clock } from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
+import { RefreshCw, MessageSquare, CheckCircle, Clock, Users, AlertCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { useSupabaseInbox } from '@/contexts/SupabaseInboxContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { getAccountSummary } from '@/services/user-subscription'
 import {
   getDashboardMetrics,
@@ -25,7 +27,9 @@ import {
   CampaignStatusCard,
   QuotaUsagePanel,
   ContactGrowthChart,
-  QuickActionsPanel
+  QuickActionsPanel,
+  ModernStatsCard,
+  DashboardHeader
 } from './dashboard'
 import type { DashboardMetrics, MessageActivityData, ContactGrowthData } from '@/types/dashboard'
 
@@ -37,6 +41,7 @@ interface UserDashboardModernProps {
 
 export function UserDashboardModern({ onSwitchToConnection }: UserDashboardModernProps) {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const { 
     availableInboxes, 
     selectedInboxIds, 
@@ -49,6 +54,7 @@ export function UserDashboardModern({ onSwitchToConnection }: UserDashboardModer
   const [selectedInboxId, setSelectedInboxId] = useState<string | null>(null)
   const [chartViewMode, setChartViewMode] = useState<'daily' | 'hourly'>('daily')
   const [hasManagementPermission, setHasManagementPermission] = useState(false)
+  const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined)
 
   // Memoize inbox IDs for API calls - use context selection
   const inboxIdsForApi = useMemo(() => {
@@ -108,10 +114,18 @@ export function UserDashboardModern({ onSwitchToConnection }: UserDashboardModer
     checkPermissions()
   }, [])
 
+  // Update lastUpdated when metrics change
+  useEffect(() => {
+    if (metrics?.lastUpdated) {
+      setLastUpdated(new Date(metrics.lastUpdated))
+    }
+  }, [metrics?.lastUpdated])
+
   // Handle manual refresh
   const handleRefresh = useCallback(async () => {
     try {
       await refetchMetrics()
+      setLastUpdated(new Date())
       toast.success('Dashboard atualizado')
     } catch {
       toast.error('Erro ao atualizar dashboard')
@@ -143,13 +157,6 @@ export function UserDashboardModern({ onSwitchToConnection }: UserDashboardModer
     navigate(`/user/campaigns/${campaignId}`)
   }, [navigate])
 
-  // Format last updated time
-  const formatLastUpdated = (dateStr: string | undefined) => {
-    if (!dateStr) return 'Nunca'
-    const date = new Date(dateStr)
-    return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-  }
-
   // Map available inboxes from context to the format expected by InboxOverviewCard
   const inboxesForCard = useMemo(() => {
     return availableInboxes.map(inbox => ({
@@ -165,61 +172,116 @@ export function UserDashboardModern({ onSwitchToConnection }: UserDashboardModer
   // Use inboxes from metrics if available, otherwise use context inboxes
   const displayInboxes = metrics?.inboxes?.length ? metrics.inboxes : inboxesForCard
 
+  // Calculate stats for ModernStatsCards
+  const conversationStats = metrics?.conversations || { 
+    openCount: 0, 
+    resolvedCount: 0, 
+    pendingCount: 0, 
+    averageResponseTimeMinutes: 0 
+  }
+  const previousStats = metrics?.previousPeriodConversations
+
+  // Calculate trends
+  const calculateTrend = (current: number, previous?: number) => {
+    if (!previous || previous === 0) return undefined
+    const change = ((current - previous) / previous) * 100
+    return {
+      value: Math.abs(Math.round(change)),
+      direction: change > 0 ? 'up' : change < 0 ? 'down' : 'neutral'
+    } as const
+  }
+
   // Show error state
   if (metricsError) {
     return (
       <div className="space-y-6">
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <p className="text-muted-foreground mb-4">
-            Erro ao carregar dados do dashboard
-          </p>
-          <Button onClick={handleRefresh}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Tentar novamente
-          </Button>
-        </div>
+        <DashboardHeader
+          userName={user?.name || 'Usuário'}
+          userAvatar={undefined}
+          onRefresh={handleRefresh}
+          isRefreshing={metricsLoading}
+          lastUpdated={lastUpdated}
+        />
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+            <div className="p-3 rounded-full bg-red-100 dark:bg-red-900/30 mb-4">
+              <AlertCircle className="h-6 w-6 text-red-600 dark:text-red-400" />
+            </div>
+            <p className="text-muted-foreground mb-4">
+              Erro ao carregar dados do dashboard
+            </p>
+            <Button onClick={handleRefresh} variant="outline">
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Tentar novamente
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     )
   }
 
   return (
-    <div className="space-y-4">
-      {/* Refresh button - aligned right, compact */}
-      <div className="flex items-center justify-between">
-        {/* Inbox Overview - Full width horizontal scroll */}
-        <InboxOverviewCard
-          inboxes={displayInboxes}
-          onInboxSelect={handleInboxSelect}
-          selectedInboxId={selectedInboxId}
-          isLoading={metricsLoading || inboxLoading}
-        />
-        <div className="flex items-center gap-2 flex-shrink-0 ml-4">
-          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Clock className="h-3 w-3" />
-            <span>{formatLastUpdated(metrics?.lastUpdated)}</span>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={metricsLoading}
-          >
-            <RefreshCw className={`h-4 w-4 ${metricsLoading ? 'animate-spin' : ''}`} />
-          </Button>
-        </div>
-      </div>
+    <div className="space-y-6">
+      {/* Header with user info and refresh */}
+      <DashboardHeader
+        userName={user?.name || 'Usuário'}
+        userAvatar={undefined}
+        onRefresh={handleRefresh}
+        isRefreshing={metricsLoading}
+        lastUpdated={lastUpdated}
+      />
 
-      {/* Main Grid - Responsive layout */}
-      <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-        {/* Conversation Stats */}
-        <ConversationStatsCard
-          stats={metrics?.conversations || { openCount: 0, resolvedCount: 0, pendingCount: 0, averageResponseTimeMinutes: 0 }}
-          previousPeriodStats={metrics?.previousPeriodConversations || null}
+      {/* Stats Cards Grid - 4 columns on desktop */}
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+        <ModernStatsCard
+          title="Conversas Abertas"
+          value={conversationStats.openCount}
+          icon={MessageSquare}
+          iconColor="blue"
+          trend={calculateTrend(conversationStats.openCount, previousStats?.openCount)}
           isLoading={metricsLoading}
         />
+        <ModernStatsCard
+          title="Resolvidas"
+          value={conversationStats.resolvedCount}
+          icon={CheckCircle}
+          iconColor="green"
+          trend={calculateTrend(conversationStats.resolvedCount, previousStats?.resolvedCount)}
+          isLoading={metricsLoading}
+        />
+        <ModernStatsCard
+          title="Pendentes"
+          value={conversationStats.pendingCount}
+          icon={Clock}
+          iconColor="orange"
+          trend={calculateTrend(conversationStats.pendingCount, previousStats?.pendingCount)}
+          isLoading={metricsLoading}
+        />
+        <ModernStatsCard
+          title="Contatos"
+          value={metrics?.contacts?.total || 0}
+          icon={Users}
+          iconColor="purple"
+          trend={metrics?.contacts?.growthPercentage ? {
+            value: Math.abs(Math.round(metrics.contacts.growthPercentage)),
+            direction: metrics.contacts.growthPercentage > 0 ? 'up' : 'down'
+          } : undefined}
+          isLoading={metricsLoading}
+        />
+      </div>
 
+      {/* Inbox Overview */}
+      <InboxOverviewCard
+        inboxes={displayInboxes}
+        onInboxSelect={handleInboxSelect}
+        selectedInboxId={selectedInboxId}
+        isLoading={metricsLoading || inboxLoading}
+      />
+
+      {/* Main Grid - Responsive layout */}
+      <div className="grid gap-4 grid-cols-1 lg:grid-cols-3">
         {/* Message Activity Chart - Spans 2 columns on lg */}
-        <div className="md:col-span-1 lg:col-span-2">
+        <div className="lg:col-span-2">
           <MessageActivityChart
             data={messageActivity || []}
             viewMode={chartViewMode}
@@ -228,6 +290,16 @@ export function UserDashboardModern({ onSwitchToConnection }: UserDashboardModer
           />
         </div>
 
+        {/* Conversation Stats */}
+        <ConversationStatsCard
+          stats={conversationStats}
+          previousPeriodStats={previousStats || null}
+          isLoading={metricsLoading}
+        />
+      </div>
+
+      {/* Secondary Grid */}
+      <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
         {/* Agent Performance */}
         <AgentPerformanceCard
           agents={metrics?.agents || []}
@@ -261,8 +333,8 @@ export function UserDashboardModern({ onSwitchToConnection }: UserDashboardModer
         compact
       />
 
-      {/* Quick Actions - Compact */}
-      <QuickActionsPanel hasManagementPermission={hasManagementPermission} compact />
+      {/* Quick Actions */}
+      <QuickActionsPanel hasManagementPermission={hasManagementPermission} />
     </div>
   )
 }

@@ -4,13 +4,14 @@
  * These routes bridge session-based authentication (admin/user dashboards)
  * with the multi-user system services (agents, teams, inboxes).
  * 
- * Uses req.session.userId to identify the account owner.
+ * Supports both JWT (req.user) and session-based (req.session) authentication.
  */
 
 const router = require('express').Router();
 const crypto = require('crypto');
 const { logger } = require('../utils/logger');
 const { requireAdmin, requireAuth } = require('../middleware/auth');
+const { skipCsrf } = require('../middleware/csrf');
 const AgentService = require('../services/AgentService');
 const TeamService = require('../services/TeamService');
 const InboxService = require('../services/InboxService');
@@ -28,6 +29,23 @@ const accountService = new AccountService();
 const customRoleService = new CustomRoleService();
 const auditService = new MultiUserAuditService();
 const agentDatabaseAccessService = new AgentDatabaseAccessService();
+
+/**
+ * Helper to get user ID from request (JWT or session)
+ * Supports both Supabase JWT auth (req.user.id) and session-based auth (req.session.userId)
+ */
+function getUserId(req) {
+  return req.user?.id || req.session?.userId;
+}
+
+/**
+ * Helper to get user token from request (JWT or session)
+ * For JWT auth, we don't have a WUZAPI token directly, so we return null
+ * For session auth, we use req.session.userToken
+ */
+function getUserToken(req) {
+  return req.session?.userToken || null;
+}
 
 /**
  * Get or create account for the current session user
@@ -92,7 +110,7 @@ router.get('/agents', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     const { status, role, availability, limit, offset } = req.query;
     
@@ -123,7 +141,7 @@ router.get('/agents/:id', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -152,7 +170,7 @@ router.post('/agents', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     const { email, password, name, role, avatarUrl, customRoleId } = req.body;
     
@@ -208,7 +226,7 @@ router.post('/agents/invite', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     // Get the owner agent of the account to use as createdBy
     const agents = await agentService.listAgents(account.id, { role: 'owner' });
@@ -273,7 +291,7 @@ router.get('/agents/invitations/list', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     const { status } = req.query;
     const invitations = await agentService.listInvitations(account.id, { status });
@@ -318,7 +336,7 @@ router.put('/agents/:id', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -355,7 +373,7 @@ router.put('/agents/:id/role', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -396,7 +414,7 @@ router.delete('/agents/:id', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -436,7 +454,7 @@ router.post('/agents/:id/activate', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -472,7 +490,7 @@ router.get('/teams', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const teams = await teamService.listTeamsWithStats(account.id);
     
     res.json({
@@ -494,7 +512,7 @@ router.get('/teams/:id', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const team = await teamService.getTeamById(req.params.id);
     
     if (!team || team.accountId !== account.id) {
@@ -523,7 +541,7 @@ router.post('/teams', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     const { name, description, allowAutoAssign } = req.body;
     
@@ -562,7 +580,7 @@ router.put('/teams/:id', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const team = await teamService.getTeamById(req.params.id);
     
     if (!team || team.accountId !== account.id) {
@@ -599,7 +617,7 @@ router.delete('/teams/:id', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const team = await teamService.getTeamById(req.params.id);
     
     if (!team || team.accountId !== account.id) {
@@ -632,7 +650,7 @@ router.get('/teams/:id/members', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const team = await teamService.getTeamById(req.params.id);
     
     if (!team || team.accountId !== account.id) {
@@ -663,7 +681,7 @@ router.post('/teams/:id/members', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const team = await teamService.getTeamById(req.params.id);
     
     if (!team || team.accountId !== account.id) {
@@ -709,7 +727,7 @@ router.delete('/teams/:id/members/:agentId', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const team = await teamService.getTeamById(req.params.id);
     
     if (!team || team.accountId !== account.id) {
@@ -792,7 +810,7 @@ router.get('/inboxes/:id', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -828,7 +846,7 @@ router.post('/inboxes', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     const { name, description, channelType, phoneNumber, enableAutoAssignment, autoAssignmentConfig, greetingEnabled, greetingMessage, wuzapiConfig } = req.body;
     
@@ -905,7 +923,7 @@ router.put('/inboxes/:id', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -945,7 +963,7 @@ router.delete('/inboxes/:id', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -978,7 +996,7 @@ router.get('/inboxes/:id/members', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1009,7 +1027,7 @@ router.post('/inboxes/:id/members', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1055,7 +1073,7 @@ router.delete('/inboxes/:id/members/:agentId', requireAuth, async (req, res) => 
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1080,13 +1098,13 @@ router.delete('/inboxes/:id/members/:agentId', requireAuth, async (req, res) => 
 /**
  * GET /api/session/inboxes/:id/qrcode
  * Get QR code for WhatsApp inbox connection
+ * 
+ * Uses the Provider adapter pattern to get QR code from the status response.
+ * This ensures consistency with the status endpoint.
  */
 router.get('/inboxes/:id/qrcode', requireAuth, async (req, res) => {
   try {
-    
-    
-    
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1104,7 +1122,7 @@ router.get('/inboxes/:id/qrcode', requireAuth, async (req, res) => {
     }
     
     // Use inbox.wuzapiToken if available, otherwise fallback to user's session token
-    const tokenToUse = inbox.wuzapiToken || req.session.userToken;
+    const tokenToUse = inbox.wuzapiToken || inbox.wuzapi_token || req.session?.userToken;
     
     if (!tokenToUse) {
       return res.status(400).json({
@@ -1115,29 +1133,101 @@ router.get('/inboxes/:id/qrcode', requireAuth, async (req, res) => {
     
     const wuzapiClient = require('../utils/wuzapiClient');
     
-    // First, connect the session if not connected
-    const connectResult = await wuzapiClient.post('/session/connect', {}, {
+    // First check status to see if we're already logged in
+    const statusResult = await wuzapiClient.get('/session/status', {
       headers: { 'token': tokenToUse }
     });
     
-    if (!connectResult.success) {
-      logger.warn('Failed to connect WUZAPI session for inbox', { 
-        inboxId: req.params.id, 
-        error: connectResult.error,
-        tokenSource: inbox.wuzapiToken ? 'inbox' : 'session'
+    logger.debug('QR code endpoint - status check', {
+      inboxId: req.params.id,
+      statusSuccess: statusResult.success,
+      statusData: statusResult.data
+    });
+    
+    // If already logged in, no QR code needed
+    if (statusResult.success && statusResult.data?.LoggedIn) {
+      return res.json({
+        success: true,
+        data: {
+          qrCode: null,
+          connected: true,
+          loggedIn: true,
+          message: 'Já conectado ao WhatsApp'
+        }
       });
     }
     
-    // Get QR code
+    // If not connected, try to connect first
+    if (!statusResult.success || !statusResult.data?.Connected) {
+      const connectResult = await wuzapiClient.post('/session/connect', {
+        Subscribe: ['Message', 'ReadReceipt'],
+        Immediate: false
+      }, {
+        headers: { 'token': tokenToUse }
+      });
+      
+      logger.debug('QR code endpoint - connect attempt', {
+        inboxId: req.params.id,
+        connectSuccess: connectResult.success,
+        connectError: connectResult.error
+      });
+      
+      // Wait a moment for the session to initialize
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    // Get QR code from /session/qr endpoint
     const qrResult = await wuzapiClient.get('/session/qr', {
       headers: { 'token': tokenToUse }
     });
     
-    if (!qrResult.success) {
-      return res.status(500).json({
-        error: 'Falha ao obter QR Code',
-        code: 'QR_CODE_ERROR',
-        details: qrResult.error
+    logger.debug('QR code endpoint - qr fetch', {
+      inboxId: req.params.id,
+      qrSuccess: qrResult.success,
+      hasQrCode: !!(qrResult.data?.QRCode || qrResult.data?.qr_code),
+      qrError: qrResult.error
+    });
+    
+    // If QR endpoint fails, try getting QR from status
+    if (!qrResult.success || (!qrResult.data?.QRCode && !qrResult.data?.qr_code)) {
+      // Re-check status which might have QR code
+      const statusRetry = await wuzapiClient.get('/session/status', {
+        headers: { 'token': tokenToUse }
+      });
+      
+      if (statusRetry.success && statusRetry.data?.QRCode) {
+        return res.json({
+          success: true,
+          data: {
+            qrCode: statusRetry.data.QRCode,
+            connected: statusRetry.data.Connected || false,
+            loggedIn: statusRetry.data.LoggedIn || false
+          }
+        });
+      }
+      
+      // If still no QR code, return appropriate message
+      if (statusRetry.success && statusRetry.data?.LoggedIn) {
+        return res.json({
+          success: true,
+          data: {
+            qrCode: null,
+            connected: true,
+            loggedIn: true,
+            message: 'Já conectado ao WhatsApp'
+          }
+        });
+      }
+      
+      // Return waiting state
+      return res.json({
+        success: true,
+        data: {
+          qrCode: null,
+          connected: statusRetry.data?.Connected || false,
+          loggedIn: false,
+          message: 'Aguardando QR Code...'
+        }
       });
     }
     
@@ -1145,12 +1235,21 @@ router.get('/inboxes/:id/qrcode', requireAuth, async (req, res) => {
       success: true,
       data: {
         qrCode: qrResult.data?.QRCode || qrResult.data?.qr_code || null,
-        connected: inbox.wuzapiConnected
+        connected: true,
+        loggedIn: false
       }
     });
   } catch (error) {
-    logger.error('Get inbox QR code failed', { error: error.message, inboxId: req.params.id });
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    logger.error('Get inbox QR code failed', { 
+      error: error.message, 
+      stack: error.stack,
+      inboxId: req.params.id 
+    });
+    res.status(500).json({ 
+      error: 'Erro ao obter QR Code',
+      code: 'QR_CODE_ERROR',
+      details: error.message
+    });
   }
 });
 
@@ -1268,7 +1367,7 @@ router.get('/roles', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     // Default roles with permissions
     const defaultRoles = [
@@ -1363,7 +1462,7 @@ router.post('/roles', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     const { name, description, permissions } = req.body;
     
@@ -1402,7 +1501,7 @@ router.put('/roles/:id', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     const { name, description, permissions } = req.body;
     
@@ -1431,7 +1530,7 @@ router.delete('/roles/:id', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     await customRoleService.deleteCustomRole(req.params.id, account.id);
     
@@ -1458,7 +1557,7 @@ router.get('/audit', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     const { agentId, action, resourceType, startDate, endDate, limit, offset } = req.query;
     
@@ -1491,7 +1590,7 @@ router.get('/audit/export', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     const { startDate, endDate } = req.query;
     
@@ -1598,7 +1697,7 @@ router.get('/account-debug', requireAuth, async (req, res) => {
  */
 router.post('/account-debug/migrate-inboxes', requireAuth, async (req, res) => {
   try {
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     // Find orphan inboxes (inboxes without valid account)
     // Note: This is a simplified query - in production, use a proper join
@@ -1796,13 +1895,14 @@ router.post('/inboxes/default', requireAuth, async (req, res) => {
 /**
  * POST /api/session/inboxes/:id/connect
  * Connect WhatsApp session for inbox
+ * Note: skipCsrf is used because this endpoint supports JWT authentication (Supabase Auth)
  */
-router.post('/inboxes/:id/connect', requireAuth, async (req, res) => {
+router.post('/inboxes/:id/connect', skipCsrf, requireAuth, async (req, res) => {
   try {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1838,6 +1938,20 @@ router.post('/inboxes/:id/connect', requireAuth, async (req, res) => {
     });
     
     if (!result.success) {
+      // Handle "already connected" as success (Property 6: Already Connected Handling)
+      const errorMessage = (result.error || '').toLowerCase();
+      if (errorMessage.includes('already connected')) {
+        logger.info('Inbox WhatsApp session already connected', { 
+          inboxId: req.params.id,
+          tokenSource: inbox.wuzapiToken ? 'inbox' : 'session'
+        });
+        return res.json({
+          success: true,
+          alreadyConnected: true,
+          message: 'Sessão já está conectada'
+        });
+      }
+      
       return res.status(500).json({
         error: 'Falha ao conectar sessão WhatsApp',
         code: 'CONNECT_ERROR',
@@ -1863,13 +1977,14 @@ router.post('/inboxes/:id/connect', requireAuth, async (req, res) => {
 /**
  * POST /api/session/inboxes/:id/disconnect
  * Disconnect WhatsApp session for inbox
+ * Note: skipCsrf is used because this endpoint supports JWT authentication (Supabase Auth)
  */
-router.post('/inboxes/:id/disconnect', requireAuth, async (req, res) => {
+router.post('/inboxes/:id/disconnect', skipCsrf, requireAuth, async (req, res) => {
   try {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1919,13 +2034,14 @@ router.post('/inboxes/:id/disconnect', requireAuth, async (req, res) => {
 /**
  * POST /api/session/inboxes/:id/logout
  * Logout WhatsApp session for inbox (removes device pairing)
+ * Note: skipCsrf is used because this endpoint supports JWT authentication (Supabase Auth)
  */
-router.post('/inboxes/:id/logout', requireAuth, async (req, res) => {
+router.post('/inboxes/:id/logout', skipCsrf, requireAuth, async (req, res) => {
   try {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const inbox = await inboxService.getInboxById(req.params.id);
     
     if (!inbox || inbox.accountId !== account.id) {
@@ -1981,7 +2097,7 @@ router.get('/account', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const stats = await accountService.getAccountStats(account.id);
     
     res.json({
@@ -2009,7 +2125,7 @@ router.get('/subscription', requireAuth, async (req, res) => {
     const subscription = await subscriptionService.getUserSubscription(req.session.userId);
     
     // Get current usage
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const inboxCount = await inboxService.countInboxes(account.id);
     const agentCount = await agentService.countAgents(account.id);
     const teamCount = await teamService.countTeams(account.id);
@@ -2046,7 +2162,7 @@ router.get('/subscription', requireAuth, async (req, res) => {
  */
 router.get('/agents/:id/details', requireAuth, async (req, res) => {
   try {
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -2093,7 +2209,7 @@ router.put('/agents/:id/teams', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -2171,7 +2287,7 @@ router.put('/agents/:id/inboxes', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -2250,7 +2366,7 @@ router.put('/agents/:id/database-access', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -2309,7 +2425,7 @@ router.put('/agents/:id/permissions', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
@@ -2391,7 +2507,7 @@ router.post('/agents/bulk', requireAuth, async (req, res) => {
     
     
     
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     const { agentIds, action, data } = req.body;
     
@@ -2531,7 +2647,7 @@ const permissionService = new PermissionService();
  */
 router.get('/agents/:id/active-sessions', requireAuth, async (req, res) => {
   try {
-    const account = await getOrCreateAccount(req.session.userId, req.session.userToken);
+    const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     const agent = await agentService.getAgentById(req.params.id);
     
     if (!agent || agent.accountId !== account.id) {
