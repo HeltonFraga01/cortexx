@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranding } from '@/hooks/useBranding';
 import { StatsCard } from '@/components/ui-custom/StatsCard';
@@ -15,6 +16,7 @@ import { EmptyState } from '@/components/ui-custom/EmptyState';
 import { QuotaSummaryCard } from '@/components/user/QuotaUsageCard';
 import { CreditBalance } from '@/components/user/billing/CreditBalance';
 import { CreditPurchase } from '@/components/user/billing/CreditPurchase';
+import { UserDashboardModern } from '@/components/user/UserDashboardModern';
 
 import { WuzAPIService, SessionStatus, WebhookConfig } from '@/services/wuzapi';
 import { getAccountSummary, type QuotaStatus } from '@/services/user-subscription';
@@ -40,7 +42,9 @@ import {
   Users,
   UsersRound,
   Shield,
-  FileText
+  FileText,
+  LayoutDashboard,
+  Wrench
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -57,6 +61,8 @@ interface UserProfile {
 }
 
 const UserOverview = () => {
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [selectedConnectionInboxId, setSelectedConnectionInboxId] = useState<string | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
   const [qrCode, setQrCode] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -359,12 +365,37 @@ const UserOverview = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <p className="text-muted-foreground">
-          Bem-vindo, {user?.name}! Gerencie sua conta WhatsApp de forma integrada
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Bem-vindo, {user?.name}!
+          </p>
+        </div>
       </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsTrigger value="dashboard" className="flex items-center gap-2">
+            <LayoutDashboard className="h-4 w-4" />
+            Dashboard
+          </TabsTrigger>
+          <TabsTrigger value="connection" className="flex items-center gap-2">
+            <Wrench className="h-4 w-4" />
+            Conexão
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="dashboard" className="mt-6">
+          <UserDashboardModern 
+            onSwitchToConnection={(inboxId) => {
+              setSelectedConnectionInboxId(inboxId);
+              setActiveTab('connection');
+            }}
+          />
+        </TabsContent>
+
+        <TabsContent value="connection" className="mt-6 space-y-6">
 
       {/* User Info Card */}
       <Card>
@@ -764,6 +795,8 @@ const UserOverview = () => {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

@@ -30,6 +30,7 @@ const userContactsRoutes = require('./userContactsRoutes');
 const mediaRoutes = require('./mediaRoutes');
 const botProxyRoutes = require('./botProxyRoutes');
 const linkPreviewRoutes = require('./linkPreviewRoutes');
+const userDashboardRoutes = require('./userDashboardRoutes');
 
 // Chat API v1 Routes (external API)
 const chatApiV1Routes = require('./api/v1/chatRoutes');
@@ -184,6 +185,7 @@ function setupRoutes(app) {
   app.use('/api/media', mediaRoutes);
   app.use('/api/bot', botProxyRoutes);
   app.use('/api/link-preview', linkPreviewRoutes);
+  app.use('/api/user/dashboard', userDashboardRoutes);
   
   // Chat API v1 (external API with API key auth)
   // Requirements: REQ-2.1, REQ-2.2 (chat-api-realtime-migration)

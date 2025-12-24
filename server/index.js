@@ -93,6 +93,7 @@ const sessionAccountRoutes = require('./routes/sessionAccountRoutes');
 const sessionInboxWebhookRoutes = require('./routes/sessionInboxWebhookRoutes');
 const resellerRoutes = require('./routes/resellerRoutes');
 const databaseRoutes = require('./routes/databaseRoutes');
+const userDashboardRoutes = require('./routes/userDashboardRoutes');
 
 // Superadmin Routes
 const superadminAuthRoutes = require('./routes/superadminAuthRoutes');
@@ -616,6 +617,10 @@ app.use('/api/user', require('./routes/inboxContextRoutes'));
 if (process.env.NODE_ENV !== 'production') {
   app.use('/api/test', require('./routes/testRoutes'));
 }
+
+// User Dashboard Routes (metrics, activity, growth)
+// MUST come BEFORE generic userRoutes to avoid route conflicts
+app.use('/api/user/dashboard', userDashboardRoutes);
 
 app.use('/api/user', userRoutes);
 app.use('/api/chat', chatRoutes);
