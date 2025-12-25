@@ -397,7 +397,10 @@ const TenantManagement = () => {
     if (!deletingTenant) return;
 
     try {
-      const response = await backendApi.delete<any>(`/superadmin/tenants/${deletingTenant.id}`);
+      const response = await backendApi.delete<any>(
+        `/superadmin/tenants/${deletingTenant.id}`,
+        { data: { confirm: 'DELETE' } }
+      );
       
       if (response.success && response.data?.success) {
         toast.success('Tenant excluído com sucesso');

@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Save, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
+import { supabase } from '@/lib/supabase';
 
 interface TenantBranding {
   app_name: string;
@@ -58,9 +59,18 @@ export function TenantBrandingTab({ tenantId }: TenantBrandingTabProps) {
   const fetchBranding = useCallback(async () => {
     try {
       setLoading(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      
       const response = await fetch(
         `/api/superadmin/tenants/${tenantId}/branding`,
-        { credentials: 'include' }
+        { 
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token && { Authorization: `Bearer ${token}` })
+          }
+        }
       );
       
       if (!response.ok) {
@@ -108,11 +118,14 @@ export function TenantBrandingTab({ tenantId }: TenantBrandingTabProps) {
 
     try {
       setSaving(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
       const csrfToken = await getCsrfToken();
       const response = await fetch(`/api/superadmin/tenants/${tenantId}/branding`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
+          ...(token && { Authorization: `Bearer ${token}` }),
           ...(csrfToken && { 'CSRF-Token': csrfToken })
         },
         credentials: 'include',

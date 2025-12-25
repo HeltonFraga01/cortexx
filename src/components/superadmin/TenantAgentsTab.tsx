@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Plus, Edit, Key, X, Check, Loader2, Copy } from 'lucide-react';
 import { toast } from 'sonner';
+import { backendApi } from '@/services/api-client';
 
 interface TenantAgent {
   id: string;
@@ -51,17 +52,6 @@ interface TenantAccount {
 interface TenantAgentsTabProps {
   tenantId: string;
 }
-
-// Helper to get CSRF token
-const getCsrfToken = async (): Promise<string | null> => {
-  try {
-    const response = await fetch('/api/auth/csrf-token', { credentials: 'include' });
-    const data = await response.json();
-    return data.csrfToken || null;
-  } catch {
-    return null;
-  }
-};
 
 export function TenantAgentsTab({ tenantId }: TenantAgentsTabProps) {
   const [agents, setAgents] = useState<TenantAgent[]>([]);
@@ -88,15 +78,19 @@ export function TenantAgentsTab({ tenantId }: TenantAgentsTabProps) {
   const fetchAgents = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await fetch(
-        `/api/superadmin/tenants/${tenantId}/agents?page=${page}&limit=10`,
-        { credentials: 'include' }
-      );
+      const response = await backendApi.get<{
+        success: boolean;
+        data: TenantAgent[];
+        pagination: { totalPages: number; total: number };
+        error?: string;
+      }>(`/superadmin/tenants/${tenantId}/agents?page=${page}&limit=10`);
       
-      if (!response.ok) throw new Error('Failed to fetch agents');
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to fetch agents');
+      }
       
-      const data = await response.json();
-      if (data.success) {
+      const data = response.data;
+      if (data?.success) {
         setAgents(data.data);
         setTotalPages(data.pagination.totalPages);
         setTotal(data.pagination.total);
@@ -110,15 +104,18 @@ export function TenantAgentsTab({ tenantId }: TenantAgentsTabProps) {
 
   const fetchAccounts = useCallback(async () => {
     try {
-      const response = await fetch(
-        `/api/superadmin/tenants/${tenantId}/accounts?limit=100`,
-        { credentials: 'include' }
-      );
+      const response = await backendApi.get<{
+        success: boolean;
+        data: TenantAccount[];
+        error?: string;
+      }>(`/superadmin/tenants/${tenantId}/accounts?limit=100`);
       
-      if (!response.ok) throw new Error('Failed to fetch accounts');
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to fetch accounts');
+      }
       
-      const data = await response.json();
-      if (data.success) {
+      const data = response.data;
+      if (data?.success) {
         setAccounts(data.data);
       }
     } catch (error) {
@@ -143,25 +140,23 @@ export function TenantAgentsTab({ tenantId }: TenantAgentsTabProps) {
     }
 
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(`/api/superadmin/tenants/${tenantId}/agents`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include',
-        body: JSON.stringify(formData)
-      });
+      const response = await backendApi.post<{ success: boolean; error?: string }>(
+        `/superadmin/tenants/${tenantId}/agents`,
+        formData
+      );
 
-      const data = await response.json();
-      if (data.success) {
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to create agent');
+      }
+
+      const data = response.data;
+      if (data?.success) {
         toast.success('Agent created successfully');
         setShowNewForm(false);
         setFormData({ accountId: '', name: '', email: '', password: '', role: 'agent', status: 'active' });
         fetchAgents();
       } else {
-        throw new Error(data.error);
+        throw new Error(data?.error || 'Failed to create agent');
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to create agent');
@@ -170,31 +165,26 @@ export function TenantAgentsTab({ tenantId }: TenantAgentsTabProps) {
 
   const handleUpdate = async (agentId: string) => {
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(
-        `/api/superadmin/tenants/${tenantId}/agents/${agentId}`,
+      const response = await backendApi.put<{ success: boolean; error?: string }>(
+        `/superadmin/tenants/${tenantId}/agents/${agentId}`,
         {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(csrfToken && { 'CSRF-Token': csrfToken })
-          },
-          credentials: 'include',
-          body: JSON.stringify({
-            name: formData.name,
-            role: formData.role,
-            status: formData.status
-          })
+          name: formData.name,
+          role: formData.role,
+          status: formData.status
         }
       );
 
-      const data = await response.json();
-      if (data.success) {
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to update agent');
+      }
+
+      const data = response.data;
+      if (data?.success) {
         toast.success('Agent updated successfully');
         setEditingId(null);
         fetchAgents();
       } else {
-        throw new Error(data.error);
+        throw new Error(data?.error || 'Failed to update agent');
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to update agent');
@@ -205,25 +195,22 @@ export function TenantAgentsTab({ tenantId }: TenantAgentsTabProps) {
     if (!resetPasswordId) return;
 
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(
-        `/api/superadmin/tenants/${tenantId}/agents/${resetPasswordId}/reset-password`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(csrfToken && { 'CSRF-Token': csrfToken })
-          },
-          credentials: 'include'
-        }
-      );
+      const response = await backendApi.post<{
+        success: boolean;
+        data: { temporaryPassword: string };
+        error?: string;
+      }>(`/superadmin/tenants/${tenantId}/agents/${resetPasswordId}/reset-password`);
 
-      const data = await response.json();
-      if (data.success) {
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to reset password');
+      }
+
+      const data = response.data;
+      if (data?.success) {
         setTempPassword(data.data.temporaryPassword);
         toast.success('Password reset successfully');
       } else {
-        throw new Error(data.error);
+        throw new Error(data?.error || 'Failed to reset password');
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to reset password');

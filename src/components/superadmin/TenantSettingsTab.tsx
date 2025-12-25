@@ -19,6 +19,7 @@ import {
   FileText
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { supabase } from '@/lib/supabase';
 
 interface TenantMetrics {
   tenant: {
@@ -67,9 +68,18 @@ export function TenantSettingsTab({ tenantId }: TenantSettingsTabProps) {
 
   const fetchMetrics = useCallback(async () => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      
       const response = await fetch(
         `/api/superadmin/tenants/${tenantId}/metrics`,
-        { credentials: 'include' }
+        { 
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token && { Authorization: `Bearer ${token}` })
+          }
+        }
       );
       
       if (!response.ok) throw new Error('Failed to fetch metrics');
@@ -85,9 +95,18 @@ export function TenantSettingsTab({ tenantId }: TenantSettingsTabProps) {
 
   const fetchAuditLog = useCallback(async () => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      
       const response = await fetch(
         `/api/superadmin/tenants/${tenantId}/audit-log?limit=10`,
-        { credentials: 'include' }
+        { 
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token && { Authorization: `Bearer ${token}` })
+          }
+        }
       );
       
       if (!response.ok) throw new Error('Failed to fetch audit log');
@@ -113,9 +132,17 @@ export function TenantSettingsTab({ tenantId }: TenantSettingsTabProps) {
   const handleExport = async () => {
     try {
       setExporting(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      
       const response = await fetch(
         `/api/superadmin/tenants/${tenantId}/export`,
-        { credentials: 'include' }
+        { 
+          credentials: 'include',
+          headers: {
+            ...(token && { Authorization: `Bearer ${token}` })
+          }
+        }
       );
       
       if (!response.ok) throw new Error('Failed to export data');

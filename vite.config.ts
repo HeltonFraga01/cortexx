@@ -7,6 +7,7 @@ import { componentTagger } from "lovable-tagger";
 export default defineConfig(({ mode }) => {
   const isDevelopment = mode === "development";
   const isProduction = mode === "production";
+  const isAnalyze = process.env.ANALYZE === "true";
 
   return {
     base: "/",
@@ -35,7 +36,29 @@ export default defineConfig(({ mode }) => {
       }
     },
 
-    plugins: [react(), isDevelopment && componentTagger()].filter(Boolean),
+    plugins: [
+      react(),
+      isDevelopment && componentTagger(),
+      // Inject preconnect hints based on environment (Task 1.1)
+      {
+        name: 'inject-preconnect',
+        transformIndexHtml(html) {
+          const supabaseUrl = process.env.VITE_SUPABASE_URL;
+          if (supabaseUrl) {
+            try {
+              const origin = new URL(supabaseUrl).origin;
+              return html.replace(
+                '</head>',
+                `    <link rel="preconnect" href="${origin}" crossorigin />\n    <link rel="dns-prefetch" href="${origin}" />\n  </head>`
+              );
+            } catch {
+              return html;
+            }
+          }
+          return html;
+        }
+      }
+    ].filter(Boolean),
 
     resolve: {
       alias: {
@@ -46,7 +69,7 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: "dist",
       emptyOutDir: true,
-      sourcemap: false,
+      sourcemap: isAnalyze ? true : false,
       minify: 'terser',
       target: 'es2015',
       
@@ -59,6 +82,38 @@ export default defineConfig(({ mode }) => {
       },
       
       chunkSizeWarningLimit: 500,
+      
+      // Manual chunks configuration (Task 2.3)
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            // Core React libraries
+            'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+            // Data fetching and state
+            'vendor-query': ['@tanstack/react-query'],
+            // UI primitives (Radix)
+            'vendor-ui-radix': [
+              '@radix-ui/react-dialog',
+              '@radix-ui/react-dropdown-menu',
+              '@radix-ui/react-popover',
+              '@radix-ui/react-select',
+              '@radix-ui/react-tabs',
+              '@radix-ui/react-tooltip',
+              '@radix-ui/react-accordion',
+              '@radix-ui/react-checkbox',
+              '@radix-ui/react-switch',
+              '@radix-ui/react-slider',
+              '@radix-ui/react-toast',
+            ],
+            // Utilities
+            'vendor-utils': ['date-fns', 'zod', 'axios', 'clsx', 'tailwind-merge'],
+            // Icons
+            'vendor-icons': ['lucide-react'],
+            // Charts (heavy, rarely used on initial load)
+            'vendor-charts': ['recharts'],
+          },
+        },
+      },
     },
 
     preview: {

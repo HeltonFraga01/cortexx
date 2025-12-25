@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -32,6 +31,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Plus, Edit, Trash2, X, Check, Loader2, Users, Key, Eye, EyeOff, Mail } from 'lucide-react';
 import { toast } from 'sonner';
+import { backendApi } from '@/services/api-client';
 
 interface TenantAccount {
   id: string;
@@ -56,19 +56,7 @@ interface TenantAccountsTabProps {
   tenantId: string;
 }
 
-// Helper to get CSRF token
-const getCsrfToken = async (): Promise<string | null> => {
-  try {
-    const response = await fetch('/api/auth/csrf-token', { credentials: 'include' });
-    const data = await response.json();
-    return data.csrfToken || null;
-  } catch {
-    return null;
-  }
-};
-
 export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
-  const navigate = useNavigate();
   const [accounts, setAccounts] = useState<TenantAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewForm, setShowNewForm] = useState(false);
@@ -101,36 +89,24 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
   const fetchAccounts = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await fetch(
-        `/api/superadmin/tenants/${tenantId}/accounts?page=${page}&limit=10`,
-        { credentials: 'include' }
-      );
+      const response = await backendApi.get<{
+        success: boolean;
+        data: TenantAccount[];
+        pagination: { totalPages: number; total: number };
+        error?: string;
+      }>(`/superadmin/tenants/${tenantId}/accounts?page=${page}&limit=10`);
       
-      // Handle authentication errors
-      if (response.status === 401) {
-        toast.error('Session expired. Please login again.');
-        navigate('/superadmin/login');
-        return;
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to fetch accounts');
       }
       
-      if (response.status === 403) {
-        toast.error('Access denied. Superadmin privileges required.');
-        navigate('/superadmin/login');
-        return;
-      }
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || data.message || 'Failed to fetch accounts');
-      }
-      
-      if (data.success) {
+      const data = response.data;
+      if (data?.success) {
         setAccounts(data.data || []);
         setTotalPages(data.pagination?.totalPages || 1);
         setTotal(data.pagination?.total || 0);
       } else {
-        throw new Error(data.error || 'Failed to fetch accounts');
+        throw new Error(data?.error || 'Failed to fetch accounts');
       }
     } catch (error) {
       console.error('Error fetching accounts:', error);
@@ -154,29 +130,27 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
     }
 
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(`/api/superadmin/tenants/${tenantId}/accounts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include',
-        body: JSON.stringify({
+      const response = await backendApi.post<{ success: boolean; error?: string }>(
+        `/superadmin/tenants/${tenantId}/accounts`,
+        {
           name: formData.name,
           ownerEmail: formData.ownerEmail,
           wuzapiToken: formData.wuzapiToken || null
-        })
-      });
+        }
+      );
 
-      const data = await response.json();
-      if (data.success) {
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to create account');
+      }
+
+      const data = response.data;
+      if (data?.success) {
         toast.success('Account created successfully');
         setShowNewForm(false);
         setFormData({ name: '', ownerEmail: '', wuzapiToken: '', status: 'active' });
         fetchAccounts();
       } else {
-        throw new Error(data.error);
+        throw new Error(data?.error || 'Failed to create account');
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to create account');
@@ -185,30 +159,25 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
 
   const handleUpdate = async (accountId: string) => {
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(
-        `/api/superadmin/tenants/${tenantId}/accounts/${accountId}`,
+      const response = await backendApi.put<{ success: boolean; error?: string }>(
+        `/superadmin/tenants/${tenantId}/accounts/${accountId}`,
         {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(csrfToken && { 'CSRF-Token': csrfToken })
-          },
-          credentials: 'include',
-          body: JSON.stringify({
-            name: formData.name,
-            status: formData.status
-          })
+          name: formData.name,
+          status: formData.status
         }
       );
 
-      const data = await response.json();
-      if (data.success) {
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to update account');
+      }
+
+      const data = response.data;
+      if (data?.success) {
         toast.success('Account updated successfully');
         setEditingId(null);
         fetchAccounts();
       } else {
-        throw new Error(data.error);
+        throw new Error(data?.error || 'Failed to update account');
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to update account');
@@ -219,27 +188,22 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
     if (!deleteId) return;
 
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(
-        `/api/superadmin/tenants/${tenantId}/accounts/${deleteId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(csrfToken && { 'CSRF-Token': csrfToken })
-          },
-          credentials: 'include',
-          body: JSON.stringify({ confirm: 'DELETE' })
-        }
+      const response = await backendApi.delete<{ success: boolean; error?: string }>(
+        `/superadmin/tenants/${tenantId}/accounts/${deleteId}`,
+        { data: { confirm: 'DELETE' } }
       );
 
-      const data = await response.json();
-      if (data.success) {
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to delete account');
+      }
+
+      const data = response.data;
+      if (data?.success) {
         toast.success('Account deleted successfully');
         setDeleteId(null);
         fetchAccounts();
       } else {
-        throw new Error(data.error);
+        throw new Error(data?.error || 'Failed to delete account');
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to delete account');
@@ -249,16 +213,16 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
   const fetchOwnerAgent = async (accountId: string) => {
     try {
       setLoadingOwner(true);
-      const response = await fetch(
-        `/api/superadmin/tenants/${tenantId}/accounts/${accountId}/owner`,
-        { credentials: 'include' }
-      );
+      const response = await backendApi.get<{
+        success: boolean;
+        data: OwnerAgent;
+        error?: string;
+      }>(`/superadmin/tenants/${tenantId}/accounts/${accountId}/owner`);
 
-      const data = await response.json();
-      if (data.success) {
-        setOwnerData(data.data);
+      if (response.success && response.data?.success) {
+        setOwnerData(response.data.data);
         setCredentialsForm({
-          email: data.data.email || '',
+          email: response.data.data.email || '',
           password: '',
           confirmPassword: ''
         });
@@ -266,7 +230,7 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
         setOwnerData(null);
         setCredentialsForm({ email: '', password: '', confirmPassword: '' });
         if (response.status !== 404) {
-          toast.error(data.error || 'Failed to fetch owner data');
+          toast.error(response.data?.error || response.error || 'Failed to fetch owner data');
         }
       }
     } catch (error) {
@@ -303,7 +267,6 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
 
     try {
       setSavingCredentials(true);
-      const csrfToken = await getCsrfToken();
       
       const body: { email?: string; password?: string } = {};
       if (credentialsForm.email && credentialsForm.email !== ownerData?.email) {
@@ -318,27 +281,23 @@ export function TenantAccountsTab({ tenantId }: TenantAccountsTabProps) {
         return;
       }
 
-      const response = await fetch(
-        `/api/superadmin/tenants/${tenantId}/accounts/${editingCredentialsId}/credentials`,
-        {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(csrfToken && { 'CSRF-Token': csrfToken })
-          },
-          credentials: 'include',
-          body: JSON.stringify(body)
-        }
+      const response = await backendApi.put<{ success: boolean; error?: string }>(
+        `/superadmin/tenants/${tenantId}/accounts/${editingCredentialsId}/credentials`,
+        body
       );
 
-      const data = await response.json();
-      if (data.success) {
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to update credentials');
+      }
+
+      const data = response.data;
+      if (data?.success) {
         toast.success('Credentials updated successfully');
         setEditingCredentialsId(null);
         setOwnerData(null);
         setCredentialsForm({ email: '', password: '', confirmPassword: '' });
       } else {
-        throw new Error(data.error);
+        throw new Error(data?.error || 'Failed to update credentials');
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to update credentials');

@@ -144,11 +144,22 @@ const SuperadminDashboard = () => {
         const subdomain = data.data.tenant?.subdomain || data.data.impersonation?.tenantSubdomain;
         
         toast.success(`Agora impersonando ${tenantName}`);
-        // In localhost, just show a message since subdomains don't work
-        if (window.location.hostname === 'localhost') {
+        
+        // Check if running in local development (localhost or *.localhost)
+        const isLocalDev = window.location.hostname === 'localhost' || 
+                          window.location.hostname.endsWith('.localhost');
+        
+        if (isLocalDev) {
+          // In local development, subdomains don't work properly
+          // Navigate to tenant admin panel using query param or session-based approach
           toast.info(`Impersonação iniciada para ${subdomain}. Em produção, você seria redirecionado para o painel admin do tenant.`);
+          // Navigate to admin dashboard with impersonation context
+          navigate('/admin/dashboard');
         } else {
-          window.location.href = `https://${subdomain}.${window.location.hostname}/admin`;
+          // In production, redirect to tenant subdomain
+          const protocol = window.location.protocol;
+          const baseDomain = window.location.hostname.split('.').slice(-2).join('.');
+          window.location.href = `${protocol}//${subdomain}.${baseDomain}/admin`;
         }
       } else {
         throw new Error(data?.error || 'Falha ao iniciar impersonação');

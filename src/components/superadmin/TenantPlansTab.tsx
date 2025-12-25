@@ -23,6 +23,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Plus, Edit, Star, X, Check, CreditCard } from 'lucide-react';
 import { toast } from 'sonner';
+import { supabase } from '@/lib/supabase';
 
 interface TenantPlan {
   id: string;
@@ -73,9 +74,18 @@ export function TenantPlansTab({ tenantId }: TenantPlansTabProps) {
   const fetchPlans = useCallback(async () => {
     try {
       setLoading(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      
       const response = await fetch(
         `/api/superadmin/tenants/${tenantId}/plans`,
-        { credentials: 'include' }
+        { 
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token && { Authorization: `Bearer ${token}` })
+          }
+        }
       );
       
       if (!response.ok) throw new Error('Failed to fetch plans');
@@ -102,11 +112,14 @@ export function TenantPlansTab({ tenantId }: TenantPlansTabProps) {
     }
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
       const csrfToken = await getCsrfToken();
       const response = await fetch(`/api/superadmin/tenants/${tenantId}/plans`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(token && { Authorization: `Bearer ${token}` }),
           ...(csrfToken && { 'CSRF-Token': csrfToken })
         },
         credentials: 'include',
@@ -132,6 +145,8 @@ export function TenantPlansTab({ tenantId }: TenantPlansTabProps) {
 
   const handleUpdate = async (planId: string) => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
       const csrfToken = await getCsrfToken();
       const response = await fetch(
         `/api/superadmin/tenants/${tenantId}/plans/${planId}`,
@@ -139,6 +154,7 @@ export function TenantPlansTab({ tenantId }: TenantPlansTabProps) {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
+            ...(token && { Authorization: `Bearer ${token}` }),
             ...(csrfToken && { 'CSRF-Token': csrfToken })
           },
           credentials: 'include',
@@ -168,6 +184,8 @@ export function TenantPlansTab({ tenantId }: TenantPlansTabProps) {
 
   const handleSetDefault = async (planId: string) => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
       const csrfToken = await getCsrfToken();
       const response = await fetch(
         `/api/superadmin/tenants/${tenantId}/plans/${planId}/set-default`,
@@ -175,6 +193,7 @@ export function TenantPlansTab({ tenantId }: TenantPlansTabProps) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            ...(token && { Authorization: `Bearer ${token}` }),
             ...(csrfToken && { 'CSRF-Token': csrfToken })
           },
           credentials: 'include'

@@ -530,6 +530,15 @@ app.use('/api/custom-links', customLinksRoutes);
 // Rotas públicas gerais (tenant-info, health, etc.)
 app.use('/api/public', publicRoutes);
 
+// Security routes (CSP reports, security status) - Task 3.3
+const securityRoutes = require('./routes/securityRoutes');
+app.use('/api', securityRoutes);
+
+// Metrics routes (Prometheus-compatible) - Task 4.2
+const metricsRoutes = require('./routes/metricsRoutes');
+app.use('/api/metrics', metricsRoutes);
+app.use('/metrics', metricsRoutes); // Also expose at /metrics for Prometheus
+
 // Rota pública para obter versão do sistema
 app.get('/api/version', (req, res) => {
   const packageJson = require('./package.json');
@@ -1124,6 +1133,11 @@ app.get('/', async (req, res, next) => {
     next();
   }
 });
+
+// Cache headers middleware for static assets (Task 5.3)
+const { cacheHeadersMiddleware, securityHeadersMiddleware } = require('./middleware/cacheHeaders');
+app.use(cacheHeadersMiddleware());
+app.use(securityHeadersMiddleware());
 
 // Agora sim, servir arquivos estáticos do React
 if (fs.existsSync(distPath)) {

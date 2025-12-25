@@ -1,8 +1,8 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
-import { useEffect } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { createBrowserRouter, RouterProvider, useLocation, Outlet } from "react-router-dom";
+import { useEffect, Suspense, lazy } from "react";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { AuthProvider } from "./contexts/AuthContext";
 import { BrandingProvider } from "./contexts/BrandingContext";
@@ -15,26 +15,21 @@ import { useBrandingConfig } from "./hooks/useBranding";
 import { updateAppNameMetaTags, updateDynamicFavicon, updateOgImage } from "./utils/metaTags";
 import ProtectedRoute from "./components/ProtectedRoute";
 import AgentProtectedRoute from "./components/AgentProtectedRoute";
-import PublicHome from "./pages/PublicHome";
-import UnifiedLoginPage from "./pages/UnifiedLoginPage";
-import RegisterPage from "./pages/RegisterPage";
-import ResetPasswordPage from "./pages/ResetPasswordPage";
-import ForcePasswordChangePage from "./pages/ForcePasswordChangePage";
-import AdminDashboard from "./pages/AdminDashboard";
-import UserDashboard from "./pages/UserDashboard";
-import AgentDashboard from "./pages/AgentDashboard";
-import NotFound from "./pages/NotFound";
-import SuperadminLogin from "./pages/superadmin/SuperadminLogin";
-import SuperadminRoutes from "./pages/superadmin/SuperadminRoutes";
+import { RouteLoadingSkeleton } from "./components/shared/RouteLoadingSkeleton";
+import { queryClient } from "./lib/queryClient";
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      refetchOnWindowFocus: false,
-      retry: 1,
-    },
-  },
-});
+// Lazy load route components (Task 2.2)
+const PublicHome = lazy(() => import("./pages/PublicHome"));
+const UnifiedLoginPage = lazy(() => import("./pages/UnifiedLoginPage"));
+const RegisterPage = lazy(() => import("./pages/RegisterPage"));
+const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage"));
+const ForcePasswordChangePage = lazy(() => import("./pages/ForcePasswordChangePage"));
+const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
+const UserDashboard = lazy(() => import("./pages/UserDashboard"));
+const AgentDashboard = lazy(() => import("./pages/AgentDashboard"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const SuperadminLogin = lazy(() => import("./pages/superadmin/SuperadminLogin"));
+const SuperadminRoutes = lazy(() => import("./pages/superadmin/SuperadminRoutes"));
 
 // Page title component with branding support
 const PageTitle = () => {
@@ -86,6 +81,86 @@ const PageTitle = () => {
   return null;
 };
 
+// Root layout component with PageTitle
+const RootLayout = () => {
+  return (
+    <>
+      <PageTitle />
+      <Suspense fallback={<RouteLoadingSkeleton />}>
+        <Outlet />
+      </Suspense>
+    </>
+  );
+};
+
+// Router configuration with v7 future flags (Task 1.3)
+const router = createBrowserRouter(
+  [
+    {
+      element: <RootLayout />,
+      children: [
+        { path: "/", element: <PublicHome /> },
+        { path: "/login", element: <UnifiedLoginPage /> },
+        { path: "/register", element: <RegisterPage /> },
+        { path: "/dashboard", element: <UnifiedLoginPage /> },
+        { path: "/reset-password", element: <ResetPasswordPage /> },
+        { path: "/force-password-change", element: <ForcePasswordChangePage /> },
+        // Legacy routes - redirect to unified login
+        { path: "/agent/login", element: <UnifiedLoginPage /> },
+        { path: "/user-login", element: <UnifiedLoginPage /> },
+        { path: "/superadmin/login", element: <SuperadminLogin /> },
+        {
+          path: "/superadmin/*",
+          element: (
+            <ProtectedRoute requiredRole="superadmin">
+              <SuperadminRoutes />
+            </ProtectedRoute>
+          ),
+        },
+        {
+          path: "/admin/*",
+          element: (
+            <ProtectedRoute requiredRole="admin">
+              <AdminDashboard />
+            </ProtectedRoute>
+          ),
+        },
+        {
+          path: "/user/*",
+          element: (
+            <ProtectedRoute requiredRole="user">
+              <SupabaseInboxProvider>
+                <UserDashboard />
+              </SupabaseInboxProvider>
+            </ProtectedRoute>
+          ),
+        },
+        {
+          path: "/agent/*",
+          element: (
+            <AgentAuthProvider>
+              <AgentProtectedRoute>
+                <AgentDashboard />
+              </AgentProtectedRoute>
+            </AgentAuthProvider>
+          ),
+        },
+        { path: "*", element: <NotFound /> },
+      ],
+    },
+  ],
+  {
+    future: {
+      v7_startTransition: true,
+      v7_relativeSplatPath: true,
+      v7_fetcherPersist: true,
+      v7_normalizeFormMethod: true,
+      v7_partialHydration: true,
+      v7_skipActionErrorRevalidation: true,
+    },
+  }
+);
+
 const App = () => {
   return (
     <ThemeProvider defaultTheme="system">
@@ -96,58 +171,7 @@ const App = () => {
               <QueryClientProvider client={queryClient}>
                 <TooltipProvider>
                   <Toaster />
-                  <BrowserRouter>
-                    <PageTitle />
-                    <Routes>
-                      <Route path="/" element={<PublicHome />} />
-                      <Route path="/login" element={<UnifiedLoginPage />} />
-                      <Route path="/register" element={<RegisterPage />} />
-                      <Route path="/dashboard" element={<UnifiedLoginPage />} />
-                      <Route path="/reset-password" element={<ResetPasswordPage />} />
-                      <Route path="/force-password-change" element={<ForcePasswordChangePage />} />
-                      {/* Legacy routes - redirect to unified login */}
-                      <Route path="/agent/login" element={<UnifiedLoginPage />} />
-                      <Route path="/user-login" element={<UnifiedLoginPage />} />
-                      <Route path="/superadmin/login" element={<SuperadminLogin />} />
-                      <Route
-                        path="/superadmin/*"
-                        element={
-                          <ProtectedRoute requiredRole="superadmin">
-                            <SuperadminRoutes />
-                          </ProtectedRoute>
-                        }
-                      />
-                      <Route
-                        path="/admin/*"
-                        element={
-                          <ProtectedRoute requiredRole="admin">
-                            <AdminDashboard />
-                          </ProtectedRoute>
-                        }
-                      />
-                      <Route
-                        path="/user/*"
-                        element={
-                          <ProtectedRoute requiredRole="user">
-                            <SupabaseInboxProvider>
-                              <UserDashboard />
-                            </SupabaseInboxProvider>
-                          </ProtectedRoute>
-                        }
-                      />
-                      <Route
-                        path="/agent/*"
-                        element={
-                          <AgentAuthProvider>
-                            <AgentProtectedRoute>
-                              <AgentDashboard />
-                            </AgentProtectedRoute>
-                          </AgentAuthProvider>
-                        }
-                      />
-                      <Route path="*" element={<NotFound />} />
-                    </Routes>
-                  </BrowserRouter>
+                  <RouterProvider router={router} />
                 </TooltipProvider>
               </QueryClientProvider>
             </WuzAPIInstancesProvider>

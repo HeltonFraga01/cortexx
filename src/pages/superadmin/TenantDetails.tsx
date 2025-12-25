@@ -24,19 +24,7 @@ import {
 import { toast } from 'sonner';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { TenantManagePanel } from '@/components/superadmin/TenantManagePanel';
-
-// Helper to get CSRF token
-const getCsrfToken = async (): Promise<string | null> => {
-  try {
-    const response = await fetch('/api/auth/csrf-token', {
-      credentials: 'include'
-    });
-    const data = await response.json();
-    return data.csrfToken || null;
-  } catch {
-    return null;
-  }
-};
+import { backendApi } from '@/services/api-client';
 
 interface TenantBranding {
   app_name: string;
@@ -57,10 +45,16 @@ interface Tenant {
   updated_at: string;
   tenant_branding: TenantBranding | null;
   metrics?: {
-    accountCount: number;
-    agentCount: number;
-    inboxCount: number;
-    mrr: number;
+    accounts: number;
+    agents: number;
+    inboxes: number;
+    subscriptions: {
+      active: number;
+      mrr: number;
+    };
+    usage: {
+      messagesLast30Days: number;
+    };
   };
 }
 
@@ -77,12 +71,10 @@ const TenantDetails = () => {
     
     try {
       setLoading(true);
-      const response = await fetch(`/api/superadmin/tenants/${id}`, {
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include'
-      });
+      // Include metrics to get account, agent, inbox counts and MRR
+      const response = await backendApi.get<any>(`/superadmin/tenants/${id}?includeMetrics=true`);
 
-      if (!response.ok) {
+      if (!response.success) {
         if (response.status === 401) {
           toast.error('Session expired. Please login again');
           navigate('/superadmin/login');
@@ -93,15 +85,15 @@ const TenantDetails = () => {
           navigate('/superadmin/tenants');
           return;
         }
-        throw new Error(`Failed to load tenant: ${response.status}`);
+        throw new Error(response.error || `Failed to load tenant: ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = response.data;
       
-      if (data.success) {
+      if (data?.success) {
         setTenant(data.data);
       } else {
-        throw new Error(data.error || 'Failed to load tenant');
+        throw new Error(data?.error || 'Failed to load tenant');
       }
     } catch (error) {
       console.error('Error fetching tenant:', error);
@@ -117,23 +109,13 @@ const TenantDetails = () => {
     const action = tenant.status === 'active' ? 'deactivate' : 'activate';
     
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(`/api/superadmin/tenants/${tenant.id}/${action}`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include'
-      });
-
-      const data = await response.json();
+      const response = await backendApi.post<any>(`/superadmin/tenants/${tenant.id}/${action}`);
       
-      if (data.success) {
+      if (response.success && response.data?.success) {
         toast.success(`Tenant ${action}d successfully`);
         fetchTenant();
       } else {
-        throw new Error(data.error || `Failed to ${action} tenant`);
+        throw new Error(response.error || response.data?.error || `Failed to ${action} tenant`);
       }
     } catch (error) {
       console.error(`Error ${action}ing tenant:`, error);
@@ -145,24 +127,15 @@ const TenantDetails = () => {
     if (!tenant) return;
     
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(`/api/superadmin/tenants/${tenant.id}`, {
-        method: 'DELETE',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include',
-        body: JSON.stringify({ confirm: 'DELETE' })
+      const response = await backendApi.delete<any>(`/superadmin/tenants/${tenant.id}`, { 
+        data: { confirm: 'DELETE' } 
       });
-
-      const data = await response.json();
       
-      if (data.success) {
+      if (response.success && response.data?.success) {
         toast.success('Tenant deleted successfully');
         navigate('/superadmin/tenants');
       } else {
-        throw new Error(data.error || 'Failed to delete tenant');
+        throw new Error(response.error || response.data?.error || 'Failed to delete tenant');
       }
     } catch (error) {
       console.error('Error deleting tenant:', error);
@@ -174,19 +147,10 @@ const TenantDetails = () => {
     if (!tenant) return;
     
     try {
-      const csrfToken = await getCsrfToken();
-      const response = await fetch(`/api/superadmin/impersonate/${tenant.id}`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(csrfToken && { 'CSRF-Token': csrfToken })
-        },
-        credentials: 'include'
-      });
-
-      const data = await response.json();
+      const response = await backendApi.post<any>(`/superadmin/impersonate/${tenant.id}`);
       
-      if (data.success) {
+      if (response.success && response.data?.success) {
+        const data = response.data;
         const tenantName = data.data.tenant?.name || tenant.name;
         const subdomain = data.data.tenant?.subdomain || tenant.subdomain;
         
@@ -197,7 +161,7 @@ const TenantDetails = () => {
           window.location.href = `https://${subdomain}.${window.location.hostname}/admin`;
         }
       } else {
-        throw new Error(data.error || 'Failed to start impersonation');
+        throw new Error(response.error || response.data?.error || 'Failed to start impersonation');
       }
     } catch (error) {
       console.error('Error starting impersonation:', error);
@@ -359,7 +323,7 @@ const TenantDetails = () => {
             <div className="flex items-center justify-between">
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">Accounts</p>
-                <p className="text-2xl font-bold text-foreground">{tenant.metrics?.accountCount || 0}</p>
+                <p className="text-2xl font-bold text-foreground">{tenant.metrics?.accounts || 0}</p>
               </div>
               <div className="p-3 rounded-xl bg-blue-500/20">
                 <Users className="w-5 h-5 text-blue-500" />
@@ -372,7 +336,7 @@ const TenantDetails = () => {
             <div className="flex items-center justify-between">
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">MRR</p>
-                <p className="text-2xl font-bold text-foreground">{formatCurrency(tenant.metrics?.mrr || 0)}</p>
+                <p className="text-2xl font-bold text-foreground">{formatCurrency(tenant.metrics?.subscriptions?.mrr || 0)}</p>
               </div>
               <div className="p-3 rounded-xl bg-green-500/20">
                 <DollarSign className="w-5 h-5 text-green-500" />
@@ -385,7 +349,7 @@ const TenantDetails = () => {
             <div className="flex items-center justify-between">
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">Agents</p>
-                <p className="text-2xl font-bold text-foreground">{tenant.metrics?.agentCount || 0}</p>
+                <p className="text-2xl font-bold text-foreground">{tenant.metrics?.agents || 0}</p>
               </div>
               <div className="p-3 rounded-xl bg-purple-500/20">
                 <Users className="w-5 h-5 text-purple-500" />
@@ -398,7 +362,7 @@ const TenantDetails = () => {
             <div className="flex items-center justify-between">
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">Inboxes</p>
-                <p className="text-2xl font-bold text-foreground">{tenant.metrics?.inboxCount || 0}</p>
+                <p className="text-2xl font-bold text-foreground">{tenant.metrics?.inboxes || 0}</p>
               </div>
               <div className="p-3 rounded-xl bg-orange-500/20">
                 <Mail className="w-5 h-5 text-orange-500" />

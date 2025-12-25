@@ -81,7 +81,10 @@
         "fill_form",
         "resize_page",
         "emulate",
-        "hover"
+        "hover",
+        "performance_start_trace",
+        "performance_start_trace",
+        "performance_analyze_insight"
       ]
     }
   }
