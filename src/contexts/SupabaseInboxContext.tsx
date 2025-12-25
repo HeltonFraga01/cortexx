@@ -555,8 +555,21 @@ export function SupabaseInboxProvider({
    * mesmo quando o usuário seleciona uma inbox diferente da ativa do backend.
    */
   const updateInboxStatus = useCallback((inboxId: string, status: { isConnected: boolean; isLoggedIn: boolean }) => {
+    console.log('[SupabaseInboxContext] updateInboxStatus CALLED:', {
+      inboxId,
+      statusReceived: status,
+      currentSelection: selection
+    })
+    
     setContext(prev => {
-      if (!prev) return null
+      if (!prev) {
+        console.log('[SupabaseInboxContext] updateInboxStatus - prev is null, skipping')
+        return null
+      }
+      
+      console.log('[SupabaseInboxContext] updateInboxStatus - availableInboxes BEFORE:', 
+        prev.availableInboxes.map(i => ({ id: i.id, name: i.name, isConnected: i.isConnected }))
+      )
       
       // Atualizar a inbox específica em availableInboxes
       const updatedInboxes = prev.availableInboxes.map(inbox => 
@@ -565,16 +578,21 @@ export function SupabaseInboxProvider({
           : inbox
       )
       
-      // Verificar se é a inbox ativa do backend
+      // Verificar se é a inbox ativa do backend (a que o usuário está visualizando/editando)
       const isBackendActiveInbox = prev.inboxId === inboxId
       
-      // Verificar se é a primeira inbox selecionada na UI
-      // Quando selection é 'all', a primeira inbox em availableInboxes é a que é exibida
+      // Verificar se é a inbox que está sendo exibida na UI
+      // Quando selection é 'all':
+      //   - No Dashboard: a primeira inbox da lista é exibida
+      //   - Na página de edição: a inbox ativa do backend é exibida
+      // Quando selection é array: a primeira selecionada é exibida
       let isUISelectedInbox = false
       if (selection === 'all') {
-        // Quando "Todas as Caixas" está selecionado, a primeira inbox é a exibida
+        // Quando "Todas as Caixas" está selecionado, verificar AMBOS:
+        // 1. Se é a primeira inbox (exibida no dashboard)
+        // 2. Se é a inbox ativa do backend (exibida na página de edição)
         const firstInbox = prev.availableInboxes[0]
-        isUISelectedInbox = firstInbox?.id === inboxId
+        isUISelectedInbox = firstInbox?.id === inboxId || isBackendActiveInbox
       } else {
         // Quando há seleção específica, usar a primeira selecionada
         isUISelectedInbox = selection[0] === inboxId
@@ -583,16 +601,22 @@ export function SupabaseInboxProvider({
       // Atualizar isConnected se é a inbox relevante para exibição
       const shouldUpdateContextStatus = isBackendActiveInbox || isUISelectedInbox
       
-      console.log('[SupabaseInboxContext] updateInboxStatus:', {
+      console.log('[SupabaseInboxContext] updateInboxStatus - decision:', {
         inboxId,
         status,
+        backendActiveInboxId: prev.inboxId,
         isBackendActiveInbox,
         isUISelectedInbox,
         shouldUpdateContextStatus,
-        previousIsConnected: prev.isConnected,
+        previousContextIsConnected: prev.isConnected,
+        newContextIsConnected: shouldUpdateContextStatus ? status.isLoggedIn : prev.isConnected,
         selection,
         firstAvailableInboxId: prev.availableInboxes[0]?.id
       })
+      
+      console.log('[SupabaseInboxContext] updateInboxStatus - availableInboxes AFTER:', 
+        updatedInboxes.map(i => ({ id: i.id, name: i.name, isConnected: i.isConnected }))
+      )
       
       return {
         ...prev,

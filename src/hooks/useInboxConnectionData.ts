@@ -160,7 +160,14 @@ export function useInboxConnectionData({
    */
   const fetchStatus = useCallback(async (id: string) => {
     console.log('[useInboxConnectionData] fetchStatus called for inbox:', id)
-    const result = await authenticatedFetch<{ connected: boolean; loggedIn: boolean; qrCode: string | null }>(`/inbox/${id}/status`)
+    const result = await authenticatedFetch<{ 
+      success?: boolean
+      inboxId?: string
+      status?: { connected: boolean; loggedIn: boolean }
+      connected?: boolean
+      loggedIn?: boolean
+      qrCode?: string | null 
+    }>(`/inbox/${id}/status`)
     
     console.log('[useInboxConnectionData] fetchStatus result:', {
       success: result.success,
@@ -172,22 +179,37 @@ export function useInboxConnectionData({
     if (result.success && result.data) {
       // Verificar se ainda é a inbox atual
       if (currentInboxIdRef.current === id) {
+        // Suportar ambos os formatos de resposta:
+        // 1. { connected, loggedIn } (formato antigo)
+        // 2. { status: { connected, loggedIn } } (formato novo)
+        const connected = result.data.status?.connected ?? result.data.connected ?? false
+        const loggedIn = result.data.status?.loggedIn ?? result.data.loggedIn ?? false
+        
         const status: SessionStatus = {
-          connected: result.data.connected,
-          loggedIn: result.data.loggedIn
+          connected,
+          loggedIn
         }
         console.log('[useInboxConnectionData] Setting sessionStatus:', status)
         setSessionStatus(status)
         setQrCode(result.data.qrCode || '')
         
         // Sincronizar com contexto global usando ref (connection-status-sync spec: 1.1, 2.1, 2.2)
+        // IMPORTANTE: Para UI, isConnected deve ser loggedIn (pronto para enviar mensagens)
+        // connected apenas significa que a sessão está ativa (pode estar aguardando QR)
         const ctx = inboxContextRef.current
         if (ctx?.updateInboxStatus) {
-          console.log('[useInboxConnectionData] Updating context status for inbox:', id)
-          ctx.updateInboxStatus(id, {
-            isConnected: result.data.connected,
-            isLoggedIn: result.data.loggedIn
+          console.log('[useInboxConnectionData] Calling updateInboxStatus:', {
+            inboxId: id,
+            isConnected: loggedIn,  // Use loggedIn for UI "connected" state
+            isLoggedIn: loggedIn,
+            rawConnected: connected
           })
+          ctx.updateInboxStatus(id, {
+            isConnected: loggedIn,  // Use loggedIn for UI consistency
+            isLoggedIn: loggedIn
+          })
+        } else {
+          console.log('[useInboxConnectionData] Context not available, skipping updateInboxStatus')
         }
       } else {
         console.log('[useInboxConnectionData] Skipping update - inbox changed')
@@ -195,6 +217,16 @@ export function useInboxConnectionData({
       return result.data
     } else {
       console.error('[useInboxConnectionData] fetchStatus failed:', result.error)
+      
+      // Em caso de erro, marcar status como desconhecido no contexto (connection-status-sync spec: 6.1)
+      if (currentInboxIdRef.current === id) {
+        setSessionStatus(null)  // null indica status desconhecido
+        
+        // Não atualizar contexto com status de erro - manter último status conhecido
+        // Isso evita que erros temporários de rede marquem inbox como desconectada
+        console.log('[useInboxConnectionData] Error fetching status, keeping last known state')
+      }
+      
       throw new Error(result.error || 'Erro ao buscar status')
     }
   }, []) // Sem dependências - usa refs

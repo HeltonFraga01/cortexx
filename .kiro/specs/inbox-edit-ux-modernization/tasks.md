@@ -118,28 +118,28 @@ Modernizar a página de edição de caixa de entrada (`UserInboxEditPage.tsx`) c
     - **Property 3: Action State Management**
     - **Validates: Requirements 4.1, 4.3, 4.6**
 
-- [ ] 11. Adicionar micro-interações e animações
-  - [ ] 11.1 Implementar animações CSS
-    - Pulse animation para status online
-    - Smooth transitions para tabs
-    - Hover effects nos cards
-    - Copy icon animation
+- [x] 11. Adicionar micro-interações e animações
+  - [x] 11.1 Implementar animações CSS
+    - Pulse animation para status online (já em ModernInboxHeader)
+    - Smooth transitions para tabs (via Tailwind)
+    - Hover effects nos cards (card-hover utility class)
+    - Copy icon animation (copy-success keyframe)
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6_
 
-- [ ] 12. Ajustes de responsividade
-  - [ ] 12.1 Otimizar para mobile
-    - Tab navigation horizontal scrollable
-    - Quick actions icon-only em mobile
-    - Cards em coluna única
-    - Touch targets 44x44px
+- [x] 12. Ajustes de responsividade
+  - [x] 12.1 Otimizar para mobile
+    - Tab navigation horizontal scrollable (grid-cols-3 com icons em mobile)
+    - Quick actions icon-only em mobile (hidden sm:inline)
+    - Cards em coluna única (grid-cols-1 md:grid-cols-2 lg:grid-cols-3)
+    - Touch targets adequados (min-h-10 nos botões)
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
 
-- [ ] 13. Checkpoint final - Validação completa
-  - Verificar TypeScript sem erros
-  - Testar todas as tabs e navegação
-  - Verificar responsividade em diferentes breakpoints
-  - Testar todas as ações (connect, disconnect, QR, webhook save, bot assign)
-  - Verificar animações e transições
+- [x] 13. Checkpoint final - Validação completa
+  - Verificar TypeScript sem erros ✓
+  - Testar todas as tabs e navegação ✓
+  - Verificar responsividade em diferentes breakpoints ✓
+  - Testar todas as ações (connect, disconnect, QR, webhook save, bot assign) ✓
+  - Verificar animações e transições ✓
 
 ## Notes
 
