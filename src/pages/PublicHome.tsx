@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from 'react';
-import { useBrandingConfig } from '@/hooks/useBranding';
+import { useRef } from 'react';
+import { useBranding } from '@/hooks/useBranding';
 import LoginPage from './LoginPage';
 import { Loader2 } from 'lucide-react';
 import CustomHtmlErrorBoundary from '@/components/shared/CustomHtmlErrorBoundary';
@@ -15,15 +15,7 @@ import { AlertCircle, RefreshCw, Home } from 'lucide-react';
  * Caso contrário, renderiza a página de login padrão.
  */
 const PublicHome = () => {
-  const brandingConfig = useBrandingConfig();
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    // Aguardar branding carregar
-    if (brandingConfig.appName) {
-      setIsLoading(false);
-    }
-  }, [brandingConfig]);
+  const { config: brandingConfig, isLoading } = useBranding();
 
   // Se ainda está carregando, mostrar loader
   if (isLoading) {
