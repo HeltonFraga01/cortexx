@@ -137,12 +137,26 @@ const verifyUserToken = verifyUserTokenWithInbox;
 /**
  * GET /api/user/outgoing-webhooks
  * List all outgoing webhooks for the user
+ * Query params:
+ *   - inboxId: Filter by specific inbox (optional)
+ *   - legacy: If 'true', return only legacy webhooks (inbox_id IS NULL)
+ * 
+ * Requirements: 4.1
  */
 router.get('/', verifyUserToken, async (req, res) => {
   try {
+    const { inboxId, legacy } = req.query
     const webhookService = new OutgoingWebhookService()
     
-    const webhooks = await webhookService.getWebhooks(req.userId)
+    // Determine inbox filter
+    let inboxFilter = undefined
+    if (legacy === 'true') {
+      inboxFilter = null // Get legacy webhooks only
+    } else if (inboxId) {
+      inboxFilter = inboxId // Get webhooks for specific inbox
+    }
+    
+    const webhooks = await webhookService.getWebhooks(req.userId, inboxFilter)
 
     res.json({ success: true, data: webhooks })
   } catch (error) {
@@ -183,10 +197,17 @@ router.get('/:id', verifyUserToken, async (req, res) => {
 /**
  * POST /api/user/outgoing-webhooks
  * Create a new outgoing webhook
+ * Body:
+ *   - url: Webhook URL (required)
+ *   - events: Array of event types (required)
+ *   - secret: Custom secret (optional)
+ *   - inboxId: Associate with specific inbox (optional)
+ * 
+ * Requirements: 4.2
  */
 router.post('/', verifyUserToken, featureMiddleware.webhooks, quotaMiddleware.webhooks, async (req, res) => {
   try {
-    const { url, events, secret } = req.body
+    const { url, events, secret, inboxId } = req.body
     
     if (!url) {
       return res.status(400).json({ success: false, error: 'URL is required' })
@@ -200,12 +221,19 @@ router.post('/', verifyUserToken, featureMiddleware.webhooks, quotaMiddleware.we
     const webhook = await webhookService.configureWebhook(req.userId, {
       url,
       events,
-      secret
+      secret,
+      inboxId: inboxId || null
     })
 
     res.status(201).json({ success: true, data: webhook })
   } catch (error) {
     logger.error('Error creating webhook', { error: error.message, userId: req.userId })
+    
+    // Handle ownership validation errors
+    if (error.message.includes('unauthorized') || error.message.includes('not found')) {
+      return res.status(403).json({ success: false, error: error.message })
+    }
+    
     res.status(500).json({ success: false, error: error.message })
   }
 })

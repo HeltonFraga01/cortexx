@@ -649,8 +649,23 @@ export async function getAssignedBots(): Promise<AssignedBot[]> {
 
 // ==================== Outgoing Webhooks ====================
 
-export async function getOutgoingWebhooks(): Promise<OutgoingWebhook[]> {
-  const response = await backendApi.get(WEBHOOKS_URL)
+/**
+ * Get outgoing webhooks, optionally filtered by inbox
+ * @param inboxId - Filter by specific inbox (optional)
+ * @param legacy - If true, return only legacy webhooks (inbox_id IS NULL)
+ * @returns List of webhooks
+ * 
+ * Requirements: 4.1, 5.1
+ */
+export async function getOutgoingWebhooks(inboxId?: string, legacy?: boolean): Promise<OutgoingWebhook[]> {
+  const params = new URLSearchParams()
+  if (inboxId) params.append('inboxId', inboxId)
+  if (legacy) params.append('legacy', 'true')
+  
+  const queryString = params.toString()
+  const url = queryString ? `${WEBHOOKS_URL}?${queryString}` : WEBHOOKS_URL
+  
+  const response = await backendApi.get(url)
   return extractData<OutgoingWebhook[]>(response)
 }
 
@@ -659,6 +674,13 @@ export async function getOutgoingWebhook(webhookId: number): Promise<OutgoingWeb
   return extractData<OutgoingWebhook>(response)
 }
 
+/**
+ * Create a new outgoing webhook
+ * @param data - Webhook configuration including optional inboxId
+ * @returns Created webhook
+ * 
+ * Requirements: 4.2, 5.1
+ */
 export async function createOutgoingWebhook(data: CreateWebhookData): Promise<OutgoingWebhook> {
   const response = await backendApi.post(WEBHOOKS_URL, data)
   return extractData<OutgoingWebhook>(response)

@@ -7,7 +7,11 @@
  * Uses tenant's webhook configuration from backend instead of
  * generating URLs client-side.
  * 
+ * Updated to accept inboxId as prop for use in inbox edit page.
+ * Falls back to InboxContext if no prop provided (legacy support).
+ * 
  * Requirements: 12.1, 12.2, 12.3 (Tenant Webhook Configuration)
+ * Requirements: 6.1, 6.2, 6.3 (Inbox Settings Migration)
  */
 
 import { useState } from 'react'
@@ -38,13 +42,35 @@ import {
   AlertTriangle
 } from 'lucide-react'
 
-export function IncomingWebhookConfig() {
+interface IncomingWebhookConfigProps {
+  /** Inbox ID - if not provided, uses InboxContext */
+  inboxId?: string
+}
+
+/**
+ * Hook wrapper that safely accesses InboxContext
+ * Returns null if not within InboxProvider
+ */
+function useInboxSafe() {
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    return useInbox()
+  } catch {
+    return null
+  }
+}
+
+export function IncomingWebhookConfig({ inboxId: propInboxId }: IncomingWebhookConfigProps) {
   const { toast } = useToast()
   const queryClient = useQueryClient()
-  const { currentInbox } = useInbox()
+  // Only try to use context if no prop provided
+  const inboxContext = propInboxId ? null : useInboxSafe()
   const [copied, setCopied] = useState(false)
   const [customUrl, setCustomUrl] = useState('')
   const [showCustomUrl, setShowCustomUrl] = useState(false)
+
+  // Use prop inboxId if provided, otherwise fall back to context
+  const inboxId = propInboxId || inboxContext?.currentInbox?.id
 
   // Fetch webhook URL from backend (uses tenant configuration)
   const { 
@@ -53,9 +79,9 @@ export function IncomingWebhookConfig() {
     isError: isUrlError,
     error: urlError 
   } = useQuery({
-    queryKey: ['inbox-webhook-url', currentInbox?.id],
-    queryFn: () => generateInboxWebhookUrl(currentInbox!.id),
-    enabled: !!currentInbox?.id,
+    queryKey: ['inbox-webhook-url', inboxId],
+    queryFn: () => generateInboxWebhookUrl(inboxId!),
+    enabled: !!inboxId,
     staleTime: 60000,
     retry: 1
   })
@@ -68,9 +94,9 @@ export function IncomingWebhookConfig() {
     error: statusError, 
     refetch 
   } = useQuery({
-    queryKey: ['inbox-webhook-status', currentInbox?.id],
-    queryFn: () => getInboxWebhookStatus(currentInbox!.id),
-    enabled: !!currentInbox?.id,
+    queryKey: ['inbox-webhook-status', inboxId],
+    queryFn: () => getInboxWebhookStatus(inboxId!),
+    enabled: !!inboxId,
     staleTime: 30000,
     retry: 1
   })
@@ -78,13 +104,13 @@ export function IncomingWebhookConfig() {
   // Mutation to configure webhook
   const configureMutation = useMutation({
     mutationFn: (customWebhookUrl?: string) => 
-      configureInboxWebhook(currentInbox!.id, { 
+      configureInboxWebhook(inboxId!, { 
         events: DEFAULT_WEBHOOK_EVENTS,
         customWebhookUrl 
       }),
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['inbox-webhook-status', currentInbox?.id] })
-      queryClient.invalidateQueries({ queryKey: ['inbox-webhook-url', currentInbox?.id] })
+      queryClient.invalidateQueries({ queryKey: ['inbox-webhook-status', inboxId] })
+      queryClient.invalidateQueries({ queryKey: ['inbox-webhook-url', inboxId] })
       toast.success('Webhook configurado!', {
         description: `URL: ${result.webhookUrl}`
       })
@@ -105,8 +131,8 @@ export function IncomingWebhookConfig() {
     }
   })
 
-  // Check if no inbox is selected
-  if (!currentInbox) {
+  // Check if no inbox is available
+  if (!inboxId) {
     return (
       <Card>
         <CardHeader>

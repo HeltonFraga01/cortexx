@@ -229,6 +229,7 @@ export type WebhookEventType =
 export interface OutgoingWebhook {
   id: number
   userId: number
+  inboxId: string | null  // null for legacy global webhooks
   url: string
   events: WebhookEventType[]
   secret: string
@@ -274,6 +275,8 @@ export interface CreateWebhookData {
   url: string
   events: WebhookEventType[]
   secret?: string
+  inboxId?: string  // Associate webhook with specific inbox
+  isActive?: boolean
 }
 
 export interface UpdateWebhookData {

@@ -10,12 +10,10 @@ import { CardHeaderWithIcon } from '@/components/ui-custom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBrandingConfig } from '@/hooks/useBranding';
 import { BotSettings } from '@/components/features/chat/settings/BotSettings';
-import { WebhookSettings } from '@/components/features/chat/settings/WebhookSettings';
 import { LabelManager } from '@/components/features/chat/settings/LabelManager';
 import { CannedResponseManager } from '@/components/features/chat/settings/CannedResponseManager';
 import { NotificationSettings } from '@/components/features/chat/settings/NotificationSettings';
-import { InboxProvider } from '@/contexts/InboxContext';
-import { Webhook, Settings as SettingsIcon, Eye, EyeOff, Copy, User as UserIcon, AlertCircle, Bot, Tags, MessageSquareText, Bell, CreditCard } from 'lucide-react';
+import { Settings as SettingsIcon, Eye, EyeOff, Copy, User as UserIcon, AlertCircle, Bot, Tags, MessageSquareText, Bell, CreditCard } from 'lucide-react';
 import { SubscriptionManager } from '@/components/user/billing/SubscriptionManager';
 import { toast } from 'sonner';
 
@@ -45,7 +43,7 @@ const UserSettings = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="account" className="flex items-center gap-2">
             <UserIcon className="h-4 w-4" />
             <span className="hidden sm:inline">Conta</span>
@@ -61,10 +59,6 @@ const UserSettings = () => {
           <TabsTrigger value="bots" className="flex items-center gap-2">
             <Bot className="h-4 w-4" />
             <span className="hidden sm:inline">Bots</span>
-          </TabsTrigger>
-          <TabsTrigger value="webhooks-chat" className="flex items-center gap-2">
-            <Webhook className="h-4 w-4" />
-            <span className="hidden sm:inline">Integração Chat</span>
           </TabsTrigger>
           <TabsTrigger value="labels" className="flex items-center gap-2">
             <Tags className="h-4 w-4" />
@@ -171,13 +165,6 @@ const UserSettings = () => {
         {/* Tab: Bots */}
         <TabsContent value="bots" className="space-y-6">
           <BotSettings />
-        </TabsContent>
-
-        {/* Tab: Webhooks de Chat */}
-        <TabsContent value="webhooks-chat" className="space-y-6">
-          <InboxProvider>
-            <WebhookSettings />
-          </InboxProvider>
         </TabsContent>
 
         {/* Tab: Etiquetas */}

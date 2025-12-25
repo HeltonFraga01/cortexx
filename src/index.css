@@ -557,3 +557,92 @@
     @apply font-mono text-[0.9em] bg-black/10 dark:bg-white/10 px-1 py-0.5 rounded;
   }
 }
+
+
+/* Inbox Edit UX Modernization - Micro-interactions */
+@layer utilities {
+  /* Card hover effect with subtle lift */
+  .card-hover {
+    @apply transition-all duration-200 ease-out;
+  }
+  
+  .card-hover:hover {
+    @apply -translate-y-0.5 shadow-md;
+  }
+
+  /* Smooth tab transitions */
+  .tab-transition {
+    @apply transition-all duration-200 ease-in-out;
+  }
+
+  /* Copy button animation */
+  .copy-success {
+    animation: copy-success 0.3s ease-out;
+  }
+
+  @keyframes copy-success {
+    0% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.2);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  /* Status indicator pulse */
+  .status-pulse {
+    animation: status-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes status-pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  /* Collapsible content animation */
+  .collapsible-content {
+    @apply overflow-hidden transition-all duration-300 ease-in-out;
+  }
+
+  /* Bot card selection animation */
+  .bot-card-selected {
+    animation: bot-selected 0.2s ease-out;
+  }
+
+  @keyframes bot-selected {
+    0% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(0.98);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  /* Gradient background animation for status cards */
+  .gradient-animate {
+    background-size: 200% 200%;
+    animation: gradient-shift 3s ease infinite;
+  }
+
+  @keyframes gradient-shift {
+    0% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0% 50%;
+    }
+  }
+}

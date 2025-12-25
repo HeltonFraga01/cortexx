@@ -1,9 +1,8 @@
 /**
  * UserInboxEditPage Component
  * 
- * User-facing inbox edit page that replicates admin functionality.
- * Allows users to manage their own inboxes: view status, generate QR code,
- * configure webhooks, and manage connection.
+ * User-facing inbox edit page with modern UX.
+ * Organized in tabs: Visão Geral, Webhooks, Automação.
  * 
  * Requirements: Replicate admin inbox edit functionality for user tenant
  * UX Pattern: Inline forms with Cards (no modals for forms)
@@ -12,11 +11,9 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Separator } from '@/components/ui/separator'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button } from '@/components/ui/button'
 import { 
   Dialog, 
   DialogContent, 
@@ -24,54 +21,58 @@ import {
   DialogHeader, 
   DialogTitle 
 } from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { 
-  ArrowLeft, 
-  Inbox, 
   AlertCircle, 
   Loader2, 
   RefreshCw,
-  Wifi,
-  WifiOff,
   QrCode,
-  Phone,
-  Hash,
-  Copy,
-  Check,
-  User,
-  ImageIcon,
-  Key,
   Bot,
-  MessageSquare
+  Webhook,
+  Settings,
+  ArrowLeft
 } from 'lucide-react'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import { useInboxConnectionData } from '@/hooks/useInboxConnectionData'
+import { useTabNavigation } from '@/hooks/useTabNavigation'
 import { 
-  InboxInfoCard, 
   ConnectionControlCard, 
   WebhookConfigCard,
+  ModernInboxHeader,
+  ModernConnectionCard,
+  BotGrid,
+  WebhookToggle,
   DEFAULT_AVAILABLE_EVENTS
 } from '@/components/shared/inbox'
-import type { WebhookConfigData } from '@/components/shared/inbox'
+import type { WebhookConfigData, BotInfo } from '@/components/shared/inbox'
 import { 
   adaptWebhookResponseToConfig,
   adaptWebhookConfigToWuzapi
 } from '@/lib/adapters/inbox-adapters'
 import { WuzAPIService } from '@/services/wuzapi'
 import { supabase } from '@/lib/supabase'
+import { ChatIntegrationSection } from '@/components/features/chat/settings/ChatIntegrationSection'
 
 const wuzapi = new WuzAPIService()
+
+// Tab configuration
+const TABS = [
+  { id: 'overview', label: 'Visão Geral', icon: Settings },
+  { id: 'webhooks', label: 'Webhooks', icon: Webhook },
+  { id: 'automation', label: 'Automação', icon: Bot }
+] as const
+
+type TabId = typeof TABS[number]['id']
 
 const UserInboxEditPage = () => {
   const { inboxId } = useParams<{ inboxId: string }>()
   const navigate = useNavigate()
   const { confirm, ConfirmDialog } = useConfirmDialog()
+
+  // Tab navigation with URL persistence
+  const { activeTab, setActiveTab } = useTabNavigation({
+    defaultTab: 'overview',
+    validTabs: TABS.map(t => t.id)
+  })
 
   // States
   const [connecting, setConnecting] = useState(false)
@@ -83,19 +84,11 @@ const UserInboxEditPage = () => {
   })
   const [qrCodeData, setQrCodeData] = useState<string | null>(null)
   const [showQrDialog, setShowQrDialog] = useState(false)
-  const [copiedField, setCopiedField] = useState<string | null>(null)
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [loadingAvatar, setLoadingAvatar] = useState(false)
   
   // Bot assignment states
-  const [availableBots, setAvailableBots] = useState<Array<{
-    id: string
-    name: string
-    description: string | null
-    botType: string | null
-    status: string | null
-    avatarUrl: string | null
-  }>>([])
+  const [availableBots, setAvailableBots] = useState<BotInfo[]>([])
   const [currentBotAssignment, setCurrentBotAssignment] = useState<{
     id: string
     botId: string
@@ -121,7 +114,6 @@ const UserInboxEditPage = () => {
   })
 
   // Sincronizar webhook config local com dados do servidor
-  // Sempre inicializar com config vazia se não houver dados do servidor
   useEffect(() => {
     const serverConfig = adaptWebhookResponseToConfig(
       webhookConfig?.webhook || '', 
@@ -130,7 +122,7 @@ const UserInboxEditPage = () => {
     setLocalWebhookConfig(serverConfig)
   }, [webhookConfig])
 
-  // Buscar avatar quando logado - usar connectionData.isLoggedIn (já vem do WUZAPI)
+  // Buscar avatar quando logado
   const fetchAvatar = useCallback(async () => {
     if (!connectionData?.wuzapiToken || !connectionData?.jid) return
     
@@ -150,7 +142,7 @@ const UserInboxEditPage = () => {
     }
   }, [connectionData?.wuzapiToken, connectionData?.jid])
 
-  // Auto-load avatar quando logado (priorizar sessionStatus.loggedIn do WUZAPI)
+  // Auto-load avatar quando logado
   useEffect(() => {
     const isLoggedIn = sessionStatus?.loggedIn ?? connectionData?.isLoggedIn
     if (isLoggedIn && connectionData?.jid && !avatarUrl) {
@@ -169,7 +161,6 @@ const UserInboxEditPage = () => {
       
       if (!token) return
 
-      // Buscar bots disponíveis e assignment em paralelo
       const [botsRes, assignmentRes] = await Promise.all([
         fetch('/api/user/bots/available', {
           headers: { 'Authorization': `Bearer ${token}` }
@@ -247,24 +238,12 @@ const UserInboxEditPage = () => {
     navigate('/user/inboxes')
   }, [navigate])
 
-  const handleCopy = async (text: string, field: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopiedField(field)
-      toast.success(`${field} copiado!`)
-      setTimeout(() => setCopiedField(null), 2000)
-    } catch {
-      toast.error('Erro ao copiar')
-    }
-  }
-
   const handleConnect = async () => {
     if (!connectionData?.wuzapiToken) {
       toast.error('Token não disponível')
       return
     }
     
-    // Verificar status atual antes de tentar conectar (Property 7: Pre-Action Status Check)
     const currentStatus = sessionStatus || connectionData
     if (currentStatus?.connected && currentStatus?.loggedIn) {
       toast.info('Já conectado', {
@@ -286,7 +265,6 @@ const UserInboxEditPage = () => {
       console.error('Error connecting:', error)
       const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido'
       
-      // Tratar "already connected" como sucesso (Property 6: Already Connected Handling)
       if (errorMessage.toLowerCase().includes('already connected')) {
         toast.info('Já conectado', {
           description: 'A sessão WhatsApp já está conectada'
@@ -356,7 +334,6 @@ const UserInboxEditPage = () => {
     setLoadingAction('qr')
     const loadingToast = toast.loading('Gerando QR Code...')
     try {
-      // Primeiro conectar a sessão
       try {
         await wuzapi.connectSession(connectionData.wuzapiToken)
       } catch (e) {
@@ -365,7 +342,6 @@ const UserInboxEditPage = () => {
       
       await new Promise(r => setTimeout(r, 1000))
       
-      // Buscar QR Code
       const qr = await wuzapi.getQRCode(connectionData.wuzapiToken)
       if (qr.QRCode) {
         setQrCodeData(qr.QRCode)
@@ -415,6 +391,22 @@ const UserInboxEditPage = () => {
     }
   }
 
+  // Derived state
+  const isConnected = sessionStatus?.connected ?? connectionData?.isConnected ?? false
+  const isLoggedIn = sessionStatus?.loggedIn ?? connectionData?.isLoggedIn ?? false
+  
+  // Connection status for header
+  const connectionStatus: 'logged_in' | 'connected' | 'offline' = 
+    isLoggedIn ? 'logged_in' : isConnected ? 'connected' : 'offline'
+
+  // Phone number display
+  const phoneNumber = connectionData?.jid 
+    ? connectionData.jid.split('@')[0].split(':')[0]
+    : connectionData?.phoneNumber
+
+  // Webhook enabled state (has URL configured)
+  const webhookEnabled = !!localWebhookConfig.webhookUrl
+
   // Loading state
   if (isLoading) {
     return (
@@ -458,354 +450,146 @@ const UserInboxEditPage = () => {
     )
   }
 
-  const isConnected = sessionStatus?.connected ?? connectionData.isConnected ?? false
-  const isLoggedIn = sessionStatus?.loggedIn ?? connectionData.isLoggedIn ?? false
-
   return (
     <div className="space-y-6 w-full max-w-4xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button
-          variant="ghost"
-          onClick={handleBackToList}
-          className="gap-2 text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Voltar
-        </Button>
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Inbox className="h-6 w-6" />
-            {connectionData.inboxName}
-          </h1>
-          <p className="text-muted-foreground">Gerenciar configurações da caixa de entrada</p>
-        </div>
-      </div>
-
-      {/* Main Info Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center text-foreground">
-            <User className="h-5 w-5 mr-2 text-primary" />
-            Informações da Conexão
-          </CardTitle>
-          <CardDescription>
-            Dados da conexão WhatsApp e status atual
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Header com Avatar, Info Principal e Ações */}
-          <div className="flex flex-col lg:flex-row gap-6 p-4 bg-muted/30 rounded-lg border">
-            {/* Avatar */}
-            <div className="flex flex-col items-center gap-3 flex-shrink-0">
-              <Avatar className="h-24 w-24 border-4 border-background shadow-lg">
-                {avatarUrl ? (
-                  <AvatarImage 
-                    src={avatarUrl} 
-                    alt={connectionData.inboxName}
-                    className="object-cover"
-                  />
-                ) : null}
-                <AvatarFallback className={`text-2xl ${isLoggedIn ? 'bg-green-100 text-green-700' : 'bg-muted'}`}>
-                  {loadingAvatar ? (
-                    <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
-                  ) : (
-                    <User className="h-8 w-8" />
-                  )}
-                </AvatarFallback>
-              </Avatar>
-              {isLoggedIn && !avatarUrl && !loadingAvatar && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={fetchAvatar}
-                  className="text-xs"
-                >
-                  <ImageIcon className="h-3 w-3 mr-1" />
-                  Carregar foto
-                </Button>
-              )}
-            </div>
-
-            {/* Info Principal */}
-            <div className="flex-1 space-y-3 min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-xl font-semibold">{connectionData.inboxName}</h3>
-                {isLoggedIn ? (
-                  <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
-                    <Wifi className="h-3 w-3 mr-1" />
-                    Logado
-                  </Badge>
-                ) : isConnected ? (
-                  <Badge variant="secondary">
-                    <Wifi className="h-3 w-3 mr-1" />
-                    Conectado
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="text-muted-foreground">
-                    <WifiOff className="h-3 w-3 mr-1" />
-                    Offline
-                  </Badge>
-                )}
-              </div>
-              
-              {/* ID da Inbox */}
-              <div className="flex items-center gap-2 text-sm">
-                <Hash className="h-4 w-4 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">ID:</span>
-                <code className="bg-muted px-2 py-1 rounded font-mono text-xs truncate max-w-[180px]">
-                  {connectionData.inboxId}
-                </code>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => handleCopy(connectionData.inboxId, 'ID')}
-                >
-                  {copiedField === 'ID' ? (
-                    <Check className="h-3 w-3 text-green-600" />
-                  ) : (
-                    <Copy className="h-3 w-3" />
-                  )}
-                </Button>
-              </div>
-
-              {/* Telefone */}
-              {connectionData.phoneNumber && (
-                <div className="flex items-center gap-2 text-sm">
-                  <Phone className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">{connectionData.phoneNumber}</span>
-                </div>
-              )}
-
-              {/* JID */}
-              {connectionData.jid && (
-                <div className="flex items-center gap-2 text-sm">
-                  <Phone className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">{connectionData.jid.split('@')[0]}</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    onClick={() => handleCopy(connectionData.jid || '', 'JID')}
-                  >
-                    {copiedField === 'JID' ? (
-                      <Check className="h-3 w-3 text-green-600" />
-                    ) : (
-                      <Copy className="h-3 w-3" />
-                    )}
-                  </Button>
-                </div>
-              )}
-
-              {/* Token WUZAPI */}
-              {connectionData.wuzapiToken && (
-                <div className="flex items-center gap-2 text-sm">
-                  <Key className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground">Token:</span>
-                  <code className="bg-muted px-2 py-1 rounded font-mono text-xs truncate max-w-[180px]">
-                    {connectionData.wuzapiToken}
-                  </code>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    onClick={() => handleCopy(connectionData.wuzapiToken, 'Token')}
-                  >
-                    {copiedField === 'Token' ? (
-                      <Check className="h-3 w-3 text-green-600" />
-                    ) : (
-                      <Copy className="h-3 w-3" />
-                    )}
-                  </Button>
-                </div>
-              )}
-
-              <p className="text-xs text-muted-foreground">
-                {isLoggedIn 
-                  ? 'Conectado e autenticado no WhatsApp. Pronto para enviar/receber mensagens.'
-                  : isConnected 
-                  ? 'Conectado mas não autenticado. É necessário escanear o QR Code.'
-                  : 'Não conectado ao WhatsApp. Gere um novo QR Code para conectar.'
-                }
-              </p>
-            </div>
-
-            {/* Ações Rápidas */}
-            <div className="flex flex-col gap-2 lg:border-l lg:pl-6 lg:ml-auto">
-              <span className="text-xs font-medium text-muted-foreground mb-1">Ações Rápidas</span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleGenerateQR}
-                disabled={loadingAction === 'qr'}
-                className="justify-start text-blue-600 hover:text-blue-700 border-blue-200 hover:border-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950"
-              >
-                {loadingAction === 'qr' ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <QrCode className="h-4 w-4 mr-2" />
-                )}
-                Gerar QR Code
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => refetchStatus()}
-                className="justify-start"
-              >
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Atualizar Status
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Connection Control Card */}
-      <ConnectionControlCard
-        connectionStatus={{
-          isConnected,
-          isLoggedIn
-        }}
-        isLoading={connecting}
-        loadingAction={loadingAction}
-        onConnect={handleConnect}
-        onDisconnect={handleDisconnect}
-        onLogout={handleLogout}
+      {/* Modern Header */}
+      <ModernInboxHeader
+        inboxName={connectionData.inboxName}
+        phoneNumber={phoneNumber}
+        avatarUrl={avatarUrl || undefined}
+        connectionStatus={connectionStatus}
+        onBack={handleBackToList}
+        onRefresh={refetchStatus}
         onGenerateQR={handleGenerateQR}
+        isRefreshing={false}
+        isGeneratingQR={loadingAction === 'qr'}
       />
 
-      {/* QR Code inline display */}
-      {qrCode && !isLoggedIn && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <QrCode className="h-5 w-5" />
-              QR Code para Login
-            </CardTitle>
-            <CardDescription>
-              Escaneie este QR Code com seu WhatsApp para fazer login
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex justify-center">
-            <div className="bg-white p-4 rounded-lg shadow-sm">
-              <img 
-                src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
-                alt="QR Code WhatsApp" 
-                className="w-64 h-64"
-              />
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Tabs Navigation */}
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabId)}>
+        <TabsList className="grid w-full grid-cols-3">
+          {TABS.map(tab => (
+            <TabsTrigger key={tab.id} value={tab.id} className="gap-2">
+              <tab.icon className="h-4 w-4" />
+              <span className="hidden sm:inline">{tab.label}</span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      {/* Webhook Configuration */}
-      <WebhookConfigCard
-        config={localWebhookConfig}
-        availableEvents={DEFAULT_AVAILABLE_EVENTS}
-        onChange={handleWebhookConfigChange}
-        onSave={handleSaveWebhook}
-        isLoading={savingWebhook}
-        readOnly={false}
-        hasChanges={hasWebhookChanges()}
-      />
+        {/* Tab: Visão Geral */}
+        <TabsContent value="overview" className="space-y-6 mt-6">
+          {/* Modern Connection Card */}
+          <ModernConnectionCard
+            connection={{
+              id: connectionData.inboxId,
+              name: connectionData.inboxName,
+              phoneNumber: connectionData.phoneNumber,
+              jid: connectionData.jid,
+              token: connectionData.wuzapiToken,
+              isConnected,
+              isLoggedIn
+            }}
+          />
 
-      {/* Chat Integration - Bot Assignment */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center text-foreground">
-            <Bot className="h-5 w-5 mr-2 text-primary" />
-            Integração com Chat
-          </CardTitle>
-          <CardDescription>
-            Configure um bot para processar automaticamente as mensagens recebidas nesta caixa de entrada
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {loadingBots ? (
-            <div className="flex items-center justify-center py-4">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              <span className="ml-2 text-sm text-muted-foreground">Carregando bots...</span>
-            </div>
-          ) : availableBots.length === 0 ? (
-            <div className="text-center py-6 text-muted-foreground">
-              <MessageSquare className="h-10 w-10 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Nenhum bot disponível</p>
-              <p className="text-xs mt-1">Crie um bot na seção de Automações para usar aqui</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Bot Atribuído</label>
-                <Select
-                  value={currentBotAssignment?.botId || 'none'}
-                  onValueChange={(value) => handleSaveBotAssignment(value === 'none' ? null : value)}
-                  disabled={savingBotAssignment}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Selecione um bot" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">
-                      <span className="text-muted-foreground">Nenhum bot (desativado)</span>
-                    </SelectItem>
-                    {availableBots.map((bot) => (
-                      <SelectItem key={bot.id} value={bot.id}>
-                        <div className="flex items-center gap-2">
-                          <Bot className="h-4 w-4" />
-                          <span>{bot.name}</span>
-                          {bot.status === 'paused' && (
-                            <Badge variant="secondary" className="text-xs">Pausado</Badge>
-                          )}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {savingBotAssignment && (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Salvando...
-                  </div>
-                )}
-              </div>
+          {/* Connection Control Card */}
+          <ConnectionControlCard
+            connectionStatus={{ isConnected, isLoggedIn }}
+            isLoading={connecting}
+            loadingAction={loadingAction}
+            onConnect={handleConnect}
+            onDisconnect={handleDisconnect}
+            onLogout={handleLogout}
+            onGenerateQR={handleGenerateQR}
+          />
 
-              {currentBotAssignment?.bot && (
-                <div className="p-3 bg-muted/50 rounded-lg border">
-                  <div className="flex items-start gap-3">
-                    <div className="p-2 bg-primary/10 rounded-lg">
-                      <Bot className="h-5 w-5 text-primary" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium">{currentBotAssignment.bot.name}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Tipo: {currentBotAssignment.bot.botType || 'webhook'}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Mensagens recebidas serão encaminhadas automaticamente para este bot
-                      </p>
-                    </div>
-                  </div>
+          {/* QR Code inline display */}
+          {qrCode && !isLoggedIn && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <QrCode className="h-5 w-5" />
+                  QR Code para Login
+                </CardTitle>
+                <CardDescription>
+                  Escaneie este QR Code com seu WhatsApp para fazer login
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex justify-center">
+                <div className="bg-white p-4 rounded-lg shadow-sm">
+                  <img 
+                    src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
+                    alt="QR Code WhatsApp" 
+                    className="w-64 h-64"
+                  />
                 </div>
-              )}
-
-              {!currentBotAssignment && (
-                <p className="text-xs text-muted-foreground">
-                  Sem bot atribuído, as mensagens não serão processadas automaticamente.
-                  Você ainda pode visualizá-las no chat.
-                </p>
-              )}
-            </div>
+              </CardContent>
+            </Card>
           )}
-        </CardContent>
-      </Card>
+        </TabsContent>
+
+        {/* Tab: Webhooks */}
+        <TabsContent value="webhooks" className="space-y-6 mt-6">
+          {/* Webhook Toggle */}
+          <WebhookToggle
+            enabled={webhookEnabled}
+            onChange={(enabled) => {
+              if (!enabled) {
+                setLocalWebhookConfig({ webhookUrl: '', events: [] })
+              }
+            }}
+            eventCount={localWebhookConfig.events.length}
+            totalEvents={DEFAULT_AVAILABLE_EVENTS.length}
+          />
+
+          {/* Webhook Configuration */}
+          <WebhookConfigCard
+            config={localWebhookConfig}
+            availableEvents={DEFAULT_AVAILABLE_EVENTS}
+            onChange={handleWebhookConfigChange}
+            onSave={handleSaveWebhook}
+            isLoading={savingWebhook}
+            readOnly={false}
+            hasChanges={hasWebhookChanges()}
+          />
+        </TabsContent>
+
+        {/* Tab: Automação */}
+        <TabsContent value="automation" className="space-y-6 mt-6">
+          {/* Bot Assignment with BotGrid */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Bot className="h-5 w-5 text-primary" />
+                Atribuição de Bot
+              </CardTitle>
+              <CardDescription>
+                Selecione um bot para processar automaticamente as mensagens recebidas
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <BotGrid
+                bots={availableBots.map(bot => ({
+                  id: bot.id,
+                  name: bot.name,
+                  description: bot.description || undefined,
+                  botType: bot.botType || undefined,
+                  status: (bot.status as 'active' | 'paused') || undefined,
+                  avatarUrl: bot.avatarUrl || undefined
+                }))}
+                selectedBotId={currentBotAssignment?.botId || null}
+                onSelectBot={handleSaveBotAssignment}
+                isLoading={loadingBots}
+                isSaving={savingBotAssignment}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Chat Integration Section */}
+          {inboxId && (
+            <ChatIntegrationSection inboxId={inboxId} />
+          )}
+        </TabsContent>
+      </Tabs>
 
       {/* QR Code Dialog (for generated QR) */}
       {qrCodeData && (

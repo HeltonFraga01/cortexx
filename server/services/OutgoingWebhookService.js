@@ -23,12 +23,13 @@ class OutgoingWebhookService {
    * Configure a new webhook
    * @param {string} userId - User ID
    * @param {Object} data - Webhook configuration
+   * @param {string} [data.inboxId] - Inbox ID (optional for legacy webhooks)
    * @returns {Promise<Object>} Created webhook
    * 
-   * Requirements: 16.1, 16.2
+   * Requirements: 16.1, 16.2, 3.1, 3.6
    */
   async configureWebhook(userId, data) {
-    const { url, events = [], secret = null } = data
+    const { url, events = [], secret = null, inboxId = null } = data
 
     // Validate URL format
     try {
@@ -42,11 +43,17 @@ class OutgoingWebhookService {
       throw new Error('At least one event type is required')
     }
 
+    // Validate inbox ownership if inboxId provided
+    if (inboxId) {
+      await this.validateInboxOwnership(userId, inboxId)
+    }
+
     // Generate secret if not provided
     const webhookSecret = secret || this.generateSecret()
 
     const webhookData = {
       user_id: userId,
+      inbox_id: inboxId,
       url,
       events: JSON.stringify(events),
       secret: webhookSecret,
@@ -58,13 +65,44 @@ class OutgoingWebhookService {
     const { data: webhook, error } = await supabaseService.insert('outgoing_webhooks', webhookData)
 
     if (error) {
-      logger.error('Failed to configure webhook', { userId, error: error.message })
+      logger.error('Failed to configure webhook', { userId, inboxId, error: error.message })
       throw new Error(`Failed to configure webhook: ${error.message}`)
     }
 
-    logger.info('Webhook configured', { webhookId: webhook.id, userId, events })
+    logger.info('Webhook configured', { webhookId: webhook.id, userId, inboxId, events })
 
     return this.formatWebhook(webhook)
+  }
+
+  /**
+   * Validate that inbox belongs to user
+   * @param {string} userId - User ID
+   * @param {string} inboxId - Inbox ID
+   * @throws {Error} If inbox doesn't belong to user
+   * 
+   * Requirements: 3.6, 4.3, 4.4, 4.5
+   */
+  async validateInboxOwnership(userId, inboxId) {
+    const { data: inbox, error } = await supabaseService.queryAsAdmin('inboxes', (query) =>
+      query
+        .select('id, accounts!inner(owner_user_id)')
+        .eq('id', inboxId)
+        .single()
+    )
+
+    if (error || !inbox) {
+      logger.warn('Inbox not found for ownership validation', { userId, inboxId })
+      throw new Error('Inbox not found or unauthorized')
+    }
+
+    if (inbox.accounts.owner_user_id !== userId) {
+      logger.warn('Inbox ownership validation failed', { 
+        userId, 
+        inboxId, 
+        actualOwner: inbox.accounts.owner_user_id 
+      })
+      throw new Error('Inbox not found or unauthorized')
+    }
   }
 
   /**
@@ -151,39 +189,42 @@ class OutgoingWebhookService {
   }
 
   /**
-   * Send webhook event to all configured webhooks
+   * Send webhook event to inbox-specific and legacy webhooks
    * @param {string} userId - User ID
+   * @param {string} inboxId - Inbox ID (required for inbox-specific routing)
    * @param {string} eventType - Event type
    * @param {Object} payload - Event payload
    * @returns {Promise<Array>} Delivery results
    * 
-   * Requirements: 16.3, 16.4
+   * Requirements: 16.3, 16.4, 3.5, 8.1, 8.2, 9.1, 9.2
    */
-  async sendWebhookEvent(userId, eventType, payload) {
-    // Get all active webhooks for this user
-    const { data: webhooks, error } = await supabaseService.getMany(
-      'outgoing_webhooks',
-      { user_id: userId, is_active: true }
-    )
-
-    if (error) {
-      logger.error('Failed to get webhooks for event', { userId, error: error.message })
-      return []
-    }
+  async sendWebhookEvent(userId, inboxId, eventType, payload) {
+    // Get webhooks for this specific inbox
+    const inboxWebhooks = inboxId ? await this.getWebhooks(userId, inboxId) : []
+    
+    // Also get legacy webhooks (inbox_id IS NULL) for backward compatibility
+    const legacyWebhooks = await this.getWebhooks(userId, null)
+    
+    // Combine both sets, filtering for active webhooks only
+    const allWebhooks = [...inboxWebhooks, ...legacyWebhooks].filter(w => w.isActive)
 
     logger.info('Checking outgoing webhooks', {
       userId: userId?.substring(0, 10),
+      inboxId: inboxId?.substring(0, 8),
       eventType,
-      webhooksFound: (webhooks || []).length
+      inboxWebhooksFound: inboxWebhooks.length,
+      legacyWebhooksFound: legacyWebhooks.length,
+      totalActive: allWebhooks.length
     })
 
     const results = []
 
-    for (const webhook of (webhooks || [])) {
-      const events = this.parseEvents(webhook.events)
+    for (const webhook of allWebhooks) {
+      const events = Array.isArray(webhook.events) ? webhook.events : this.parseEvents(webhook.events)
       
       logger.debug('Webhook event check', {
         webhookId: webhook.id,
+        webhookInboxId: webhook.inboxId,
         subscribedEvents: events,
         eventType,
         matches: events.includes(eventType) || events.includes('*')
@@ -458,32 +499,70 @@ class OutgoingWebhookService {
   }
 
   /**
-   * Get all webhooks for a user
+   * Get all webhooks for a user, optionally filtered by inbox
    * @param {string} userId - User ID
+   * @param {string|null|undefined} inboxId - Inbox ID filter:
+   *   - undefined: return all webhooks (no inbox filter)
+   *   - null: return only legacy webhooks (inbox_id IS NULL)
+   *   - string: return webhooks for specific inbox
    * @returns {Promise<Array>} Webhooks
+   * 
+   * Requirements: 3.2, 3.3, 3.4
    */
-  async getWebhooks(userId) {
-    const { data: webhooks, error } = await supabaseService.queryAsAdmin('outgoing_webhooks', (query) =>
-      query.select('*').eq('user_id', userId).order('created_at', { ascending: false })
-    )
+  async getWebhooks(userId, inboxId = undefined) {
+    let query
 
-    if (error) {
-      logger.error('Failed to get webhooks', { userId, error: error.message })
-      return []
+    if (inboxId === undefined) {
+      // No inbox filter - return all webhooks for user
+      const { data: webhooks, error } = await supabaseService.queryAsAdmin('outgoing_webhooks', (q) =>
+        q.select('*').eq('user_id', userId).order('created_at', { ascending: false })
+      )
+
+      if (error) {
+        logger.error('Failed to get webhooks', { userId, error: error.message })
+        return []
+      }
+
+      return (webhooks || []).map(w => this.formatWebhook(w))
+    } else if (inboxId === null) {
+      // Return only legacy webhooks (inbox_id IS NULL)
+      const { data: webhooks, error } = await supabaseService.queryAsAdmin('outgoing_webhooks', (q) =>
+        q.select('*').eq('user_id', userId).is('inbox_id', null).order('created_at', { ascending: false })
+      )
+
+      if (error) {
+        logger.error('Failed to get legacy webhooks', { userId, error: error.message })
+        return []
+      }
+
+      return (webhooks || []).map(w => this.formatWebhook(w))
+    } else {
+      // Return webhooks for specific inbox
+      const { data: webhooks, error } = await supabaseService.queryAsAdmin('outgoing_webhooks', (q) =>
+        q.select('*').eq('user_id', userId).eq('inbox_id', inboxId).order('created_at', { ascending: false })
+      )
+
+      if (error) {
+        logger.error('Failed to get inbox webhooks', { userId, inboxId, error: error.message })
+        return []
+      }
+
+      return (webhooks || []).map(w => this.formatWebhook(w))
     }
-
-    return (webhooks || []).map(w => this.formatWebhook(w))
   }
 
   /**
    * Format webhook from database
    * @param {Object} webhook - Raw webhook from database
    * @returns {Object} Formatted webhook
+   * 
+   * Requirements: 4.6
    */
   formatWebhook(webhook) {
     return {
       id: webhook.id,
       userId: webhook.user_id,
+      inboxId: webhook.inbox_id || null,
       url: webhook.url,
       events: this.parseEvents(webhook.events),
       secret: webhook.secret,
