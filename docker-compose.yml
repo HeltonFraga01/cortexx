@@ -4,6 +4,26 @@
 version: "3.8"
 
 services:
+  # Redis - Cache Layer
+  redis:
+    image: redis:7-alpine
+    container_name: cortexx-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-cortexx_redis_dev}
+    volumes:
+      - redis-data:/data
+    networks:
+      - cortexx-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-cortexx_redis_dev}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
   # Traefik - Reverse Proxy para desenvolvimento
   traefik-dev:
     image: traefik:v3.0
@@ -71,6 +91,14 @@ services:
       start_period: 90s
     depends_on:
       - traefik-dev
+      - redis
+    environment:
+      - NODE_ENV=development
+      - LOG_LEVEL=debug
+      - DEBUG=cortexx:*
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-cortexx_redis_dev}
     labels:
       - "traefik.enable=true"
       
@@ -169,4 +197,6 @@ volumes:
   prometheus-data:
     driver: local
   grafana-data:
+    driver: local
+  redis-data:
     driver: local

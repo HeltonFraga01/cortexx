@@ -63,16 +63,18 @@ setupDuplicateDetection()
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // Cache data for 30 seconds before considering it stale
-      staleTime: 30 * 1000,
-      // Keep unused data in cache for 5 minutes
-      gcTime: 5 * 60 * 1000,
+      // Cache data for 5 minutes before considering it stale (increased from 30s)
+      staleTime: 5 * 60 * 1000,
+      // Keep unused data in cache for 10 minutes (increased from 5min)
+      gcTime: 10 * 60 * 1000,
       // Don't refetch on window focus (reduces unnecessary requests)
       refetchOnWindowFocus: false,
       // Don't refetch on mount if data exists in cache
       refetchOnMount: false,
-      // Always refetch on reconnect to ensure fresh data
-      refetchOnReconnect: 'always',
+      // Don't refetch on reconnect automatically
+      refetchOnReconnect: false,
+      // Enable structural sharing for better deduplication
+      structuralSharing: true,
       // Smart retry logic
       retry: (failureCount, error) => {
         // Don't retry on 4xx client errors (except 408 Request Timeout)
@@ -82,15 +84,15 @@ export const queryClient = new QueryClient({
             return false
           }
         }
-        // Retry up to 3 times for other errors
-        return failureCount < 3
+        // Retry only once for other errors
+        return failureCount < 1
       },
-      // Exponential backoff for retries
-      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+      // Fixed retry delay
+      retryDelay: 1000,
     },
     mutations: {
-      // Retry mutations once on failure
-      retry: 1,
+      // Don't retry mutations by default
+      retry: 0,
     },
   },
 })

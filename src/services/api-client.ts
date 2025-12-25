@@ -119,8 +119,10 @@ export class BackendApiClient {
           if (session?.access_token) {
             config.headers.Authorization = `Bearer ${session.access_token}`;
           }
+          // Note: No warning when session is null - this is expected for public endpoints
         } catch (error) {
-          if (IS_DEVELOPMENT) {
+          // Only log actual errors, not missing sessions
+          if (IS_DEVELOPMENT && error instanceof Error && !error.message.includes('session')) {
             console.warn('Failed to get Supabase session:', error);
           }
         }

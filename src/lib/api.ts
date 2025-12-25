@@ -1860,17 +1860,13 @@ async function getSupabaseToken(): Promise<string | null> {
       }
     }
     
-    if (import.meta.env.DEV) {
-      console.warn('[API] No JWT token available', { 
-        hasSession: !!session, 
-        error: error?.message,
-        hasStoredSession: !!storedSession 
-      })
-    }
-    
+    // No warning - missing JWT is expected for public endpoints and before login
     return null
   } catch (error) {
-    console.warn('[API] Failed to get Supabase session:', error)
+    // Only log actual errors, not missing sessions
+    if (error instanceof Error && !error.message.includes('session')) {
+      console.warn('[API] Failed to get Supabase session:', error)
+    }
     return null
   }
 }
@@ -1926,10 +1922,7 @@ async function fetchWithCsrf<T>(
     return fetchWithCsrf<T>(url, method, body, config, true)
   }
   
-  // If 401 and no JWT token, log warning for debugging
-  if (response.status === 401 && !jwtToken) {
-    console.warn('[API] Request failed with 401 - No JWT token available. User may need to re-login.')
-  }
+  // Note: 401 without JWT is expected for public endpoints - no warning needed
   
   return { data, status: response.status }
 }

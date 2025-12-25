@@ -33,6 +33,10 @@ const helmet = require('helmet');
 const SupabaseService = require('./services/SupabaseService');
 // Database compatibility layer removed - all code now uses SupabaseService directly
 
+// Redis Cache
+const redisClient = require('./utils/redisClient');
+const CacheService = require('./services/CacheService');
+
 // Importar novos componentes de validação
 const corsHandler = require('./middleware/corsHandler');
 const errorHandler = require('./middleware/errorHandler');
@@ -381,6 +385,40 @@ async function initializeDatabase() {
   }
 }
 
+// Inicializar Redis Cache
+async function initializeRedis() {
+  try {
+    if (process.env.REDIS_ENABLED === 'false') {
+      logger.info('⏭️ Redis cache desabilitado via REDIS_ENABLED=false');
+      return false;
+    }
+
+    logger.info('🔧 Inicializando conexão com Redis...');
+    
+    redisClient.connect();
+    
+    // Aguardar um pouco para a conexão estabelecer
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    const health = await redisClient.healthCheck();
+    
+    if (health.connected) {
+      logger.info('✅ Conexão com Redis estabelecida com sucesso', {
+        latency: health.latency + 'ms'
+      });
+      return true;
+    } else {
+      logger.warn('⚠️ Redis não conectado, cache desabilitado', {
+        error: health.error
+      });
+      return false;
+    }
+  } catch (error) {
+    logger.warn('⚠️ Erro ao inicializar Redis, cache desabilitado:', error.message);
+    return false;
+  }
+}
+
 // SQLite directory functions removed - using Supabase only
 
 // SQLite migrations removed - using Supabase migrations via MCP
@@ -467,6 +505,31 @@ app.get('/health', async (req, res) => {
       };
     }
 
+    // 7. Verificar Redis Cache
+    let redisStatus = {
+      enabled: process.env.REDIS_ENABLED !== 'false',
+      status: 'disabled',
+      host: process.env.REDIS_HOST || 'not configured',
+      latency: null
+    };
+    try {
+      const redisHealth = await CacheService.getHealth();
+      redisStatus = {
+        enabled: process.env.REDIS_ENABLED !== 'false',
+        status: redisHealth.connected ? 'connected' : 'disconnected',
+        host: process.env.REDIS_HOST || 'not configured',
+        latency: redisHealth.latency ? redisHealth.latency + 'ms' : null,
+        error: redisHealth.error || null
+      };
+    } catch (redisError) {
+      redisStatus = {
+        enabled: process.env.REDIS_ENABLED !== 'false',
+        status: 'error',
+        host: process.env.REDIS_HOST || 'not configured',
+        error: redisError.message
+      };
+    }
+
     // Determinar status geral do sistema
     const isHealthy =
       envValidation.valid &&
@@ -506,7 +569,8 @@ app.get('/health', async (req, res) => {
         cached: wuzapiStatus.cached || false,
         error: wuzapiStatus.error || null
       },
-      s3_storage: s3Status
+      s3_storage: s3Status,
+      redis: redisStatus
     };
 
     // Retornar status HTTP apropriado
@@ -1163,6 +1227,9 @@ async function startServer() {
     // 3. Inicializar banco de dados antes de iniciar o servidor
     await initializeDatabase();
 
+    // 4. Inicializar Redis Cache
+    await initializeRedis();
+
     // Inicializar CampaignScheduler para campanhas agendadas
     logger.info('📅 Inicializando CampaignScheduler...');
     const CampaignScheduler = require('./services/CampaignScheduler');
@@ -1322,6 +1389,13 @@ startServer().then(server => {
       // Parar sistema de alertas
       alertManager.stop();
       logger.info('Sistema de alertas encerrado');
+
+      // Desconectar Redis
+      redisClient.disconnect().then(() => {
+        logger.info('Redis desconectado');
+      }).catch((err) => {
+        logger.warn('Erro ao desconectar Redis', { error: err.message });
+      });
 
       // Fechar streams de log
       logger.close();

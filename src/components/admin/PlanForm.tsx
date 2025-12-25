@@ -9,8 +9,8 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
-import { adminPlansService } from '@/services/admin-plans'
-import type { Plan, CreatePlanRequest, BillingCycle, PlanStatus } from '@/types/admin-management'
+import { useCreatePlan, useUpdatePlan } from '@/hooks/useAdminPlans'
+import type { Plan, CreatePlanRequest } from '@/types/admin-management'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -137,6 +137,8 @@ const featureLabels: Record<keyof PlanFormData['features'], string> = {
 
 export function PlanForm({ plan, onSuccess, onCancel }: PlanFormProps) {
   const isEditing = !!plan
+  const createMutation = useCreatePlan()
+  const updateMutation = useUpdatePlan()
 
   const form = useForm<PlanFormData>({
     resolver: zodResolver(planSchema),
@@ -156,10 +158,10 @@ export function PlanForm({ plan, onSuccess, onCancel }: PlanFormProps) {
   const onSubmit = async (data: PlanFormData) => {
     try {
       if (isEditing && plan) {
-        await adminPlansService.updatePlan(plan.id, data)
+        await updateMutation.mutateAsync({ id: plan.id, data })
         toast.success('Plano atualizado com sucesso')
       } else {
-        await adminPlansService.createPlan(data as CreatePlanRequest)
+        await createMutation.mutateAsync(data as CreatePlanRequest)
         toast.success('Plano criado com sucesso')
       }
       onSuccess?.()
@@ -167,6 +169,8 @@ export function PlanForm({ plan, onSuccess, onCancel }: PlanFormProps) {
       toast.error(error instanceof Error ? error.message : 'Falha ao salvar plano')
     }
   }
+
+  const isPending = createMutation.isPending || updateMutation.isPending
 
   return (
     <Form {...form}>
@@ -432,12 +436,12 @@ export function PlanForm({ plan, onSuccess, onCancel }: PlanFormProps) {
 
         <div className="flex justify-end gap-2">
           {onCancel && (
-            <Button type="button" variant="outline" onClick={onCancel}>
+            <Button type="button" variant="outline" onClick={onCancel} disabled={isPending}>
               Cancelar
             </Button>
           )}
-          <Button type="submit" disabled={form.formState.isSubmitting}>
-            {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          <Button type="submit" disabled={isPending}>
+            {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {isEditing ? 'Salvar Alterações' : 'Criar Plano'}
           </Button>
         </div>

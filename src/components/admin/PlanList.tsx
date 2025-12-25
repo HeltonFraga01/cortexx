@@ -2,12 +2,13 @@
  * PlanList Component
  * 
  * Displays a list of subscription plans with subscriber counts and actions.
+ * Uses React Query for data fetching with caching and deduplication.
  * Requirements: 1.4
  */
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { toast } from 'sonner'
-import { adminPlansService } from '@/services/admin-plans'
+import { useAdminPlans, useDeletePlan } from '@/hooks/useAdminPlans'
 import type { Plan, PlanStatus } from '@/types/admin-management'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -44,34 +45,19 @@ interface PlanListProps {
 }
 
 export function PlanList({ onEdit, onCreate }: PlanListProps) {
-  const [plans, setPlans] = useState<Plan[]>([])
-  const [isLoading, setIsLoading] = useState(true)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [planToDelete, setPlanToDelete] = useState<Plan | null>(null)
 
-  useEffect(() => {
-    loadPlans()
-  }, [])
-
-  const loadPlans = async () => {
-    try {
-      setIsLoading(true)
-      const data = await adminPlansService.listPlans()
-      setPlans(data)
-    } catch (error) {
-      toast.error('Falha ao carregar planos')
-    } finally {
-      setIsLoading(false)
-    }
-  }
+  // Use React Query for data fetching with caching
+  const { data: plans = [], isLoading, error } = useAdminPlans()
+  const deleteMutation = useDeletePlan()
 
   const handleDelete = async () => {
     if (!planToDelete) return
 
     try {
-      await adminPlansService.deletePlan(planToDelete.id)
+      await deleteMutation.mutateAsync(planToDelete.id)
       toast.success('Plano excluído com sucesso')
-      loadPlans()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Falha ao excluir plano')
     } finally {
@@ -109,6 +95,18 @@ export function PlanList({ onEdit, onCreate }: PlanListProps) {
         <CardContent className="p-6">
           <div className="flex items-center justify-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <div className="text-center text-destructive">
+            Falha ao carregar planos: {error instanceof Error ? error.message : 'Erro desconhecido'}
           </div>
         </CardContent>
       </Card>
@@ -229,8 +227,12 @@ export function PlanList({ onEdit, onCreate }: PlanListProps) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground">
-              Excluir
+            <AlertDialogAction 
+              onClick={handleDelete} 
+              className="bg-destructive text-destructive-foreground"
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? 'Excluindo...' : 'Excluir'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

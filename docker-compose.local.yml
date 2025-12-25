@@ -2,6 +2,26 @@
 # Uso: docker-compose -f docker-compose.local.yml up -d
 
 services:
+  # Redis - Cache Layer
+  redis:
+    image: redis:7-alpine
+    container_name: cortexx-redis-local
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-cortexx_redis_dev}
+    volumes:
+      - redis-local-data:/data
+    networks:
+      - cortexx-local
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-cortexx_redis_dev}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
   # Cortexx - Local Testing
   cortexx:
     build:
@@ -21,6 +41,9 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - LOG_LEVEL=debug
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-cortexx_redis_dev}
     
     # Portas
     ports:
@@ -40,6 +63,11 @@ services:
     
     # Restart policy
     restart: unless-stopped
+    
+    # Dependencies
+    depends_on:
+      redis:
+        condition: service_healthy
     
     # Networks
     networks:
@@ -71,9 +99,6 @@ networks:
   cortexx-local:
     driver: bridge
 
-# Volumes nomeados (opcional - use se quiser persistência entre recreações)
-# volumes:
-#   cortexx-data:
-#     driver: local
-#   cortexx-logs:
-#     driver: local
+volumes:
+  redis-local-data:
+    driver: local

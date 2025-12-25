@@ -9,6 +9,8 @@
 const router = require('express').Router();
 const { logger } = require('../utils/logger');
 const tenantService = require('../services/TenantService');
+const CacheService = require('../services/CacheService');
+const redisClient = require('../utils/redisClient');
 
 /**
  * GET /api/public/branding
@@ -156,6 +158,15 @@ router.get('/tenant-info', async (req, res) => {
       });
     }
 
+    // Try to get from cache first
+    const cacheKey = CacheService.CACHE_KEYS.TENANT_INFO(subdomain);
+    const cached = await redisClient.get(cacheKey);
+    
+    if (cached) {
+      res.setHeader('X-Cache', 'HIT');
+      return res.json(cached);
+    }
+
     let tenant = null;
     try {
       tenant = await tenantService.getBySubdomain(subdomain);
@@ -168,7 +179,7 @@ router.get('/tenant-info', async (req, res) => {
     }
 
     if (!tenant || tenant.status !== 'active') {
-      return res.status(404).json({
+      const response = {
         success: false,
         error: 'Tenant not found or inactive',
         data: {
@@ -176,7 +187,8 @@ router.get('/tenant-info', async (req, res) => {
           tenant: null,
           isMultiTenant: true
         }
-      });
+      };
+      return res.status(404).json(response);
     }
 
     // Return only public tenant information
@@ -193,14 +205,20 @@ router.get('/tenant-info', async (req, res) => {
       ip: req.ip
     });
 
-    res.json({
+    const response = {
       success: true,
       data: {
         tenant: publicTenantInfo,
         subdomain,
         isMultiTenant: true
       }
-    });
+    };
+
+    // Cache the response
+    await redisClient.set(cacheKey, response, CacheService.TTL.TENANT_INFO);
+    res.setHeader('X-Cache', 'MISS');
+
+    res.json(response);
   } catch (error) {
     logger.error('Failed to get tenant info', {
       error: error.message,

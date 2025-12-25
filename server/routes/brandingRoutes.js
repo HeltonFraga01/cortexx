@@ -4,11 +4,7 @@ const htmlSanitizer = require('../utils/htmlSanitizer');
 const { logger } = require('../utils/logger');
 const { requireAdmin } = require('../middleware/auth');
 const TenantBrandingService = require('../services/TenantBrandingService');
-
-// Importar função para invalidar cache de branding
-let invalidateBrandingCache = () => {
-  logger.info('ℹ️ invalidateBrandingCache não disponível (modo de teste ou inicialização)');
-};
+const CacheService = require('../services/CacheService');
 
 const router = express.Router();
 
@@ -318,10 +314,8 @@ router.put('/',
         const updatedConfig = await TenantBrandingService.updateBrandingByTenantId(tenantId, brandingData);
         
         // Invalidar cache de branding após atualização bem-sucedida
-        if (invalidateBrandingCache) {
-          invalidateBrandingCache();
-          logger.info('🗑️ Cache de branding invalidado após atualização');
-        }
+        await CacheService.invalidateBrandingCache(tenantId);
+        logger.info('🗑️ Cache de branding invalidado após atualização', { tenantId });
         
         const responseTime = Date.now() - startTime;
         
@@ -496,10 +490,56 @@ router.get('/public',
       // Get tenant from context (set by subdomain router)
       const tenantId = req.context?.tenantId;
       
-      // Get branding - if no tenant, use defaults
-      const brandingConfig = tenantId 
-        ? await TenantBrandingService.getBrandingByTenantId(tenantId)
-        : TenantBrandingService.getDefaultBranding();
+      // Try to get from cache first (if tenant exists)
+      if (tenantId) {
+        const cacheKey = CacheService.CACHE_KEYS.BRANDING(tenantId);
+        const { data: brandingConfig, fromCache } = await CacheService.getOrSet(
+          cacheKey,
+          CacheService.TTL.BRANDING,
+          async () => TenantBrandingService.getBrandingByTenantId(tenantId)
+        );
+        
+        // Set cache header
+        res.set('X-Cache', fromCache ? 'HIT' : 'MISS');
+        
+        // Retornar apenas dados públicos (sem informações sensíveis)
+        const publicBrandingData = {
+          appName: brandingConfig.appName,
+          logoUrl: brandingConfig.logoUrl,
+          primaryColor: brandingConfig.primaryColor,
+          secondaryColor: brandingConfig.secondaryColor,
+          customHomeHtml: brandingConfig.customHomeHtml,
+          supportPhone: brandingConfig.supportPhone,
+          ogImageUrl: brandingConfig.ogImageUrl
+        };
+        
+        const responseTime = Date.now() - startTime;
+        
+        logger.info('Configuração pública de branding recuperada', {
+          url: req.url,
+          method: req.method,
+          response_time_ms: responseTime,
+          tenant_id: tenantId,
+          app_name: publicBrandingData.appName,
+          has_custom_html: !!publicBrandingData.customHomeHtml,
+          from_cache: fromCache,
+          user_agent: req.get('User-Agent'),
+          ip: req.ip
+        });
+
+        // Configurar cache para melhorar performance
+        res.set('Cache-Control', 'public, max-age=300');
+
+        return res.status(200).json({
+          success: true,
+          code: 200,
+          data: publicBrandingData,
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      // No tenant - use defaults (no cache)
+      const brandingConfig = TenantBrandingService.getDefaultBranding();
       
       // Retornar apenas dados públicos (sem informações sensíveis)
       const publicBrandingData = {
@@ -514,13 +554,12 @@ router.get('/public',
       
       const responseTime = Date.now() - startTime;
       
-      logger.info('Configuração pública de branding recuperada', {
+      logger.info('Configuração pública de branding (default) recuperada', {
         url: req.url,
         method: req.method,
         response_time_ms: responseTime,
-        tenant_id: tenantId,
+        tenant_id: null,
         app_name: publicBrandingData.appName,
-        has_custom_html: !!publicBrandingData.customHomeHtml,
         user_agent: req.get('User-Agent'),
         ip: req.ip
       });

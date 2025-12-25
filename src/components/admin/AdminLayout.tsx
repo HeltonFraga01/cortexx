@@ -1,8 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBrandingConfig } from '@/hooks/useBranding';
+import { adminPlansService } from '@/services/admin-plans';
+import { PLANS_QUERY_KEY } from '@/hooks/useAdminPlans';
 import { SidebarSupportButton, MobileSupportButton } from '@/components/shared/SupportButton';
 import ThemeToggle from '@/components/ui-custom/ThemeToggle';
 import {
@@ -49,6 +52,16 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
   const brandingConfig = useBrandingConfig();
   const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  // Prefetch plans data when admin layout mounts (Task 8.1)
+  useEffect(() => {
+    queryClient.prefetchQuery({
+      queryKey: PLANS_QUERY_KEY,
+      queryFn: () => adminPlansService.listPlans(),
+      staleTime: 5 * 60 * 1000, // 5 minutes
+    });
+  }, [queryClient]);
 
   const navigation = [
     { name: 'Overview', href: '/admin', icon: BarChart3 },

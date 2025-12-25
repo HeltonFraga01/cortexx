@@ -13,6 +13,8 @@ const { requireAdmin } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const TenantPlanService = require('../services/TenantPlanService');
 const AdminAuditService = require('../services/AdminAuditService');
+const CacheService = require('../services/CacheService');
+const { cacheMiddleware } = require('../middleware/cacheMiddleware');
 
 const router = express.Router();
 
@@ -32,7 +34,10 @@ function getTenantId(req) {
  * GET /api/admin/plans
  * List all plans for the current tenant with subscriber counts
  */
-router.get('/', requireAdmin, async (req, res) => {
+router.get('/', requireAdmin, cacheMiddleware(
+  (req) => req.context?.tenantId ? CacheService.CACHE_KEYS.PLANS(req.context.tenantId) : null,
+  CacheService.TTL.PLANS
+), async (req, res) => {
   try {
     const tenantId = getTenantId(req);
     if (!tenantId) {
@@ -121,6 +126,9 @@ router.post('/', requireAdmin, async (req, res) => {
       planName: plan.name,
       endpoint: '/api/admin/plans'
     });
+
+    // Invalidate plans cache
+    await CacheService.invalidatePlansCache(tenantId);
 
     res.status(201).json({ success: true, data: plan });
   } catch (error) {
@@ -237,6 +245,9 @@ router.put('/:id', requireAdmin, async (req, res) => {
       endpoint: `/api/admin/plans/${planId}`
     });
 
+    // Invalidate plans cache
+    await CacheService.invalidatePlansCache(tenantId);
+
     res.json({ success: true, data: updatedPlan });
   } catch (error) {
     logger.error('Failed to update tenant plan', {
@@ -313,6 +324,9 @@ router.delete('/:id', requireAdmin, async (req, res) => {
       migrateToPlanId,
       endpoint: `/api/admin/plans/${planId}`
     });
+
+    // Invalidate plans cache
+    await CacheService.invalidatePlansCache(tenantId);
 
     res.json({ success: true, message: 'Plan deleted successfully' });
   } catch (error) {

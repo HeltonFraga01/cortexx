@@ -2,6 +2,7 @@
  * PlansManagementPage
  * 
  * Complete page for managing subscription plans with list and form.
+ * Uses React Query for data management - no manual refresh needed.
  */
 
 import { useState } from 'react'
@@ -14,7 +15,6 @@ import { ArrowLeft } from 'lucide-react'
 export function PlansManagementPage() {
   const [view, setView] = useState<'list' | 'create' | 'edit'>('list')
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null)
-  const [refreshKey, setRefreshKey] = useState(0)
 
   const handleCreate = () => {
     setSelectedPlan(null)
@@ -29,7 +29,7 @@ export function PlansManagementPage() {
   const handleSuccess = () => {
     setView('list')
     setSelectedPlan(null)
-    setRefreshKey(prev => prev + 1)
+    // React Query will automatically refetch due to invalidation in mutations
   }
 
   const handleCancel = () => {
@@ -55,7 +55,6 @@ export function PlansManagementPage() {
 
   return (
     <PlanList
-      key={refreshKey}
       onCreate={handleCreate}
       onEdit={handleEdit}
     />
