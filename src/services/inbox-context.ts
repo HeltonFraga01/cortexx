@@ -15,7 +15,7 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
  */
 async function getCsrfToken(): Promise<string | null> {
   try {
-    const response = await fetch(`${API_BASE}/api/auth/csrf-token`, {
+    const response = await fetch(`${API_BASE}/auth/csrf-token`, {
       credentials: 'include'
     })
     const data = await response.json()
@@ -146,7 +146,7 @@ async function authenticatedFetch<T>(
       headers['CSRF-Token'] = csrfToken
     }
 
-    const response = await fetch(`${API_BASE}/api/user${endpoint}`, {
+    const response = await fetch(`${API_BASE}/user${endpoint}`, {
       ...options,
       headers,
       credentials: 'include'
