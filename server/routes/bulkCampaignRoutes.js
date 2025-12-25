@@ -49,11 +49,29 @@ function getAuditLogger() {
 
 /**
  * Middleware para verificar token do usuário usando InboxContext
- * Usa o token da inbox ativa em vez do token da account
+ * 
+ * Ordem de prioridade para obter o token WUZAPI:
+ * 1. Header 'token' (explícito - para operações específicas de inbox)
+ * 2. Contexto da inbox ativa (via JWT do Supabase)
+ * 3. Token da sessão (legacy)
  */
 const verifyUserTokenWithInbox = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
+  // PRIORIDADE 1: Token explícito no header
+  const tokenHeader = req.headers.token;
+  if (tokenHeader && tokenHeader.trim()) {
+    req.userToken = tokenHeader.trim();
+    req.tokenSource = 'header';
+    
+    logger.debug('WUZAPI token obtained from header for bulk campaign', {
+      tokenPreview: req.userToken.substring(0, 8) + '...',
+      path: req.path
+    });
+    
+    return next();
+  }
   
+  // PRIORIDADE 2: JWT + Contexto da inbox ativa
+  const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
       await new Promise((resolve, reject) => {
@@ -74,46 +92,46 @@ const verifyUserTokenWithInbox = async (req, res, next) => {
         req.userToken = req.context.wuzapiToken;
         req.userId = req.user?.id;
         req.inboxId = req.context.inboxId;
+        req.tokenSource = 'context';
         
         logger.debug('WUZAPI token obtained from inbox context for bulk campaign', {
           userId: req.userId?.substring(0, 8) + '...',
           inboxId: req.inboxId?.substring(0, 8) + '...',
-          hasToken: true
+          tokenPreview: req.userToken.substring(0, 8) + '...',
+          path: req.path
         });
         
         return next();
       }
       
       if (req.user?.id) {
+        req.userId = req.user.id;
         logger.warn('No inbox context available for bulk campaign user', {
           userId: req.user.id.substring(0, 8) + '...',
           path: req.path
         });
+        return next();
       }
     } catch (error) {
-      logger.debug('JWT/InboxContext validation failed for bulk campaign, trying other methods', { 
+      logger.debug('JWT/InboxContext validation failed for bulk campaign, trying session fallback', { 
         error: error.message,
         path: req.path
       });
     }
   }
   
-  const tokenHeader = req.headers.token;
-  if (tokenHeader) {
-    req.userToken = tokenHeader;
-    return next();
-  }
-  
+  // PRIORIDADE 3: Token da sessão (legacy)
   if (req.session?.userToken) {
     req.userToken = req.session.userToken;
+    req.tokenSource = 'session';
     return next();
   }
   
   return res.status(401).json({
     success: false,
     error: {
-      code: 'NO_TOKEN',
-      message: 'Token não fornecido. Use Authorization Bearer, header token ou sessão ativa.'
+      code: 'NO_WUZAPI_TOKEN',
+      message: 'Token WUZAPI não fornecido. Use header token, Authorization Bearer com inbox ativa, ou sessão.'
     }
   });
 };

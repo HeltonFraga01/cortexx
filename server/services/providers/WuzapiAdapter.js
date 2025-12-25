@@ -249,11 +249,12 @@ class WuzapiAdapter extends ProviderAdapter {
     }
 
     try {
-      const response = await wuzapiClient.post('/webhook/set', {
-        Url: url,
-        Events: events.join(',')
+      // WUZAPI API: POST /webhook with Token header
+      const response = await wuzapiClient.post('/webhook', {
+        webhookURL: url,
+        Subscribe: events
       }, {
-        headers: { 'token': config.token }
+        headers: { 'Token': config.token }
       });
 
       if (!response.success) {
@@ -290,8 +291,9 @@ class WuzapiAdapter extends ProviderAdapter {
     }
 
     try {
-      const response = await wuzapiClient.get('/webhook/get', {
-        headers: { 'token': config.token }
+      // WUZAPI API: GET /webhook with Token header
+      const response = await wuzapiClient.get('/webhook', {
+        headers: { 'Token': config.token }
       });
 
       if (!response.success) {
@@ -302,10 +304,12 @@ class WuzapiAdapter extends ProviderAdapter {
         };
       }
 
+      // WUZAPI returns: { code: 200, data: { subscribe: [...], webhook: "..." }, success: true }
+      const data = response.data?.data || response.data || {};
       return {
-        url: response.data?.Url || '',
-        events: (response.data?.Events || '').split(',').filter(Boolean),
-        status: response.data?.Url ? 'active' : 'inactive'
+        url: data.webhook || '',
+        events: data.subscribe || [],
+        status: data.webhook ? 'active' : 'inactive'
       };
     } catch (error) {
       logger.error('WuzapiAdapter.getWebhook failed', {

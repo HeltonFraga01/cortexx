@@ -25,18 +25,30 @@ const router = express.Router();
 
 /**
  * Middleware para verificar token do usuário usando InboxContext
- * Usa o token da inbox ativa em vez do token da account
  * 
- * Fluxo:
- * 1. Valida JWT do Supabase
- * 2. Carrega contexto da inbox (via inboxContextMiddleware)
- * 3. Usa wuzapiToken da inbox ativa
- * 4. Fallback para header 'token' (legacy) ou sessão
+ * Ordem de prioridade para obter o token WUZAPI:
+ * 1. Header 'token' (explícito - para operações específicas de inbox)
+ * 2. Contexto da inbox ativa (via JWT do Supabase)
+ * 3. Token da sessão (legacy)
  */
 const verifyUserTokenWithInbox = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
+  // PRIORIDADE 1: Token explícito no header (para operações específicas de inbox)
+  const tokenHeader = req.headers.token;
+  if (tokenHeader && tokenHeader.trim()) {
+    req.userToken = tokenHeader.trim();
+    req.tokenSource = 'header';
+    
+    logger.debug('WUZAPI token obtained from header for chat', {
+      tokenPreview: req.userToken.substring(0, 8) + '...',
+      path: req.path,
+      method: req.method
+    });
+    
+    return next();
+  }
   
-  // Se tem JWT, usar inboxContextMiddleware para obter token da inbox correta
+  // PRIORIDADE 2: JWT + Contexto da inbox ativa
+  const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
       // Validar JWT do Supabase
@@ -60,11 +72,13 @@ const verifyUserTokenWithInbox = async (req, res, next) => {
         req.userToken = req.context.wuzapiToken;
         req.userId = req.user?.id;
         req.inboxId = req.context.inboxId;
+        req.tokenSource = 'context';
         
         logger.debug('WUZAPI token obtained from inbox context for chat', {
           userId: req.userId?.substring(0, 8) + '...',
           inboxId: req.inboxId?.substring(0, 8) + '...',
-          hasToken: true
+          tokenPreview: req.userToken.substring(0, 8) + '...',
+          path: req.path
         });
         
         return next();
@@ -72,38 +86,47 @@ const verifyUserTokenWithInbox = async (req, res, next) => {
       
       // Se não tem contexto mas tem usuário, tentar continuar
       if (req.user?.id) {
+        req.userId = req.user.id;
         logger.warn('No inbox context available for chat user', {
           userId: req.user.id.substring(0, 8) + '...',
           path: req.path
         });
+        return next();
       }
     } catch (error) {
-      logger.debug('JWT/InboxContext validation failed for chat, trying other methods', { 
+      logger.debug('JWT/InboxContext validation failed for chat, trying session fallback', { 
         error: error.message,
         path: req.path
       });
     }
   }
   
-  // Fallback: Tentar obter token do header 'token' (legacy)
-  const tokenHeader = req.headers.token;
-  if (tokenHeader) {
-    req.userToken = tokenHeader;
-    return next();
-  }
-  
-  // Fallback: Token da sessão
+  // PRIORIDADE 3: Token da sessão (legacy)
   if (req.session?.userToken) {
     req.userToken = req.session.userToken;
+    req.tokenSource = 'session';
+    
+    logger.debug('WUZAPI token obtained from session for chat', {
+      tokenPreview: req.userToken.substring(0, 8) + '...',
+      path: req.path
+    });
+    
     return next();
   }
   
   // Nenhum token encontrado
+  logger.warn('No WUZAPI token found for chat', {
+    hasAuthHeader: !!authHeader,
+    hasTokenHeader: !!tokenHeader,
+    hasSession: !!req.session,
+    path: req.path
+  });
+  
   return res.status(401).json({
     success: false,
     error: {
-      code: 'NO_TOKEN',
-      message: 'Token não fornecido. Use Authorization Bearer, header token ou sessão ativa.'
+      code: 'NO_WUZAPI_TOKEN',
+      message: 'Token WUZAPI não fornecido. Use header token, Authorization Bearer com inbox ativa, ou sessão.'
     }
   });
 };

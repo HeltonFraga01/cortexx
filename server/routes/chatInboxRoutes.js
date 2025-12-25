@@ -1790,7 +1790,7 @@ router.get('/webhook/status', verifyUserToken, async (req, res) => {
     
     const response = await axios.get(`${wuzapiBaseUrl}/webhook`, {
       headers: {
-        'token': req.userToken,
+        'Token': req.userToken,
         'Content-Type': 'application/json'
       },
       timeout: 10000
@@ -1857,15 +1857,14 @@ router.post('/webhook/configure', verifyUserToken, async (req, res) => {
     const wuzapiBaseUrl = process.env.WUZAPI_BASE_URL || 'https://wzapi.wasend.com.br'
     
     // Configure webhook with WUZAPI using POST method
-    // WUZAPI POST /webhook expects: WebhookURL (URL), events (array of strings)
-    // Note: Field name is WebhookURL (PascalCase), not webhook (lowercase)
+    // WUZAPI POST /webhook expects: webhookURL (camelCase), Subscribe (array of strings)
     // Using 'All' to subscribe to all 50+ event types
     const response = await axios.post(`${wuzapiBaseUrl}/webhook`, {
-      WebhookURL: fullWebhookUrl,
-      events: ['All']
+      webhookURL: fullWebhookUrl,
+      Subscribe: ['All']
     }, {
       headers: {
-        'token': req.userToken,
+        'Token': req.userToken,
         'Content-Type': 'application/json'
       },
       timeout: 10000

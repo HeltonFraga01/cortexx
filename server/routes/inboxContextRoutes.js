@@ -924,20 +924,43 @@ router.get('/inbox/:inboxId/webhook', validateSupabaseToken, async (req, res) =>
       try {
         const wuzapiClient = require('../utils/wuzapiClient');
         const webhookResponse = await wuzapiClient.get('/webhook', {
-          headers: { 'token': inbox.wuzapi_token }
+          headers: { 'Token': inbox.wuzapi_token }
         });
 
-        if (webhookResponse.success && webhookResponse.data) {
+        // WUZAPI response structure: { code: 200, data: { webhook, subscribe }, success: true }
+        // wuzapiClient wraps it as: { success: true, status: 200, data: <wuzapi_response> }
+        if (webhookResponse.success && webhookResponse.data?.data) {
+          const wuzapiData = webhookResponse.data.data;
           webhookConfig = {
-            webhook: webhookResponse.data.Webhook || '',
-            subscribe: webhookResponse.data.Subscribe || []
+            webhook: wuzapiData.webhook || '',
+            subscribe: wuzapiData.subscribe || []
           };
+          
+          logger.debug('WUZAPI webhook config fetched', {
+            inboxId,
+            webhook: webhookConfig.webhook ? webhookConfig.webhook.substring(0, 30) + '...' : 'empty',
+            subscribeCount: webhookConfig.subscribe.length,
+            subscribe: webhookConfig.subscribe
+          });
+        } else {
+          logger.debug('WUZAPI webhook response structure', {
+            inboxId,
+            success: webhookResponse.success,
+            hasData: !!webhookResponse.data,
+            hasDataData: !!webhookResponse.data?.data,
+            rawResponse: JSON.stringify(webhookResponse.data)
+          });
         }
       } catch (wuzapiError) {
         logger.warn('Could not fetch WUZAPI webhook config', { inboxId, error: wuzapiError.message });
       }
     }
 
+    // Prevent caching - webhook config should always be fresh from WUZAPI
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    
     res.json({
       success: true,
       data: webhookConfig

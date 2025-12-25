@@ -77,7 +77,10 @@ const UserInboxEditPage = () => {
   const [connecting, setConnecting] = useState(false)
   const [loadingAction, setLoadingAction] = useState<'connect' | 'disconnect' | 'logout' | 'qr' | null>(null)
   const [savingWebhook, setSavingWebhook] = useState(false)
-  const [localWebhookConfig, setLocalWebhookConfig] = useState<WebhookConfigData | null>(null)
+  const [localWebhookConfig, setLocalWebhookConfig] = useState<WebhookConfigData>({
+    webhookUrl: '',
+    events: []
+  })
   const [qrCodeData, setQrCodeData] = useState<string | null>(null)
   const [showQrDialog, setShowQrDialog] = useState(false)
   const [copiedField, setCopiedField] = useState<string | null>(null)
@@ -118,11 +121,13 @@ const UserInboxEditPage = () => {
   })
 
   // Sincronizar webhook config local com dados do servidor
+  // Sempre inicializar com config vazia se não houver dados do servidor
   useEffect(() => {
-    if (webhookConfig) {
-      const serverConfig = adaptWebhookResponseToConfig(webhookConfig.webhook || '', webhookConfig.subscribe)
-      setLocalWebhookConfig(serverConfig)
-    }
+    const serverConfig = adaptWebhookResponseToConfig(
+      webhookConfig?.webhook || '', 
+      webhookConfig?.subscribe || []
+    )
+    setLocalWebhookConfig(serverConfig)
   }, [webhookConfig])
 
   // Buscar avatar quando logado - usar connectionData.isLoggedIn (já vem do WUZAPI)
@@ -382,8 +387,8 @@ const UserInboxEditPage = () => {
   }
 
   const hasWebhookChanges = (): boolean => {
-    if (!localWebhookConfig || !webhookConfig) return false
-    const serverConfig = adaptWebhookResponseToConfig(webhookConfig.webhook || '', webhookConfig.subscribe)
+    if (!webhookConfig) return localWebhookConfig.webhookUrl !== '' || localWebhookConfig.events.length > 0
+    const serverConfig = adaptWebhookResponseToConfig(webhookConfig.webhook || '', webhookConfig.subscribe || [])
     return (
       localWebhookConfig.webhookUrl !== serverConfig.webhookUrl ||
       JSON.stringify(localWebhookConfig.events.sort()) !== JSON.stringify(serverConfig.events.sort())
@@ -391,7 +396,7 @@ const UserInboxEditPage = () => {
   }
 
   const handleSaveWebhook = async () => {
-    if (!connectionData?.wuzapiToken || !localWebhookConfig) {
+    if (!connectionData?.wuzapiToken) {
       toast.error('Token não disponível')
       return
     }
@@ -702,17 +707,15 @@ const UserInboxEditPage = () => {
       )}
 
       {/* Webhook Configuration */}
-      {localWebhookConfig && (
-        <WebhookConfigCard
-          config={localWebhookConfig}
-          availableEvents={DEFAULT_AVAILABLE_EVENTS}
-          onChange={handleWebhookConfigChange}
-          onSave={handleSaveWebhook}
-          isLoading={savingWebhook}
-          readOnly={false}
-          hasChanges={hasWebhookChanges()}
-        />
-      )}
+      <WebhookConfigCard
+        config={localWebhookConfig}
+        availableEvents={DEFAULT_AVAILABLE_EVENTS}
+        onChange={handleWebhookConfigChange}
+        onSave={handleSaveWebhook}
+        isLoading={savingWebhook}
+        readOnly={false}
+        hasChanges={hasWebhookChanges()}
+      />
 
       {/* Chat Integration - Bot Assignment */}
       <Card>

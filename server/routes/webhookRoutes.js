@@ -19,18 +19,33 @@ const router = express.Router();
 
 /**
  * Middleware para verificar token do usuário usando InboxContext
- * Usa o token da inbox ativa em vez do token da account
  * 
- * Fluxo:
- * 1. Valida JWT do Supabase
- * 2. Carrega contexto da inbox (via inboxContextMiddleware)
- * 3. Usa wuzapiToken da inbox ativa
- * 4. Fallback para header 'token' (legacy) ou sessão
+ * Ordem de prioridade para obter o token WUZAPI:
+ * 1. Header 'token' (explícito - para operações específicas de inbox)
+ * 2. Contexto da inbox ativa (via JWT do Supabase)
+ * 3. Token da sessão (legacy)
+ * 
+ * Requirements: 1.1, 1.2, 1.3, 6.1, 6.2, 6.3
  */
 const verifyUserTokenWithInbox = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
+  // PRIORIDADE 1: Token explícito no header (para operações específicas de inbox)
+  // Isso permite que o frontend especifique qual inbox usar, independente da inbox ativa
+  const tokenHeader = req.headers.token;
+  if (tokenHeader && tokenHeader.trim()) {
+    req.userToken = tokenHeader.trim();
+    req.tokenSource = 'header';
+    
+    logger.debug('WUZAPI token obtained from header', {
+      tokenPreview: req.userToken.substring(0, 8) + '...',
+      path: req.path,
+      method: req.method
+    });
+    
+    return next();
+  }
   
-  // Se tem JWT, usar inboxContextMiddleware para obter token da inbox correta
+  // PRIORIDADE 2: JWT + Contexto da inbox ativa
+  const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
       // Validar JWT do Supabase
@@ -54,17 +69,19 @@ const verifyUserTokenWithInbox = async (req, res, next) => {
         req.userToken = req.context.wuzapiToken;
         req.userId = req.user?.id;
         req.inboxId = req.context.inboxId;
+        req.tokenSource = 'context';
         
         logger.debug('WUZAPI token obtained from inbox context', {
           userId: req.userId?.substring(0, 8) + '...',
           inboxId: req.inboxId?.substring(0, 8) + '...',
-          hasToken: true
+          tokenPreview: req.userToken.substring(0, 8) + '...',
+          path: req.path
         });
         
         return next();
       }
       
-      // Se não tem contexto mas tem usuário, tentar continuar (alguns endpoints podem não precisar de token)
+      // Se não tem contexto mas tem usuário, logar warning
       if (req.user?.id) {
         logger.warn('No inbox context available for user', {
           userId: req.user.id.substring(0, 8) + '...',
@@ -72,32 +89,39 @@ const verifyUserTokenWithInbox = async (req, res, next) => {
         });
       }
     } catch (error) {
-      logger.debug('JWT/InboxContext validation failed, trying other methods', { 
+      logger.debug('JWT/InboxContext validation failed, trying session fallback', { 
         error: error.message,
         path: req.path
       });
     }
   }
   
-  // Fallback: Tentar obter token do header 'token' (legacy)
-  const tokenHeader = req.headers.token;
-  if (tokenHeader) {
-    req.userToken = tokenHeader;
-    return next();
-  }
-  
-  // Fallback: Token da sessão
+  // PRIORIDADE 3: Token da sessão (legacy)
   if (req.session?.userToken) {
     req.userToken = req.session.userToken;
+    req.tokenSource = 'session';
+    
+    logger.debug('WUZAPI token obtained from session', {
+      tokenPreview: req.userToken.substring(0, 8) + '...',
+      path: req.path
+    });
+    
     return next();
   }
   
   // Nenhum token encontrado
+  logger.warn('No WUZAPI token found', {
+    hasAuthHeader: !!authHeader,
+    hasTokenHeader: !!tokenHeader,
+    hasSession: !!req.session,
+    path: req.path
+  });
+  
   return res.status(401).json({
     success: false,
     error: {
-      code: 'NO_TOKEN',
-      message: 'Token não fornecido. Use Authorization Bearer, header token ou sessão ativa.'
+      code: 'NO_WUZAPI_TOKEN',
+      message: 'Token WUZAPI não fornecido. Use header token, Authorization Bearer com inbox ativa, ou sessão.'
     }
   });
 };
@@ -118,7 +142,7 @@ router.get('/', verifyUserToken, async (req, res) => {
     
     const response = await axios.get(`${wuzapiBaseUrl}/webhook`, {
       headers: {
-        'token': userToken,
+        'Token': userToken,
         'Content-Type': 'application/json'
       },
       timeout: 10000
@@ -126,11 +150,20 @@ router.get('/', verifyUserToken, async (req, res) => {
     
     const webhookData = response.data.data || response.data;
     
+    // Prevent caching - webhook config should always be fresh from WUZAPI
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    
+    // WUZAPI returns 'subscribe' array, not 'events'
+    // Map 'subscribe' to 'events' for frontend compatibility
+    const eventsArray = webhookData.subscribe || webhookData.events || [];
+    
     res.json({
       success: true,
       webhook: webhookData.webhook || '',
-      events: webhookData.events || [],
-      subscribe: webhookData.subscribe || ['Message'],
+      events: eventsArray,
+      subscribe: eventsArray,
       data: webhookData
     });
     
@@ -178,14 +211,14 @@ router.post('/config', verifyUserToken, async (req, res) => {
     
     const wuzapiBaseUrl = process.env.WUZAPI_BASE_URL || 'https://wzapi.wasend.com.br';
     
-    const response = await axios.put(`${wuzapiBaseUrl}/webhook`, {
-      webhook,
-      events,
-      subscribe,
-      active: true
+    // WUZAPI SetWebhook expects 'webhookurl' (lowercase) and 'events' (not Subscribe)
+    // See: handlers.go webhookStruct { WebhookURL string `json:"webhookurl"`, Events []string `json:"events,omitempty"` }
+    const response = await axios.post(`${wuzapiBaseUrl}/webhook`, {
+      webhookurl: webhook,
+      events: events || subscribe || []
     }, {
       headers: {
-        'token': userToken,
+        'Token': userToken,
         'Content-Type': 'application/json'
       },
       timeout: 10000
@@ -425,27 +458,50 @@ router.post('/', verifyUserToken, async (req, res) => {
     const userToken = req.userToken;
     const { webhook, events, subscribe } = req.body;
     
+    // Determinar eventos a enviar - priorizar 'events', depois 'subscribe'
+    const eventsToSend = events || subscribe || [];
+    
     logger.info('Solicitação de atualização de webhook:', { 
       userToken: userToken.substring(0, 8) + '...',
-      webhook: webhook ? webhook.substring(0, 20) + '...' : 'empty',
-      eventsCount: events?.length || 0
+      tokenSource: req.tokenSource,
+      webhook: webhook ? webhook.substring(0, 30) + '...' : 'empty',
+      eventsCount: eventsToSend.length,
+      eventsReceived: eventsToSend,
+      rawEvents: events,
+      rawSubscribe: subscribe,
+      bodyKeys: Object.keys(req.body)
     });
     
     const wuzapiBaseUrl = process.env.WUZAPI_BASE_URL || 'https://wzapi.wasend.com.br';
     
-    // WUZAPI POST /webhook expects WebhookURL (PascalCase), not webhook (lowercase)
-    const response = await axios.post(`${wuzapiBaseUrl}/webhook`, {
-      WebhookURL: webhook,
-      events: events || subscribe || []
-    }, {
+    // WUZAPI SetWebhook expects 'webhookurl' (lowercase) and 'events' (not Subscribe)
+    // See: handlers.go webhookStruct { WebhookURL string `json:"webhookurl"`, Events []string `json:"events,omitempty"` }
+    const wuzapiPayload = {
+      webhookurl: webhook,
+      events: eventsToSend
+    };
+    
+    logger.debug('Enviando para WUZAPI:', {
+      url: `${wuzapiBaseUrl}/webhook`,
+      payload: wuzapiPayload
+    });
+    
+    const response = await axios.post(`${wuzapiBaseUrl}/webhook`, wuzapiPayload, {
       headers: {
-        'token': userToken,
+        'Token': userToken,
         'Content-Type': 'application/json'
       },
       timeout: 10000
     });
     
     const result = response.data;
+    
+    logger.info('Resposta do WUZAPI:', {
+      success: result.success,
+      code: result.code,
+      data: result.data,
+      fullResponse: JSON.stringify(result)
+    });
     
     res.json({
       success: true,

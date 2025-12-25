@@ -165,15 +165,22 @@ class InboxWebhookService {
       const webhookEvents = events || DEFAULT_WEBHOOK_EVENTS;
 
       // Call WUZAPI to configure webhook
-      const response = await fetch(`${wuzapiConfig.baseUrl}/user/webhook`, {
+      // WUZAPI API: POST /webhook with Token header and webhookURL field
+      logger.debug('Configuring WUZAPI webhook', {
+        baseUrl: wuzapiConfig.baseUrl,
+        webhookUrl,
+        eventsCount: webhookEvents.length
+      });
+      
+      const response = await fetch(`${wuzapiConfig.baseUrl}/webhook`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${inbox.wuzapi_token}`,
+          'Token': inbox.wuzapi_token,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           webhookURL: webhookUrl,
-          subscribe: webhookEvents
+          Subscribe: webhookEvents
         })
       });
 
@@ -307,16 +314,19 @@ class InboxWebhookService {
         try {
           const wuzapiConfig = await TenantSettingsService.getWuzapiConfig(tenantId);
           if (wuzapiConfig.isConfigured) {
-            const response = await fetch(`${wuzapiConfig.baseUrl}/user/webhook`, {
+            // WUZAPI API: GET /webhook with Token header
+            const response = await fetch(`${wuzapiConfig.baseUrl}/webhook`, {
               method: 'GET',
               headers: {
-                'Authorization': `Bearer ${inbox.wuzapi_token}`,
+                'Token': inbox.wuzapi_token,
                 'Content-Type': 'application/json'
               }
             });
 
             if (response.ok) {
-              wuzapiStatus = await response.json();
+              const result = await response.json();
+              // WUZAPI returns: { code: 200, data: { subscribe: [...], webhook: "..." }, success: true }
+              wuzapiStatus = result.data || result;
             }
           }
         } catch (wuzapiError) {
@@ -479,12 +489,18 @@ class InboxWebhookService {
         try {
           const wuzapiConfig = await TenantSettingsService.getWuzapiConfig(tenantId);
           if (wuzapiConfig.isConfigured) {
-            await fetch(`${wuzapiConfig.baseUrl}/user/webhook`, {
-              method: 'DELETE',
+            // WUZAPI doesn't have a DELETE endpoint for webhooks
+            // To clear, POST with empty webhookURL
+            await fetch(`${wuzapiConfig.baseUrl}/webhook`, {
+              method: 'POST',
               headers: {
-                'Authorization': `Bearer ${inbox.wuzapi_token}`,
+                'Token': inbox.wuzapi_token,
                 'Content-Type': 'application/json'
-              }
+              },
+              body: JSON.stringify({
+                webhookURL: '',
+                Subscribe: []
+              })
             });
           }
         } catch (wuzapiError) {

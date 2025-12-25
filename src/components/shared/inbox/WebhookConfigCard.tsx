@@ -7,24 +7,51 @@
  * Requirements: 3.1-3.8
  */
 
-import { useMemo, useState } from 'react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { useMemo, useState, useEffect } from 'react'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { 
-  Globe, 
+  Webhook,
   Save,
   Loader2,
   AlertCircle,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  CheckCircle2,
+  MessageSquare,
+  Users,
+  Radio,
+  Settings,
+  RefreshCw,
+  Phone,
+  Link,
+  Zap,
+  Star
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { WebhookConfigCardProps, AvailableEvent } from './types'
 import { getEventCategories, getEventsByCategory, DEFAULT_AVAILABLE_EVENTS } from './types'
+
+/**
+ * Category icons mapping
+ */
+const CATEGORY_ICONS: Record<string, React.ReactNode> = {
+  'Mensagens': <MessageSquare className="h-4 w-4 text-blue-500" />,
+  'Grupos': <Users className="h-4 w-4 text-green-500" />,
+  'Newsletter': <Radio className="h-4 w-4 text-purple-500" />,
+  'Presença': <Radio className="h-4 w-4 text-emerald-500" />,
+  'Sistema': <Settings className="h-4 w-4 text-gray-500" />,
+  'Sincronização': <RefreshCw className="h-4 w-4 text-orange-500" />,
+  'Chamadas': <Phone className="h-4 w-4 text-red-500" />,
+  'Conexão': <Link className="h-4 w-4 text-cyan-500" />,
+  'Keep Alive': <Zap className="h-4 w-4 text-yellow-500" />,
+  'Pairing': <Link className="h-4 w-4 text-indigo-500" />,
+  'Outros': <Settings className="h-4 w-4 text-gray-400" />
+}
 
 /**
  * Validate URL format
@@ -53,14 +80,18 @@ export function WebhookConfigCard({
   hasChanges = false,
   className
 }: WebhookConfigCardProps) {
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
+  // Iniciar com todas as categorias expandidas por padrão
+  const categories = useMemo(() => getEventCategories(availableEvents), [availableEvents])
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(() => new Set(categories))
   const [urlError, setUrlError] = useState<string | null>(null)
 
-  // Get unique categories
-  const categories = useMemo(() => getEventCategories(availableEvents), [availableEvents])
+  // Atualizar categorias expandidas quando availableEvents mudar
+  useEffect(() => {
+    setExpandedCategories(new Set(categories))
+  }, [categories])
 
-  // Check if "All" is selected
-  const isAllSelected = config.events.includes('All') || config.events.length === 0
+  // Check if "All" is selected - only true if explicitly set to 'All'
+  const isAllSelected = config.events.includes('All')
 
   // Count selected events
   const selectedCount = isAllSelected 
@@ -153,21 +184,24 @@ export function WebhookConfigCard({
     onSave()
   }
 
+  // Verificar se webhook está configurado
+  const isWebhookConfigured = config.webhookUrl && config.webhookUrl.trim() !== ''
+
   return (
     <Card className={className}>
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
             <CardTitle className="text-lg font-semibold flex items-center gap-2">
-              <Globe className="h-5 w-5" />
+              <Webhook className="h-5 w-5" />
               Configuração de Webhook
             </CardTitle>
             <CardDescription>
-              Configure a URL e eventos para receber notificações
+              Configure o webhook para receber eventos do WhatsApp em tempo real
             </CardDescription>
           </div>
           <Badge variant="secondary" className="text-xs">
-            {selectedCount} evento{selectedCount !== 1 ? 's' : ''}
+            {selectedCount} selecionado{selectedCount !== 1 ? 's' : ''}
           </Badge>
         </div>
       </CardHeader>
@@ -193,99 +227,121 @@ export function WebhookConfigCard({
             </p>
           )}
           <p className="text-xs text-muted-foreground">
-            Deixe vazio para desativar o webhook
+            URL onde os eventos do WhatsApp serão enviados via POST
           </p>
         </div>
 
-        {/* All Events Toggle */}
-        <div className="flex items-center space-x-2 p-3 bg-muted/50 rounded-lg">
-          <Checkbox
-            id="all-events"
-            checked={isAllSelected}
-            onCheckedChange={handleToggleAll}
-            disabled={readOnly || isLoading}
-          />
-          <Label 
-            htmlFor="all-events" 
-            className="text-sm font-medium cursor-pointer flex-1"
-          >
-            Todos os Eventos
-          </Label>
-          <Badge variant="outline" className="text-xs">
-            {availableEvents.length} eventos
-          </Badge>
-        </div>
+        {/* Eventos para Receber */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <Label className="text-sm font-medium">Eventos para Receber</Label>
+            <Badge variant="outline" className="text-xs">
+              {selectedCount} selecionado{selectedCount !== 1 ? 's' : ''}
+            </Badge>
+          </div>
 
-        {/* Event Categories */}
-        {!isAllSelected && (
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">Eventos Selecionados</Label>
-            <div className="border rounded-lg divide-y">
-              {categories.map(category => {
-                const categoryEvents = getEventsByCategory(availableEvents, category)
-                const selectedInCategory = categoryEvents.filter(e => 
-                  config.events.includes(e.value)
-                ).length
-                const isExpanded = expandedCategories.has(category)
+          {/* All Events Toggle */}
+          <div className="flex items-center space-x-3 p-3 bg-primary/5 rounded-lg border border-primary/20">
+            <Checkbox
+              id="all-events"
+              checked={isAllSelected}
+              onCheckedChange={handleToggleAll}
+              disabled={readOnly || isLoading}
+              className="border-primary data-[state=checked]:bg-primary"
+            />
+            <Star className="h-4 w-4 text-yellow-500" />
+            <div className="flex-1">
+              <Label 
+                htmlFor="all-events" 
+                className="text-sm font-medium cursor-pointer"
+              >
+                Todos os Eventos
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Receber todos os 50+ tipos de eventos disponíveis automaticamente
+              </p>
+            </div>
+          </div>
 
-                return (
-                  <div key={category}>
-                    {/* Category Header */}
-                    <button
-                      type="button"
-                      onClick={() => toggleCategory(category)}
-                      disabled={readOnly || isLoading}
-                      className={cn(
-                        "w-full flex items-center justify-between p-3 text-left",
-                        "hover:bg-muted/50 transition-colors",
-                        (readOnly || isLoading) && "opacity-50 cursor-not-allowed"
-                      )}
-                    >
+          {/* Event Categories - Always visible */}
+          <div className="border rounded-lg divide-y">
+            {categories.map(category => {
+              const categoryEvents = getEventsByCategory(availableEvents, category)
+              const selectedInCategory = categoryEvents.filter(e => 
+                isAllSelected || config.events.includes(e.value)
+              ).length
+              const isExpanded = expandedCategories.has(category)
+              const categoryIcon = CATEGORY_ICONS[category] || <Settings className="h-4 w-4 text-gray-400" />
+
+              return (
+                <div key={category}>
+                  {/* Category Header */}
+                  <button
+                    type="button"
+                    onClick={() => toggleCategory(category)}
+                    disabled={readOnly || isLoading}
+                    className={cn(
+                      "w-full flex items-center justify-between p-3 text-left",
+                      "hover:bg-muted/50 transition-colors",
+                      (readOnly || isLoading) && "opacity-50 cursor-not-allowed"
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      {categoryIcon}
                       <span className="text-sm font-medium">{category}</span>
-                      <div className="flex items-center gap-2">
-                        {selectedInCategory > 0 && (
-                          <Badge variant="secondary" className="text-xs">
-                            {selectedInCategory}/{categoryEvents.length}
-                          </Badge>
-                        )}
-                        {isExpanded ? (
-                          <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                        ) : (
-                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                        )}
-                      </div>
-                    </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {selectedInCategory > 0 && (
+                        <Badge 
+                          variant={selectedInCategory === categoryEvents.length ? "default" : "secondary"} 
+                          className="text-xs"
+                        >
+                          {selectedInCategory}/{categoryEvents.length}
+                        </Badge>
+                      )}
+                      {isExpanded ? (
+                        <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </div>
+                  </button>
 
-                    {/* Category Events */}
-                    {isExpanded && (
-                      <div className="px-3 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {categoryEvents.map(event => (
-                          <div 
-                            key={event.value}
-                            className="flex items-center space-x-2"
-                          >
-                            <Checkbox
-                              id={`event-${event.value}`}
-                              checked={isEventSelected(event.value)}
-                              onCheckedChange={() => handleToggleEvent(event.value)}
-                              disabled={readOnly || isLoading}
-                            />
+                  {/* Category Events */}
+                  {isExpanded && (
+                    <div className="px-3 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-2 bg-muted/20">
+                      {categoryEvents.map(event => (
+                        <div 
+                          key={event.value}
+                          className="flex items-start space-x-2 p-2 rounded hover:bg-muted/50"
+                        >
+                          <Checkbox
+                            id={`event-${event.value}`}
+                            checked={isEventSelected(event.value)}
+                            onCheckedChange={() => handleToggleEvent(event.value)}
+                            disabled={readOnly || isLoading || isAllSelected}
+                            className="mt-0.5"
+                          />
+                          <div className="flex-1 min-w-0">
                             <Label 
                               htmlFor={`event-${event.value}`}
-                              className="text-xs cursor-pointer"
+                              className={cn(
+                                "text-sm cursor-pointer block",
+                                isAllSelected && "text-muted-foreground"
+                              )}
                             >
                               {event.label}
                             </Label>
                           </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
-        )}
+        </div>
 
         {/* Save Button */}
         {onSave && !readOnly && (
@@ -304,6 +360,19 @@ export function WebhookConfigCard({
           </div>
         )}
       </CardContent>
+
+      {/* Footer - Webhook Status */}
+      {isWebhookConfigured && (
+        <CardFooter className="bg-green-500/10 border-t border-green-500/20">
+          <div className="flex items-center gap-2 text-green-700 dark:text-green-400">
+            <CheckCircle2 className="h-4 w-4" />
+            <span className="text-sm font-medium">Webhook configurado</span>
+            <span className="text-xs text-muted-foreground">
+              Seu webhook receberá notificações em tempo real para os eventos selecionados
+            </span>
+          </div>
+        </CardFooter>
+      )}
     </Card>
   )
 }
