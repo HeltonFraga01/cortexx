@@ -356,6 +356,42 @@ function requireAdminToken(req, res, next) {
 }
 
 /**
+ * Helper to get impersonation context from request
+ * Checks both session and X-Impersonation-Context header
+ * The header is used for cross-subdomain support where cookies may not work
+ */
+function getImpersonationContext(req) {
+  // First check session (works when cookies are shared)
+  if (req.session?.impersonation?.tenantId) {
+    return req.session.impersonation;
+  }
+  
+  // Fallback to header (for cross-subdomain support)
+  const headerContext = req.headers['x-impersonation-context'];
+  if (headerContext) {
+    try {
+      const parsed = JSON.parse(headerContext);
+      if (parsed.tenantId && parsed.sessionId) {
+        return {
+          tenantId: parsed.tenantId,
+          sessionId: parsed.sessionId,
+          // These may not be in the header, but we have the essential data
+          tenantSubdomain: parsed.tenantSubdomain || null,
+          tenantName: parsed.tenantName || null,
+        };
+      }
+    } catch (error) {
+      logger.warn('Failed to parse X-Impersonation-Context header', {
+        error: error.message,
+        header: headerContext?.substring(0, 50)
+      });
+    }
+  }
+  
+  return null;
+}
+
+/**
  * Middleware que requer role de admin
  * 
  * Verifica se existe uma sessão ativa E se o role é 'admin'.
@@ -408,8 +444,12 @@ async function requireAdmin(req, res, next) {
         }
         
         // Check if user has admin role (admin, tenant_admin, or owner)
+        // Also allow superadmin when impersonating a tenant
         const validAdminRoles = ['admin', 'tenant_admin', 'tenant_admin_impersonated', 'owner', 'administrator'];
-        if (!validAdminRoles.includes(userRole)) {
+        const impersonationContext = getImpersonationContext(req);
+        const isSuperadminImpersonating = userRole === 'superadmin' && impersonationContext?.tenantId;
+        
+        if (!validAdminRoles.includes(userRole) && !isSuperadminImpersonating) {
           logger.error('Admin authentication failed - Insufficient permissions (JWT)', {
             type: 'admin_auth_failure',
             reason: 'insufficient_permissions',
@@ -428,6 +468,21 @@ async function requireAdmin(req, res, next) {
             error: 'Acesso de administrador necessário',
             code: 'FORBIDDEN',
             timestamp: new Date().toISOString()
+          });
+        }
+        
+        // If superadmin is impersonating, set tenant context from impersonation
+        if (isSuperadminImpersonating) {
+          req.context = req.context || {};
+          req.context.tenantId = impersonationContext.tenantId;
+          req.context.isImpersonating = true;
+          
+          logger.debug('Superadmin impersonation context set', {
+            superadminId: userId,
+            tenantId: impersonationContext.tenantId,
+            tenantName: impersonationContext.tenantName,
+            path: req.path,
+            source: req.session?.impersonation ? 'session' : 'header'
           });
         }
 
@@ -512,8 +567,12 @@ async function requireAdmin(req, res, next) {
   }
   
   // Check admin role
+  // Also allow superadmin when impersonating a tenant
   const validAdminRoles = ['admin', 'tenant_admin', 'tenant_admin_impersonated', 'owner', 'administrator'];
-  if (!validAdminRoles.includes(req.session.role)) {
+  const impersonationContextSession = getImpersonationContext(req);
+  const isSuperadminImpersonating = req.session.role === 'superadmin' && impersonationContextSession?.tenantId;
+  
+  if (!validAdminRoles.includes(req.session.role) && !isSuperadminImpersonating) {
     logger.error('Admin authentication failed - Insufficient permissions', {
       type: 'admin_auth_failure',
       reason: 'insufficient_permissions',
@@ -532,6 +591,21 @@ async function requireAdmin(req, res, next) {
       error: 'Acesso de administrador necessário',
       code: 'FORBIDDEN',
       timestamp: new Date().toISOString()
+    });
+  }
+  
+  // If superadmin is impersonating, set tenant context from impersonation
+  if (isSuperadminImpersonating) {
+    req.context = req.context || {};
+    req.context.tenantId = impersonationContextSession.tenantId;
+    req.context.isImpersonating = true;
+    
+    logger.debug('Superadmin impersonation context set (session)', {
+      superadminId: req.session.userId,
+      tenantId: impersonationContextSession.tenantId,
+      tenantName: impersonationContextSession.tenantName,
+      path: req.path,
+      source: req.session?.impersonation ? 'session' : 'header'
     });
   }
 

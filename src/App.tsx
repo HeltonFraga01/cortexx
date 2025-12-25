@@ -6,10 +6,12 @@ import { useEffect, Suspense, lazy } from "react";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { AuthProvider } from "./contexts/AuthContext";
 import { BrandingProvider } from "./contexts/BrandingContext";
+import { ImpersonationProvider } from "./contexts/ImpersonationContext";
 import { WuzAPIAuthProvider } from "./contexts/WuzAPIAuthContext";
 import { WuzAPIInstancesProvider } from "./contexts/WuzAPIInstancesContext";
 import { AgentAuthProvider } from "./contexts/AgentAuthContext";
 import { SupabaseInboxProvider } from "./contexts/SupabaseInboxContext";
+import { ImpersonationBanner } from "./components/shared/ImpersonationBanner";
 
 import { useBrandingConfig } from "./hooks/useBranding";
 import { updateAppNameMetaTags, updateDynamicFavicon, updateOgImage } from "./utils/metaTags";
@@ -81,10 +83,11 @@ const PageTitle = () => {
   return null;
 };
 
-// Root layout component with PageTitle
+// Root layout component with PageTitle and ImpersonationBanner
 const RootLayout = () => {
   return (
     <>
+      <ImpersonationBanner />
       <PageTitle />
       <Suspense fallback={<RouteLoadingSkeleton />}>
         <Outlet />
@@ -165,18 +168,20 @@ const App = () => {
   return (
     <ThemeProvider defaultTheme="system">
       <AuthProvider>
-        <BrandingProvider>
-          <WuzAPIAuthProvider>
-            <WuzAPIInstancesProvider>
-              <QueryClientProvider client={queryClient}>
-                <TooltipProvider>
-                  <Toaster />
-                  <RouterProvider router={router} />
-                </TooltipProvider>
-              </QueryClientProvider>
-            </WuzAPIInstancesProvider>
-          </WuzAPIAuthProvider>
-        </BrandingProvider>
+        <ImpersonationProvider>
+          <BrandingProvider>
+            <WuzAPIAuthProvider>
+              <WuzAPIInstancesProvider>
+                <QueryClientProvider client={queryClient}>
+                  <TooltipProvider>
+                    <Toaster />
+                    <RouterProvider router={router} />
+                  </TooltipProvider>
+                </QueryClientProvider>
+              </WuzAPIInstancesProvider>
+            </WuzAPIAuthProvider>
+          </BrandingProvider>
+        </ImpersonationProvider>
       </AuthProvider>
     </ThemeProvider>
   );

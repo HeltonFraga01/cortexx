@@ -12,6 +12,31 @@ export interface ApiResponse<T = any> {
   status?: number;
 }
 
+// Storage key for impersonation state (shared with ImpersonationContext)
+const IMPERSONATION_STORAGE_KEY = 'wuzapi_impersonation';
+
+/**
+ * Get impersonation context from localStorage
+ * Used to send X-Impersonation-Context header for superadmin requests
+ */
+const getImpersonationContext = (): { tenantId: string; sessionId: string } | null => {
+  try {
+    const stored = localStorage.getItem(IMPERSONATION_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed.isImpersonating && parsed.tenantId && parsed.sessionId) {
+        return {
+          tenantId: parsed.tenantId,
+          sessionId: parsed.sessionId,
+        };
+      }
+    }
+  } catch (error) {
+    // Ignore parse errors
+  }
+  return null;
+};
+
 // Classe para gerenciar cliente da API do backend
 export class BackendApiClient {
   private client: AxiosInstance;
@@ -97,6 +122,17 @@ export class BackendApiClient {
         } catch (error) {
           if (IS_DEVELOPMENT) {
             console.warn('Failed to get Supabase session:', error);
+          }
+        }
+        
+        // Add impersonation context header for superadmin requests
+        const impersonationContext = getImpersonationContext();
+        if (impersonationContext) {
+          config.headers['X-Impersonation-Context'] = JSON.stringify(impersonationContext);
+          if (IS_DEVELOPMENT) {
+            console.log('🎭 Adding impersonation context header', {
+              tenantId: impersonationContext.tenantId,
+            });
           }
         }
         

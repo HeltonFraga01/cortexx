@@ -20,6 +20,7 @@ import {
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { backendApi } from '@/services/api-client';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 
 interface DashboardMetrics {
   totalMRR: number;
@@ -55,6 +56,7 @@ const SuperadminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const navigate = useNavigate();
+  const { startImpersonation, isLoading: isImpersonating } = useImpersonation();
 
   const fetchDashboardData = async (isRefresh = false) => {
     try {
@@ -86,9 +88,9 @@ const SuperadminDashboard = () => {
           activeTenants: apiData.tenants?.active || 0,
           totalAccounts: apiData.accounts?.total || 0,
           activeAccounts: apiData.accounts?.total || 0,
-          totalAgents: 0, // Not provided by API yet
-          totalInboxes: 0, // Not provided by API yet
-          totalMessages: 0, // Not provided by API yet
+          totalAgents: apiData.agents?.total || 0,
+          totalInboxes: apiData.inboxes?.total || 0,
+          totalMessages: apiData.messages?.last30Days || 0,
           revenueGrowth: 0, // Not provided by API yet
           tenantGrowth: apiData.tenants?.newLast30Days || 0
         };
@@ -103,21 +105,21 @@ const SuperadminDashboard = () => {
               name: t.name,
               subdomain: t.subdomain,
               status: t.status,
-              accountCount: 0,
-              mrr: 0,
+              accountCount: t.accountCount || 0,
+              mrr: t.mrr || 0,
               lastActivity: t.updated_at || t.created_at,
               createdAt: t.created_at
             })));
           }
         } catch (tenantError) {
-          console.warn('Failed to fetch tenants list:', tenantError);
+          console.warn('Falha ao buscar lista de tenants:', tenantError);
         }
       } else {
         throw new Error(data?.error || 'Falha ao carregar dados do dashboard');
       }
       
     } catch (error) {
-      console.error('Error fetching dashboard data:', error);
+      console.error('Erro ao buscar dados do dashboard:', error);
       toast.error('Falha ao carregar dados do dashboard');
     } finally {
       setLoading(false);
@@ -131,48 +133,36 @@ const SuperadminDashboard = () => {
 
   const handleImpersonateTenant = async (tenantId: string) => {
     try {
-      const response = await backendApi.post<any>(`/superadmin/impersonate/${tenantId}`);
+      const success = await startImpersonation(tenantId);
 
-      if (!response.success) {
-        throw new Error(response.error || 'Falha ao iniciar impersonação');
-      }
-
-      const data = response.data;
-      
-      if (data?.success) {
-        const tenantName = data.data.tenant?.name || data.data.impersonation?.tenantName;
-        const subdomain = data.data.tenant?.subdomain || data.data.impersonation?.tenantSubdomain;
-        
-        toast.success(`Agora impersonando ${tenantName}`);
+      if (success) {
+        const tenant = tenants.find(t => t.id === tenantId);
+        toast.success(`Agora gerenciando ${tenant?.name || 'tenant'}`);
         
         // Check if running in local development (localhost or *.localhost)
         const isLocalDev = window.location.hostname === 'localhost' || 
                           window.location.hostname.endsWith('.localhost');
         
         if (isLocalDev) {
-          // In local development, subdomains don't work properly
-          // Navigate to tenant admin panel using query param or session-based approach
-          toast.info(`Impersonação iniciada para ${subdomain}. Em produção, você seria redirecionado para o painel admin do tenant.`);
-          // Navigate to admin dashboard with impersonation context
+          toast.info(`Gerenciamento iniciado para ${tenant?.subdomain}. Em produção, você seria redirecionado para o painel admin do tenant.`);
           navigate('/admin/dashboard');
         } else {
-          // In production, redirect to tenant subdomain
           const protocol = window.location.protocol;
           const baseDomain = window.location.hostname.split('.').slice(-2).join('.');
-          window.location.href = `${protocol}//${subdomain}.${baseDomain}/admin`;
+          window.location.href = `${protocol}//${tenant?.subdomain}.${baseDomain}/admin`;
         }
       } else {
-        throw new Error(data?.error || 'Falha ao iniciar impersonação');
+        throw new Error('Falha ao iniciar gerenciamento');
       }
     } catch (error) {
-      console.error('Error starting impersonation:', error);
-      toast.error('Falha ao impersonar tenant');
+      console.error('Erro ao iniciar gerenciamento:', error);
+      toast.error('Falha ao gerenciar tenant');
     }
   };
 
   useEffect(() => {
     fetchDashboardData();
-    // Auto-refresh every 5 minutes
+    // Auto-refresh a cada 5 minutos
     const interval = setInterval(() => fetchDashboardData(true), 300000);
     return () => clearInterval(interval);
   }, []);
@@ -186,8 +176,8 @@ const SuperadminDashboard = () => {
               <BarChart3 className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-foreground">Superadmin Dashboard</h1>
-              <p className="text-muted-foreground">Platform overview and tenant management</p>
+              <h1 className="text-2xl font-bold text-foreground">Painel Superadmin</h1>
+              <p className="text-muted-foreground">Visão geral da plataforma e gestão de tenants</p>
             </div>
           </div>
           <div className="flex items-center space-x-2">
@@ -228,15 +218,24 @@ const SuperadminDashboard = () => {
   }
 
   const formatCurrency = (cents: number) => {
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('pt-BR', {
       style: 'currency',
-      currency: 'USD'
+      currency: 'BRL'
     }).format(cents / 100);
   };
 
   const formatGrowth = (growth: number) => {
     const sign = growth >= 0 ? '+' : '';
     return `${sign}${growth.toFixed(1)}%`;
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'active': return 'ativo';
+      case 'inactive': return 'inativo';
+      case 'suspended': return 'suspenso';
+      default: return status;
+    }
   };
 
   return (
@@ -247,9 +246,9 @@ const SuperadminDashboard = () => {
             <BarChart3 className="h-5 w-5 text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Superadmin Dashboard</h1>
+            <h1 className="text-2xl font-bold text-foreground">Painel Superadmin</h1>
             <p className="text-muted-foreground">
-              Platform overview and tenant management
+              Visão geral da plataforma e gestão de tenants
             </p>
           </div>
         </div>
@@ -261,80 +260,80 @@ const SuperadminDashboard = () => {
             disabled={refreshing}
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
+            Atualizar
           </Button>
           <Button
             onClick={() => navigate('/superadmin/tenants/new')}
             className="bg-orange-500 hover:bg-orange-600 text-white"
           >
             <Plus className="h-4 w-4 mr-2" />
-            New Tenant
+            Novo Tenant
           </Button>
         </div>
       </div>
 
-      {/* Key Metrics */}
+      {/* Métricas Principais */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <StatsCard
-          title="Total MRR"
+          title="Receita Mensal (MRR)"
           value={formatCurrency(metrics?.totalMRR || 0)}
           icon={DollarSign}
           variant="green"
         />
 
         <StatsCard
-          title="Total Tenants"
-          value={`${metrics?.totalTenants || 0} (${metrics?.activeTenants || 0} active)`}
+          title="Total de Tenants"
+          value={`${metrics?.totalTenants || 0} (${metrics?.activeTenants || 0} ativos)`}
           icon={Building2}
           variant="blue"
         />
 
         <StatsCard
-          title="Total Accounts"
+          title="Total de Contas"
           value={`${metrics?.totalAccounts || 0}`}
           icon={Users}
           variant="purple"
         />
 
         <StatsCard
-          title="Platform Activity"
-          value={`${metrics?.totalMessages || 0} messages`}
+          title="Atividade da Plataforma"
+          value={`${metrics?.totalMessages || 0} mensagens`}
           icon={Activity}
           variant="orange"
         />
       </div>
 
-      {/* Additional Metrics */}
+      {/* Métricas Adicionais */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Agents</CardTitle>
+            <CardTitle className="text-sm font-medium">Total de Agentes</CardTitle>
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{metrics?.totalAgents || 0}</div>
             <p className="text-xs text-muted-foreground">
-              Across all tenants
+              Em todos os tenants
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Inboxes</CardTitle>
+            <CardTitle className="text-sm font-medium">Total de Caixas</CardTitle>
             <Database className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{metrics?.totalInboxes || 0}</div>
             <p className="text-xs text-muted-foreground">
-              WhatsApp connections
+              Conexões WhatsApp
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Growth Rate</CardTitle>
+            <CardTitle className="text-sm font-medium">Taxa de Crescimento</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -342,23 +341,23 @@ const SuperadminDashboard = () => {
               {metrics?.tenantGrowth ? formatGrowth(metrics.tenantGrowth) : '0%'}
             </div>
             <p className="text-xs text-muted-foreground">
-              Tenant growth this month
+              Crescimento de tenants este mês
             </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Tenant List */}
+      {/* Lista de Tenants */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="flex items-center space-x-2">
                 <Building2 className="h-5 w-5" />
-                <span>Tenant Overview</span>
+                <span>Visão Geral dos Tenants</span>
               </CardTitle>
               <CardDescription>
-                Manage and monitor all platform tenants
+                Gerencie e monitore todos os tenants da plataforma
               </CardDescription>
             </div>
             <Button
@@ -366,7 +365,7 @@ const SuperadminDashboard = () => {
               onClick={() => navigate('/superadmin/tenants')}
             >
               <BarChart3 className="h-4 w-4 mr-2" />
-              View All
+              Ver Todos
             </Button>
           </div>
         </CardHeader>
@@ -377,16 +376,16 @@ const SuperadminDashboard = () => {
                 <div className="p-4 rounded-xl bg-muted mb-4">
                   <Building2 className="h-8 w-8 text-muted-foreground" />
                 </div>
-                <h3 className="text-lg font-medium text-foreground">No tenants yet</h3>
+                <h3 className="text-lg font-medium text-foreground">Nenhum tenant ainda</h3>
                 <p className="text-sm text-muted-foreground mt-1 mb-4">
-                  Create your first tenant to get started
+                  Crie seu primeiro tenant para começar
                 </p>
                 <Button 
                   onClick={() => navigate('/superadmin/tenants/new')}
                   className="bg-orange-500 hover:bg-orange-600 text-white"
                 >
                   <Plus className="h-4 w-4 mr-2" />
-                  Create Tenant
+                  Criar Tenant
                 </Button>
               </div>
             ) : (
@@ -408,13 +407,13 @@ const SuperadminDashboard = () => {
                                 : 'bg-red-500/10 text-red-600 border-red-500/20'
                           }
                         >
-                          {tenant.status}
+                          {getStatusLabel(tenant.status)}
                         </Badge>
                       </div>
                       <div className="flex items-center space-x-4 text-sm text-muted-foreground">
                         <span>{tenant.subdomain}.cortexx.online</span>
                         <span>•</span>
-                        <span>{tenant.accountCount} accounts</span>
+                        <span>{tenant.accountCount} {tenant.accountCount === 1 ? 'conta' : 'contas'}</span>
                         <span>•</span>
                         <span>{formatCurrency(tenant.mrr)} MRR</span>
                       </div>
@@ -428,16 +427,16 @@ const SuperadminDashboard = () => {
                       onClick={() => navigate(`/superadmin/tenants/${tenant.id}`)}
                     >
                       <Eye className="h-4 w-4 mr-1" />
-                      View
+                      Ver
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => handleImpersonateTenant(tenant.id)}
-                      disabled={tenant.status !== 'active'}
+                      disabled={tenant.status !== 'active' || isImpersonating}
                     >
                       <Settings className="h-4 w-4 mr-1" />
-                      Manage
+                      Gerenciar
                     </Button>
                   </div>
                 </div>
@@ -450,7 +449,7 @@ const SuperadminDashboard = () => {
                   variant="outline"
                   onClick={() => navigate('/superadmin/tenants')}
                 >
-                  View All {tenants.length} Tenants
+                  Ver Todos os {tenants.length} Tenants
                 </Button>
               </div>
             )}
@@ -458,15 +457,15 @@ const SuperadminDashboard = () => {
         </CardContent>
       </Card>
 
-      {/* System Health Summary */}
+      {/* Resumo de Saúde da Plataforma */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
             <Server className="h-5 w-5" />
-            <span>Platform Health</span>
+            <span>Saúde da Plataforma</span>
           </CardTitle>
           <CardDescription>
-            Overall platform status and performance
+            Status geral e desempenho da plataforma
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -475,25 +474,25 @@ const SuperadminDashboard = () => {
               <div className="text-2xl font-bold text-green-600">
                 {metrics?.activeTenants || 0}
               </div>
-              <p className="text-sm text-muted-foreground">Active Tenants</p>
+              <p className="text-sm text-muted-foreground">Tenants Ativos</p>
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-blue-600">
                 {metrics?.activeAccounts || 0}
               </div>
-              <p className="text-sm text-muted-foreground">Active Accounts</p>
+              <p className="text-sm text-muted-foreground">Contas Ativas</p>
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-purple-600">
                 {metrics?.totalAgents || 0}
               </div>
-              <p className="text-sm text-muted-foreground">Total Agents</p>
+              <p className="text-sm text-muted-foreground">Total de Agentes</p>
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-orange-600">
                 {formatCurrency(metrics?.totalMRR || 0)}
               </div>
-              <p className="text-sm text-muted-foreground">Monthly Revenue</p>
+              <p className="text-sm text-muted-foreground">Receita Mensal</p>
             </div>
           </div>
         </CardContent>

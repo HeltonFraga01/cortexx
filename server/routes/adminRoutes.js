@@ -275,13 +275,46 @@ router.get('/dashboard-stats',
     const userRole = req.session?.role || req.user?.role;
     const userId = req.session?.userId || req.user?.id;
     
-    // Verificar se está autenticado como admin
-    if (!userId || (userRole !== 'admin' && userRole !== 'owner' && userRole !== 'administrator')) {
+    // Check for superadmin impersonation context
+    // Superadmins can access admin routes when impersonating a tenant
+    let isImpersonating = false;
+    let impersonationTenantId = null;
+    
+    // Check session for impersonation
+    if (req.session?.impersonation?.tenantId) {
+      isImpersonating = true;
+      impersonationTenantId = req.session.impersonation.tenantId;
+    }
+    
+    // Fallback to header for cross-subdomain support
+    const headerContext = req.headers['x-impersonation-context'];
+    if (!isImpersonating && headerContext) {
+      try {
+        const parsed = JSON.parse(headerContext);
+        if (parsed.tenantId && parsed.sessionId) {
+          isImpersonating = true;
+          impersonationTenantId = parsed.tenantId;
+        }
+      } catch (error) {
+        logger.warn('Failed to parse X-Impersonation-Context header', {
+          error: error.message
+        });
+      }
+    }
+    
+    // Allow superadmin with active impersonation to access admin routes
+    const isSuperadminImpersonating = userRole === 'superadmin' && isImpersonating;
+    
+    // Verificar se está autenticado como admin (or superadmin impersonating)
+    const validAdminRoles = ['admin', 'owner', 'administrator', 'tenant_admin'];
+    if (!userId || (!validAdminRoles.includes(userRole) && !isSuperadminImpersonating)) {
       logger.error('Dashboard stats access denied - Not authenticated as admin', {
         type: 'dashboard_stats_auth_failure',
         sessionId: req.sessionID,
         userId: userId,
         role: userRole,
+        isImpersonating,
+        impersonationTenantId,
         path: req.path,
         ip: req.ip,
         auth_method: req.user ? 'jwt' : 'session'
@@ -292,6 +325,15 @@ router.get('/dashboard-stats',
         error: 'Não autenticado como administrador',
         code: 401,
         timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Log superadmin impersonation access
+    if (isSuperadminImpersonating) {
+      logger.info('Superadmin accessing admin dashboard via impersonation', {
+        superadminId: userId,
+        tenantId: impersonationTenantId,
+        endpoint: '/dashboard-stats'
       });
     }
     

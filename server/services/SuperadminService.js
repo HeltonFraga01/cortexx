@@ -677,10 +677,54 @@ class SuperadminService {
         throw new Error(`Failed to list tenants: ${error.message}`);
       }
 
+      // Enrich tenants with basic metrics (accountCount and MRR)
+      const enrichedTenants = await Promise.all((tenants || []).map(async (tenant) => {
+        try {
+          // Get account count for this tenant
+          const { count: accountCount } = await this.supabase.adminClient
+            .from('accounts')
+            .select('*', { count: 'exact', head: true })
+            .eq('tenant_id', tenant.id)
+            .eq('status', 'active');
+
+          // Get MRR for this tenant from active subscriptions
+          const { data: subscriptionData } = await this.supabase.adminClient
+            .from('user_subscriptions')
+            .select(`
+              status,
+              tenant_plans!inner (
+                price_cents,
+                billing_cycle,
+                tenant_id
+              )
+            `)
+            .eq('tenant_plans.tenant_id', tenant.id)
+            .eq('status', 'active');
+
+          const tenantMRR = this.calculateMRRFromSubscriptions(subscriptionData || []);
+
+          return {
+            ...tenant,
+            accountCount: accountCount || 0,
+            mrr: tenantMRR
+          };
+        } catch (metricsError) {
+          logger.warn('Failed to get tenant metrics in list', {
+            tenantId: tenant.id,
+            error: metricsError.message
+          });
+          return {
+            ...tenant,
+            accountCount: 0,
+            mrr: 0
+          };
+        }
+      }));
+
       const totalPages = Math.ceil((total || 0) / limit);
 
       return {
-        tenants: tenants || [],
+        tenants: enrichedTenants,
         page,
         limit,
         total: total || 0,
@@ -1148,6 +1192,26 @@ class SuperadminService {
         throw new Error(`Failed to get subscription count: ${subError.message}`);
       }
 
+      // Get total agents count across all tenants
+      const { count: totalAgents, error: agentError } = await this.supabase.adminClient
+        .from('agents')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'active');
+
+      if (agentError) {
+        logger.warn('Failed to get agent count', { error: agentError.message });
+      }
+
+      // Get total inboxes count across all tenants
+      const { count: totalInboxes, error: inboxError } = await this.supabase.adminClient
+        .from('inboxes')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'active');
+
+      if (inboxError) {
+        logger.warn('Failed to get inbox count', { error: inboxError.message });
+      }
+
       // Get recent activity (last 30 days)
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -1161,6 +1225,16 @@ class SuperadminService {
         .from('accounts')
         .select('*', { count: 'exact', head: true })
         .gte('created_at', thirtyDaysAgo.toISOString());
+
+      // Get total messages sent in last 30 days
+      const { count: messagesLast30Days, error: msgError } = await this.supabase.adminClient
+        .from('messages')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', thirtyDaysAgo.toISOString());
+
+      if (msgError) {
+        logger.warn('Failed to get message count', { error: msgError.message });
+      }
 
       return {
         tenants: {
@@ -1180,6 +1254,15 @@ class SuperadminService {
         },
         subscriptions: {
           active: activeSubscriptions || 0
+        },
+        agents: {
+          total: totalAgents || 0
+        },
+        inboxes: {
+          total: totalInboxes || 0
+        },
+        messages: {
+          last30Days: messagesLast30Days || 0
         },
         generatedAt: new Date().toISOString()
       };

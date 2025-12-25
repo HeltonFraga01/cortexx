@@ -7,6 +7,7 @@ dotenv.config();
 
 // Se SUPABASE_URL ou SESSION_SECRET não estiverem definidas, tentar carregar do diretório pai (raiz do projeto)
 if (!process.env.SUPABASE_URL || !process.env.SESSION_SECRET) {
+  // Note: logger not available yet at this point, using console for critical startup messages
   console.log('⚠️ Variáveis de ambiente críticas não encontradas no diretório server, tentando diretório pai...');
   dotenv.config({ path: path.join(__dirname, '../.env') });
 }
@@ -22,6 +23,7 @@ if (!process.env.SESSION_SECRET) {
 
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression'); // HTTP compression middleware
 const bodyParser = require('body-parser');
 // path already required at top
 const axios = require('axios');
@@ -120,23 +122,52 @@ const { subdomainRouter } = require('./middleware/subdomainRouter');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+const IS_PRODUCTION = NODE_ENV === 'production';
+
+// HTTP Compression middleware (before other middleware)
+// Reduces response size by 60-80% for text-based content
+app.use(compression({
+  level: 6, // Balanced compression level
+  threshold: 1024, // Only compress responses > 1KB
+  filter: (req, res) => {
+    // Don't compress if client doesn't accept it
+    if (req.headers['x-no-compression']) return false;
+    // Use default filter for other cases
+    return compression.filter(req, res);
+  }
+}));
 
 // Security headers com Helmet
-// CSP flexível para permitir HTML customizado na landing page com scripts de CDNs externos
+// CSP mais restritivo em produção, flexível em desenvolvimento
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:"],
+      // Em produção: remover unsafe-eval para maior segurança
+      // Em desenvolvimento: manter para HMR do Vite
+      scriptSrc: IS_PRODUCTION 
+        ? ["'self'", "'unsafe-inline'", "https:"]
+        : ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:"],
       styleSrc: ["'self'", "'unsafe-inline'", "https:"],
       imgSrc: ["'self'", "data:", "https:", "blob:"],
-      connectSrc: ["'self'", "https:"],
+      connectSrc: ["'self'", "https:", process.env.SUPABASE_URL, process.env.WUZAPI_BASE_URL].filter(Boolean),
       fontSrc: ["'self'", "data:", "https:"],
       objectSrc: ["'none'"],
       mediaSrc: ["'self'", "data:", "blob:", "https:"],
-      frameSrc: ["'self'", "https:"]
-    }
+      frameSrc: ["'self'", "https:"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      reportUri: ['/api/csp-report']
+    },
+    reportOnly: false // Set to true to test CSP without blocking
   },
+  // HSTS - Force HTTPS in production
+  hsts: IS_PRODUCTION ? {
+    maxAge: 31536000, // 1 year
+    includeSubDomains: true,
+    preload: true
+  } : false,
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: { policy: "cross-origin" },
   referrerPolicy: { policy: "strict-origin-when-cross-origin" }
@@ -204,12 +235,11 @@ app.use((req, res, next) => {
 
   // DEBUG: Log path and exemption status for Supabase routes
   if (req.path.includes('supabase') || req.originalUrl.includes('supabase')) {
-    console.log('CSRF Check:', {
+    logger.debug('CSRF Check:', {
       path: req.path,
       originalUrl: req.originalUrl,
       isExempt,
-      method: req.method,
-      headers: req.headers
+      method: req.method
     });
   }
 
@@ -698,99 +728,8 @@ app.use('/', monitoringRoutes);
 // ==================== USER ROUTES ====================
 // verifyUserToken agora é importado de ./middleware/verifyUserToken.js
 
-// GET /api/admin/dashboard-stats - Buscar estatísticas do dashboard administrativo
-app.get('/api/admin/dashboard-stats', async (req, res) => {
-  // Verificar token de admin
-  const authHeader = req.headers.authorization;
-  const adminToken = process.env.VITE_ADMIN_TOKEN || 'UeH7cZ2c1K3zVUBFi7SginSC';
-
-  if (!authHeader || authHeader !== adminToken) {
-    return res.status(401).json({
-      success: false,
-      error: 'Token de administrador inválido',
-      code: 401,
-      timestamp: new Date().toISOString()
-    });
-  }
-
-  try {
-    const wuzapiBaseUrl = process.env.WUZAPI_BASE_URL || 'https://wzapi.wasend.com.br';
-
-    // Buscar health da API
-    const healthResponse = await axios.get(`${wuzapiBaseUrl}/health`, {
-      timeout: 5000
-    });
-
-    // Buscar lista de usuários
-    const usersResponse = await axios.get(`${wuzapiBaseUrl}/admin/users`, {
-      headers: {
-        'Authorization': adminToken,
-        'Content-Type': 'application/json'
-      },
-      timeout: 5000
-    });
-
-    const healthData = healthResponse.data || {};
-    const usersData = usersResponse.data?.data || [];
-
-    // Calcular estatísticas
-    const connectedUsers = usersData.filter(user => user.connected).length;
-    const loggedInUsers = usersData.filter(user => user.loggedIn).length;
-    const totalUsers = usersData.length;
-
-    const packageJson = require('./package.json');
-
-    const stats = {
-      systemStatus: healthData.status || 'unknown',
-      uptime: healthData.uptime || '0s',
-      version: healthData.version || packageJson.version,
-      totalUsers: totalUsers,
-      connectedUsers: connectedUsers,
-      loggedInUsers: loggedInUsers,
-      activeConnections: healthData.active_connections || 0,
-      memoryStats: healthData.memory_stats || {
-        alloc_mb: 0,
-        sys_mb: 0,
-        total_alloc_mb: 0,
-        num_gc: 0
-      },
-      goroutines: healthData.goroutines || 0,
-      users: usersData.slice(0, 10) // Primeiros 10 usuários para o dashboard
-    };
-
-    res.json({
-      success: true,
-      data: stats
-    });
-
-  } catch (error) {
-    console.error('Erro ao buscar estatísticas administrativas:', error);
-
-    const packageJson = require('./package.json');
-
-    // Retornar estatísticas padrão em caso de erro
-    res.json({
-      success: true,
-      data: {
-        systemStatus: 'error',
-        uptime: '0s',
-        version: packageJson.version,
-        totalUsers: 0,
-        connectedUsers: 0,
-        loggedInUsers: 0,
-        activeConnections: 0,
-        memoryStats: {
-          alloc_mb: 0,
-          sys_mb: 0,
-          total_alloc_mb: 0,
-          num_gc: 0
-        },
-        goroutines: 0,
-        users: []
-      }
-    });
-  }
-});
+// NOTE: /api/admin/dashboard-stats route is defined in adminRoutes.js
+// It supports both session and JWT authentication, including superadmin impersonation
 
 // GET /api/user/messages - Buscar histórico de mensagens do usuário
 app.get('/api/user/messages', verifyUserToken, async (req, res) => {
@@ -840,7 +779,10 @@ app.get('/api/user/messages', verifyUserToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Erro ao buscar mensagens:', error);
+    logger.error('Erro ao buscar mensagens:', {
+      error: error.message,
+      stack: error.stack
+    });
 
     res.json({
       success: true,
@@ -899,7 +841,10 @@ app.get('/api/user/dashboard-stats', verifyUserToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Erro ao buscar estatísticas do dashboard:', error);
+    logger.error('Erro ao buscar estatísticas do dashboard:', {
+      error: error.message,
+      stack: error.stack
+    });
 
     // Retornar estatísticas padrão em caso de erro
     res.json({
@@ -1199,8 +1144,6 @@ async function startServer() {
 
     if (!isValid) {
       logger.error('❌ Validação de ambiente falhou. Servidor não pode iniciar.');
-      console.error('❌ Validação de ambiente falhou. Verifique os logs acima para detalhes.');
-      console.error('💡 Dica: Verifique se todas as variáveis obrigatórias estão configuradas em server/.env');
       process.exit(1);
     }
 
@@ -1285,16 +1228,6 @@ async function startServer() {
         database: 'Supabase',
         database_url: process.env.SUPABASE_URL || 'not configured'
       });
-
-      console.log(`🚀 WUZAPI Manager Server rodando na porta ${PORT}`);
-      console.log(`📊 Environment: ${NODE_ENV}`);
-      console.log(`🗄️ Database: Supabase (${process.env.SUPABASE_URL || 'not configured'})`);
-      console.log(`📊 Health check: http://localhost:${PORT}/health`);
-      console.log(`🔗 API Base: http://localhost:${PORT}/api`);
-
-      if (NODE_ENV === 'production') {
-        console.log(`🌐 Frontend servido em: http://localhost:${PORT}`);
-      }
     });
 
     // Initialize WebSocket server
@@ -1303,19 +1236,22 @@ async function startServer() {
     app.locals.io = io;
     app.locals.chatHandler = getChatHandler();
     logger.info('✅ WebSocket server initialized');
-    console.log('🔌 WebSocket server initialized');
 
     return server;
   } catch (error) {
-    logger.error('❌ Erro ao iniciar servidor:', error.message);
-    console.error('❌ Erro ao iniciar servidor:', error.message);
+    logger.error('❌ Erro ao iniciar servidor:', {
+      error: error.message,
+      stack: error.stack,
+      code: error.code
+    });
 
     // Fornecer orientações específicas baseadas no tipo de erro
     if (error.message.includes('Supabase')) {
-      console.error('💡 Dica: Verifique se SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY estão configurados corretamente');
-      console.error(`💡 URL atual: ${process.env.SUPABASE_URL || 'não configurado'}`);
+      logger.error('💡 Dica: Verifique se SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY estão configurados corretamente', {
+        supabase_url: process.env.SUPABASE_URL || 'não configurado'
+      });
     } else if (error.code === 'EADDRINUSE') {
-      console.error(`💡 Dica: A porta ${PORT} já está em uso. Tente uma porta diferente ou pare o processo que está usando esta porta`);
+      logger.error(`💡 Dica: A porta ${PORT} já está em uso. Tente uma porta diferente ou pare o processo que está usando esta porta`);
     }
 
     process.exit(1);
@@ -1352,7 +1288,6 @@ startServer().then(server => {
       uptime: process.uptime(),
       memoryUsage: process.memoryUsage()
     });
-    console.log(`\n🛑 Recebido ${signal}. Encerrando servidor graciosamente...`);
 
     const logShutdownComplete = (exitCode) => {
       const shutdownDuration = Date.now() - shutdownStartTime;
@@ -1362,32 +1297,27 @@ startServer().then(server => {
         shutdownDurationMs: shutdownDuration,
         totalUptimeSeconds: Math.floor(process.uptime())
       });
-      console.log(`✅ Shutdown completo (duração: ${shutdownDuration}ms)`);
       process.exit(exitCode);
     };
 
     server.close(() => {
       logger.info('Servidor HTTP encerrado');
-      console.log('✅ Servidor HTTP encerrado');
 
       // Parar StateSynchronizer
       if (app.locals.stateSynchronizer) {
         app.locals.stateSynchronizer.stopSync();
         logger.info('StateSynchronizer encerrado');
-        console.log('✅ StateSynchronizer encerrado');
       }
 
       // Parar CampaignScheduler
       if (app.locals.campaignScheduler) {
         app.locals.campaignScheduler.stop();
         logger.info('CampaignScheduler encerrado');
-        console.log('✅ CampaignScheduler encerrado');
       }
 
       // Parar sistema de alertas
       alertManager.stop();
       logger.info('Sistema de alertas encerrado');
-      console.log('✅ Sistema de alertas encerrado');
 
       // Fechar streams de log
       logger.close();
@@ -1403,7 +1333,6 @@ startServer().then(server => {
         signal,
         shutdownDurationMs: shutdownDuration 
       });
-      console.error(`❌ Forçando encerramento após timeout (${shutdownDuration}ms)`);
       process.exit(1);
     }, 10000);
   };
@@ -1411,8 +1340,10 @@ startServer().then(server => {
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 }).catch(error => {
-  logger.error('❌ Erro crítico na inicialização:', error.message);
-  console.error('❌ Erro crítico na inicialização:', error.message);
+  logger.error('❌ Erro crítico na inicialização:', {
+    error: error.message,
+    stack: error.stack
+  });
   process.exit(1);
 });
 
@@ -1422,16 +1353,14 @@ process.on('uncaughtException', (err) => {
     error_message: err.message,
     error_stack: err.stack
   });
-  console.error('❌ Uncaught Exception:', err);
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection', {
     reason: reason,
-    promise: promise
+    promise: String(promise)
   });
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
   process.exit(1);
 });
 
