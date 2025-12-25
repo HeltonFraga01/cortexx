@@ -255,7 +255,7 @@ async function getCachedBrandingConfig() {
 
   try {
     // Use SupabaseService to get branding config
-    const { data, error } = await SupabaseService.queryAsAdmin('branding', (query) => 
+    const { data, error } = await SupabaseService.queryAsAdmin('branding_config', (query) => 
       query.select('*').limit(1).single()
     );
 
