@@ -12,6 +12,7 @@ import { WuzAPIInstancesProvider } from "./contexts/WuzAPIInstancesContext";
 import { AgentAuthProvider } from "./contexts/AgentAuthContext";
 import { SupabaseInboxProvider } from "./contexts/SupabaseInboxContext";
 import { ImpersonationBanner } from "./components/shared/ImpersonationBanner";
+import { AuthErrorBoundary } from "./components/shared/AuthErrorBoundary";
 
 import { useBrandingConfig } from "./hooks/useBranding";
 import { updateAppNameMetaTags, updateDynamicFavicon, updateOgImage } from "./utils/metaTags";
@@ -30,6 +31,7 @@ const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
 const UserDashboard = lazy(() => import("./pages/UserDashboard"));
 const AgentDashboard = lazy(() => import("./pages/AgentDashboard"));
 const NotFound = lazy(() => import("./pages/NotFound"));
+const Unauthorized = lazy(() => import("./pages/Unauthorized"));
 const SuperadminLogin = lazy(() => import("./pages/superadmin/SuperadminLogin"));
 const SuperadminRoutes = lazy(() => import("./pages/superadmin/SuperadminRoutes"));
 
@@ -111,6 +113,7 @@ const router = createBrowserRouter(
         // Legacy routes - redirect to unified login
         { path: "/agent/login", element: <UnifiedLoginPage /> },
         { path: "/user-login", element: <UnifiedLoginPage /> },
+        { path: "/unauthorized", element: <Unauthorized /> },
         { path: "/superadmin/login", element: <SuperadminLogin /> },
         {
           path: "/superadmin/*",
@@ -166,24 +169,26 @@ const router = createBrowserRouter(
 
 const App = () => {
   return (
-    <ThemeProvider defaultTheme="system">
-      <AuthProvider>
-        <ImpersonationProvider>
-          <BrandingProvider>
-            <WuzAPIAuthProvider>
-              <WuzAPIInstancesProvider>
-                <QueryClientProvider client={queryClient}>
-                  <TooltipProvider>
-                    <Toaster />
-                    <RouterProvider router={router} />
-                  </TooltipProvider>
-                </QueryClientProvider>
-              </WuzAPIInstancesProvider>
-            </WuzAPIAuthProvider>
-          </BrandingProvider>
-        </ImpersonationProvider>
-      </AuthProvider>
-    </ThemeProvider>
+    <AuthErrorBoundary fallbackPath="/login">
+      <ThemeProvider defaultTheme="system">
+        <AuthProvider>
+          <ImpersonationProvider>
+            <BrandingProvider>
+              <WuzAPIAuthProvider>
+                <WuzAPIInstancesProvider>
+                  <QueryClientProvider client={queryClient}>
+                    <TooltipProvider>
+                      <Toaster />
+                      <RouterProvider router={router} />
+                    </TooltipProvider>
+                  </QueryClientProvider>
+                </WuzAPIInstancesProvider>
+              </WuzAPIAuthProvider>
+            </BrandingProvider>
+          </ImpersonationProvider>
+        </AuthProvider>
+      </ThemeProvider>
+    </AuthErrorBoundary>
   );
 };
 

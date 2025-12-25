@@ -7,6 +7,25 @@ import { QueryClient } from '@tanstack/react-query'
 // Duplicate request detection for development
 const pendingRequests = new Map<string, number>()
 
+/**
+ * Track request start/end for duplicate detection
+ * @param key - Request key (e.g., "GET:/api/admin/dashboard-stats")
+ * @param action - 'start' or 'end'
+ */
+export function trackRequest(key: string, action: 'start' | 'end') {
+  if (import.meta.env.PROD) return
+  
+  const count = pendingRequests.get(key) || 0
+  if (action === 'start') {
+    if (count > 0) {
+      console.warn(`[Query] Duplicate request detected: ${key}`)
+    }
+    pendingRequests.set(key, count + 1)
+  } else {
+    pendingRequests.set(key, Math.max(0, count - 1))
+  }
+}
+
 function setupDuplicateDetection() {
   if (import.meta.env.DEV) {
     const originalFetch = window.fetch
@@ -50,6 +69,8 @@ export const queryClient = new QueryClient({
       gcTime: 5 * 60 * 1000,
       // Don't refetch on window focus (reduces unnecessary requests)
       refetchOnWindowFocus: false,
+      // Don't refetch on mount if data exists in cache
+      refetchOnMount: false,
       // Always refetch on reconnect to ensure fresh data
       refetchOnReconnect: 'always',
       // Smart retry logic

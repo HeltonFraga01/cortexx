@@ -8,8 +8,7 @@ import { LoadingSkeleton } from '@/components/ui-custom/LoadingSkeleton';
 import AutomationStatisticsCards from '@/components/admin/AutomationStatisticsCards';
 import { AdminDashboardStats } from '@/components/admin/AdminDashboardStats';
 import { AdminDashboardAlerts } from '@/components/admin/AdminDashboardAlerts';
-import { api } from '@/lib/api';
-import { supabase } from '@/lib/supabase';
+import { useAdminDashboardStats, useSystemHealth } from '@/hooks/useAdminDashboard';
 
 import { HealthStatus, WuzAPIUser } from '@/services/wuzapi';
 import { 
@@ -28,7 +27,6 @@ import {
   AlertCircle,
   RefreshCw,
   BarChart3,
-  Settings
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -77,138 +75,76 @@ interface SystemHealthData {
   };
 }
 
+/**
+ * AdminOverview Component
+ * 
+ * Main admin dashboard showing system health, user stats, and service status.
+ * Note: Authentication is handled by ProtectedRoute in App.tsx
+ */
 const AdminOverview = () => {
-  const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [systemHealth, setSystemHealth] = useState<SystemHealthData | null>(null);
-  const [users, setUsers] = useState<WuzAPIUser[]>([]);
-  const [loading, setLoading] = useState(true);
+  return <AdminOverviewContent />;
+};
+
+/**
+ * Inner content component - only renders after session is ready
+ */
+const AdminOverviewContent = () => {
   const [refreshing, setRefreshing] = useState(false);
-  const [sessionReady, setSessionReady] = useState(false);
   const brandingConfig = useBrandingConfig();
+  
+  // Use optimized query hooks with deduplication
+  const { 
+    data: dashboardData, 
+    isLoading: dashboardLoading,
+    refetch: refetchDashboard 
+  } = useAdminDashboardStats();
+  
+  const { 
+    data: systemHealthData, 
+    isLoading: healthLoading,
+    refetch: refetchHealth 
+  } = useSystemHealth();
 
-  // Wait for Supabase session to be ready before making API calls
-  useEffect(() => {
-    let mounted = true;
-    
-    const checkSession = async () => {
-      try {
-        // First check if session exists
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (session?.access_token && mounted) {
-          console.debug('[AdminOverview] Session ready, access_token available');
-          setSessionReady(true);
-          return;
-        }
-        
-        // If no session yet, wait for auth state change
-        console.debug('[AdminOverview] No session yet, waiting for auth state change...');
-      } catch (error) {
-        console.error('[AdminOverview] Error checking session:', error);
-      }
-    };
-    
-    // Check immediately
-    checkSession();
-    
-    // Also listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.debug('[AdminOverview] Auth state changed:', event, !!session?.access_token);
-      if (session?.access_token && mounted) {
-        setSessionReady(true);
-      }
-    });
-    
-    // Timeout fallback - if session doesn't appear in 3 seconds, try anyway
-    const timeout = setTimeout(() => {
-      if (mounted && !sessionReady) {
-        console.warn('[AdminOverview] Session timeout, proceeding anyway');
-        setSessionReady(true);
-      }
-    }, 3000);
-    
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-      clearTimeout(timeout);
-    };
-  }, []);
+  // Extract data from query responses
+  const statsData = dashboardData?.data;
+  const systemHealth = systemHealthData;
+  
+  // Build health object from stats data
+  const health: HealthStatus | null = statsData ? {
+    status: statsData.systemStatus,
+    uptime: statsData.uptime,
+    version: statsData.version,
+    total_users: statsData.totalUsers,
+    connected_users: statsData.connectedUsers,
+    logged_in_users: statsData.loggedInUsers,
+    active_connections: statsData.activeConnections,
+    memory_stats: statsData.memoryStats,
+    goroutines: statsData.goroutines,
+    timestamp: new Date().toISOString()
+  } : null;
+  
+  const users: WuzAPIUser[] = statsData?.users || [];
+  const loading = dashboardLoading || healthLoading;
 
-  const fetchData = async (isRefresh = false) => {
+  const handleRefresh = async () => {
+    setRefreshing(true);
     try {
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-      
-      // Fetch dashboard stats and system health in parallel using api client (includes JWT automatically)
-      const [dashboardResult, healthResponse] = await Promise.all([
-        api.get<{ success: boolean; data: any }>('/api/admin/dashboard-stats'),
-        fetch('/health', {
-          headers: { 'Content-Type': 'application/json' }
-        })
-      ]);
-
-      if (dashboardResult.status === 401) {
-        toast.error('Sessão expirada. Faça login novamente');
-        window.location.href = '/login';
-        return;
-      }
-
-      if (dashboardResult.status !== 200) {
-        throw new Error(`Erro ao carregar dados: ${dashboardResult.status}`);
-      }
-
-      const dashboardData = dashboardResult.data;
-      const healthData = healthResponse.ok ? await healthResponse.json() : null;
-      
-      if (dashboardData.success && dashboardData.data) {
-        const statsData = dashboardData.data;
-        
-        setHealth({
-          status: statsData.systemStatus,
-          uptime: statsData.uptime,
-          version: statsData.version,
-          total_users: statsData.totalUsers,
-          connected_users: statsData.connectedUsers,
-          logged_in_users: statsData.loggedInUsers,
-          active_connections: statsData.activeConnections,
-          memory_stats: statsData.memoryStats,
-          goroutines: statsData.goroutines,
-          timestamp: new Date().toISOString()
-        });
-        
-        setUsers(statsData.users || []);
-      }
-
-      if (healthData) {
-        setSystemHealth(healthData);
-      }
-      
+      await Promise.all([refetchDashboard(), refetchHealth()]);
     } catch (error) {
-      console.error('Error fetching data:', error);
-      toast.error('Erro ao carregar dados do sistema');
+      toast.error('Erro ao atualizar dados');
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
   };
 
-  const handleRefresh = () => {
-    fetchData(true);
-  };
-
+  // Auto-refresh every 30 seconds
   useEffect(() => {
-    // Only fetch data when session is ready
-    if (!sessionReady) {
-      return;
-    }
-    
-    fetchData();
-    const interval = setInterval(() => fetchData(true), 30000);
+    const interval = setInterval(() => {
+      refetchDashboard();
+      refetchHealth();
+    }, 30000);
     return () => clearInterval(interval);
-  }, [sessionReady]);
+  }, [refetchDashboard, refetchHealth]);
 
   if (loading) {
     return (

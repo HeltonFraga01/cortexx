@@ -5,6 +5,7 @@ const { logger } = require('../utils/logger');
 const AutomationService = require('../services/AutomationService');
 const AuditLogService = require('../services/AuditLogService');
 const supabaseService = require('../services/SupabaseService');
+const { sanitizeUsersArray, warnIfUnsanitized } = require('../utils/sanitizeResponse');
 
 const router = express.Router();
 
@@ -448,9 +449,13 @@ router.get('/dashboard-stats',
             external: memoryUsage.external
           },
           goroutines: 0, // Node.js não usa goroutines
-          users: users.slice(0, 10), // Primeiros 10 usuários
+          // SECURITY: Sanitize user data to prevent token leakage
+          users: sanitizeUsersArray(users.slice(0, 10)),
           wuzapiConfigured: true
         };
+        
+        // Development warning for unsanitized data
+        warnIfUnsanitized(dashboardStats, '/api/admin/dashboard-stats');
         
         logger.info('Dashboard stats obtidas com sucesso', {
           url: req.url,

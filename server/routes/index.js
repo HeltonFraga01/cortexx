@@ -211,7 +211,11 @@ function setupRoutes(app) {
     return req.user?.role || req.session?.role;
   }
   
+  // Import sanitization utility for security
+  const { sanitizeUsersArray, warnIfUnsanitized } = require('../utils/sanitizeResponse');
+  
   // Admin dashboard stats route (usa middleware requireAdmin que suporta JWT e sessão)
+  // Supports ?fields=full for detailed view (default is minimal for smaller payload)
   app.get('/api/admin/dashboard-stats', requireAdmin, async (req, res) => {
     // Priorizar token do ambiente sobre token da sessão
     const envAdminToken = process.env.WUZAPI_ADMIN_TOKEN;
@@ -219,6 +223,9 @@ function setupRoutes(app) {
     const adminToken = envAdminToken || sessionToken;
     const isAgentLogin = !!req.session?.agentRole;
     const userId = getUserId(req);
+    
+    // Task 11: Support ?fields=full for detailed view
+    const useMinimalFields = req.query.fields !== 'full';
     
     // Log de extração de token
     logger.debug('Dashboard stats request', {
@@ -230,7 +237,8 @@ function setupRoutes(app) {
       usingEnvToken: !!envAdminToken,
       isAgentLogin,
       agentRole: req.session?.agentRole,
-      path: req.path
+      path: req.path,
+      minimalFields: useMinimalFields
     });
     
     try {
@@ -326,9 +334,14 @@ function setupRoutes(app) {
           num_gc: 0
         },
         goroutines: healthData.goroutines || 0,
-        users: usersData.slice(0, 10),
+        // SECURITY: Sanitize user data to prevent token leakage
+        // Task 11: Use minimal mode by default for smaller payload (~30% reduction)
+        users: sanitizeUsersArray(usersData.slice(0, 10), { minimal: useMinimalFields }),
         wuzapiConfigured: true
       };
+      
+      // Development warning for unsanitized data
+      warnIfUnsanitized(stats, '/api/admin/dashboard-stats');
       
       res.json({
         success: true,

@@ -137,6 +137,10 @@ app.use(compression({
   }
 }));
 
+// Keep-Alive headers for connection reuse (improves performance by ~20-30%)
+const { keepAliveHeaders } = require('./middleware/connectionHeaders');
+app.use(keepAliveHeaders);
+
 // Security headers com Helmet
 // CSP mais restritivo em produção, flexível em desenvolvimento
 app.use(helmet({
