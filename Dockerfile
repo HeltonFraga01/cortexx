@@ -52,6 +52,18 @@ RUN cd server && npm ci && npm cache clean --force
 # ============================================================================
 FROM frontend-deps AS frontend-builder
 
+# Build arguments para variáveis do frontend (Supabase)
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+ARG VITE_API_BASE_URL=/api
+ARG VITE_WUZAPI_BASE_URL=https://wzapi.wasend.com.br
+
+# Definir variáveis de ambiente para o build
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
+ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ENV VITE_WUZAPI_BASE_URL=$VITE_WUZAPI_BASE_URL
+
 # Copiar código fonte do frontend
 COPY . .
 
