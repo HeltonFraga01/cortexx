@@ -8,13 +8,14 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { Puck, type Data as PuckData } from '@measured/puck';
 import '@measured/puck/puck.css';
+import './puck-overrides.css';
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
 import { ConnectionSelector } from '../ConnectionSelector';
+import { PreviewRecordSelector } from '../PreviewRecordSelector';
 import { createPuckConfig, setRenderContext } from './PuckConfig';
 import { setFieldSelectContext } from './fields/FieldSelectField';
 import { 
@@ -26,7 +27,7 @@ import { safeMigrateLegacyTheme } from './utils/legacyMigration';
 
 import type { ThemeSchema } from '@/types/page-builder';
 import type { DatabaseConnection, FieldMetadata } from '@/lib/types';
-import { Save, Loader2 } from 'lucide-react';
+import { Save, Loader2, Database, FileText, Blocks, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface PuckPageBuilderProps {
@@ -48,6 +49,9 @@ export function PuckPageBuilder({
   const [connectionId, setConnectionId] = useState<string | null>(initialTheme?.connectionId || null);
   const [connection, setConnection] = useState<DatabaseConnection | null>(null);
   const [fields, setFields] = useState<FieldMetadata[]>([]);
+  
+  // Preview record state
+  const [previewRecord, setPreviewRecord] = useState<Record<string, unknown> | null>(null);
 
   // Puck data state
   const [puckData, setPuckData] = useState<PuckData>(() => {
@@ -73,13 +77,13 @@ export function PuckPageBuilder({
   useEffect(() => {
     setRenderContext({
       connection,
-      record: {},
-      formData: {},
+      record: previewRecord || {},
+      formData: previewRecord || {},
       fieldMetadata: fields,
       onRecordChange: () => {},
       isPreview: true,
     });
-  }, [connection, fields]);
+  }, [connection, fields, previewRecord]);
 
   // Handle connection change
   const handleConnectionChange = useCallback((
@@ -89,6 +93,13 @@ export function PuckPageBuilder({
     setConnectionId(newConnection?.id || null);
     setConnection(newConnection);
     setFields(newFields);
+    // Reset preview record when connection changes
+    setPreviewRecord(null);
+  }, []);
+
+  // Handle preview record change
+  const handlePreviewRecordChange = useCallback((record: Record<string, unknown> | null) => {
+    setPreviewRecord(record);
   }, []);
 
   // Handle Puck data change
@@ -129,62 +140,105 @@ export function PuckPageBuilder({
 
   // Custom header actions for Puck
   const headerActions = useMemo(() => (
-    <Button 
-      onClick={() => handleSave(puckData)} 
-      disabled={saving}
-      size="sm"
-    >
-      {saving ? (
-        <>
-          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          Salvando...
-        </>
-      ) : (
-        <>
-          <Save className="h-4 w-4 mr-2" />
-          Salvar Tema
-        </>
+    <div className="flex items-center gap-3">
+      {/* Block count indicator */}
+      <Badge variant="secondary" className="gap-1.5 font-normal">
+        <Blocks className="h-3 w-3" />
+        {puckData.content.length} {puckData.content.length === 1 ? 'bloco' : 'blocos'}
+      </Badge>
+      
+      {/* Connection indicator */}
+      {connection && (
+        <Badge variant="outline" className="gap-1.5 font-normal">
+          <Database className="h-3 w-3" />
+          {connection.name}
+        </Badge>
       )}
-    </Button>
-  ), [puckData, saving, handleSave]);
+
+      {/* Preview record indicator */}
+      {previewRecord && (
+        <Badge variant="outline" className="gap-1.5 font-normal bg-primary/10">
+          <Eye className="h-3 w-3" />
+          Preview ativo
+        </Badge>
+      )}
+      
+      {/* Save button */}
+      <Button 
+        onClick={() => handleSave(puckData)} 
+        disabled={saving || !themeName.trim()}
+        size="sm"
+        className="gap-2"
+      >
+        {saving ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Salvando...
+          </>
+        ) : (
+          <>
+            <Save className="h-4 w-4" />
+            Salvar Tema
+          </>
+        )}
+      </Button>
+    </div>
+  ), [puckData, saving, handleSave, themeName, connection, previewRecord]);
 
   return (
-    <div className="h-full flex flex-col gap-4">
-      {/* Theme Metadata Header */}
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle>Page Builder</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="theme-name">Nome do Tema</Label>
+    <div className="h-full flex flex-col gap-3">
+      {/* Compact Theme Metadata Header */}
+      <Card className="border-border/50 shadow-sm">
+        <CardContent className="py-3 px-4">
+          <div className="flex items-center gap-4">
+            {/* Theme name - primary input */}
+            <div className="flex items-center gap-2 flex-1 max-w-xs">
+              <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
               <Input
                 id="theme-name"
                 value={themeName}
                 onChange={(e) => setThemeName(e.target.value)}
+                placeholder="Nome do tema..."
+                className="h-8 text-sm"
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="theme-description">Descrição</Label>
-              <Textarea
+            
+            {/* Description - secondary input */}
+            <div className="flex-1 max-w-md hidden md:block">
+              <Input
                 id="theme-description"
                 value={themeDescription}
                 onChange={(e) => setThemeDescription(e.target.value)}
-                rows={1}
-                className="resize-none"
+                placeholder="Descrição (opcional)..."
+                className="h-8 text-sm"
               />
             </div>
-            <ConnectionSelector
-              selectedConnectionId={connectionId}
-              onConnectionChange={handleConnectionChange}
-            />
+            
+            {/* Connection selector */}
+            <div className="w-56 shrink-0">
+              <ConnectionSelector
+                selectedConnectionId={connectionId}
+                onConnectionChange={handleConnectionChange}
+                compact
+              />
+            </div>
+
+            {/* Preview record selector - only show when connection is selected */}
+            {connection && (
+              <div className="w-56 shrink-0">
+                <PreviewRecordSelector
+                  connection={connection}
+                  onRecordSelect={handlePreviewRecordChange}
+                  compact
+                />
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
 
-      {/* Puck Editor */}
-      <div className="flex-1 min-h-0 border rounded-lg overflow-hidden">
+      {/* Puck Editor - Full height */}
+      <div className="flex-1 min-h-0 border rounded-lg overflow-hidden bg-card">
         <Puck
           config={config}
           data={puckData}

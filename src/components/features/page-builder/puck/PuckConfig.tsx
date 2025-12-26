@@ -6,6 +6,7 @@
  */
 
 import type { Config, ComponentConfig } from '@measured/puck';
+import { DropZone } from '@measured/puck';
 import { FieldSelectField } from './fields/FieldSelectField';
 import { FieldMultiSelectField } from './fields/FieldMultiSelectField';
 
@@ -25,10 +26,10 @@ import { StatsBlockComponent } from '../blocks/StatsBlock';
 import { LinkButtonBlockComponent } from '../blocks/LinkButtonBlock';
 import { ListBlockComponent } from '../blocks/ListBlock';
 import { TabsBlockComponent } from '../blocks/TabsBlock';
-import { RowBlockComponent } from '../blocks/RowBlock';
 
 import type { DatabaseConnection, FieldMetadata } from '@/lib/types';
 import type { ThemeBlock } from '@/types/page-builder';
+import { cn } from '@/lib/utils';
 
 /**
  * Context passed to all Puck components during rendering
@@ -120,7 +121,7 @@ export function createPuckConfig(): Config {
     categories: {
       layout: {
         title: 'Layout',
-        components: ['Row', 'Section', 'Divider'],
+        components: ['Columns', 'Container', 'Card', 'Section', 'Divider'],
       },
       fields: {
         title: 'Campos',
@@ -136,6 +137,284 @@ export function createPuckConfig(): Config {
       },
     },
     components: {
+      // ============================================
+      // LAYOUT COMPONENTS WITH DROPZONES
+      // ============================================
+
+      // Columns Component - Allows side-by-side layout with nested components
+      Columns: {
+        label: 'Colunas',
+        defaultProps: {
+          columns: 2,
+          gap: 'medium',
+          verticalAlign: 'top',
+          distribution: 'equal',
+        },
+        fields: {
+          columns: {
+            type: 'select',
+            label: 'Número de Colunas',
+            options: [
+              { label: '2 Colunas', value: 2 },
+              { label: '3 Colunas', value: 3 },
+              { label: '4 Colunas', value: 4 },
+            ],
+          },
+          distribution: {
+            type: 'select',
+            label: 'Distribuição',
+            options: [
+              { label: 'Igual', value: 'equal' },
+              { label: '1/3 + 2/3', value: '1-2' },
+              { label: '2/3 + 1/3', value: '2-1' },
+              { label: '1/4 + 3/4', value: '1-3' },
+              { label: '3/4 + 1/4', value: '3-1' },
+            ],
+          },
+          gap: {
+            type: 'select',
+            label: 'Espaçamento',
+            options: [
+              { label: 'Nenhum', value: 'none' },
+              { label: 'Pequeno', value: 'small' },
+              { label: 'Médio', value: 'medium' },
+              { label: 'Grande', value: 'large' },
+            ],
+          },
+          verticalAlign: {
+            type: 'select',
+            label: 'Alinhamento Vertical',
+            options: [
+              { label: 'Topo', value: 'top' },
+              { label: 'Centro', value: 'center' },
+              { label: 'Base', value: 'bottom' },
+              { label: 'Esticar', value: 'stretch' },
+            ],
+          },
+        },
+        render: ({ columns, gap, verticalAlign, distribution }) => {
+          const numColumns = Number(columns) || 2;
+          
+          const gapValues: Record<string, string> = {
+            none: '0',
+            small: '0.5rem',
+            medium: '1rem',
+            large: '1.5rem',
+          };
+
+          const alignClasses: Record<string, string> = {
+            top: 'items-start',
+            center: 'items-center',
+            bottom: 'items-end',
+            stretch: 'items-stretch',
+          };
+
+          // Calculate column widths based on distribution
+          const getGridTemplate = () => {
+            if (numColumns === 2) {
+              switch (distribution) {
+                case '1-2': return '1fr 2fr';
+                case '2-1': return '2fr 1fr';
+                case '1-3': return '1fr 3fr';
+                case '3-1': return '3fr 1fr';
+                default: return '1fr 1fr';
+              }
+            }
+            if (numColumns === 3) return '1fr 1fr 1fr';
+            if (numColumns === 4) return '1fr 1fr 1fr 1fr';
+            return '1fr 1fr';
+          };
+
+          return (
+            <div
+              className={cn(
+                'grid w-full',
+                alignClasses[verticalAlign] || alignClasses.top,
+              )}
+              style={{ 
+                gridTemplateColumns: getGridTemplate(),
+                gap: gapValues[gap] || gapValues.medium,
+                minHeight: '80px' 
+              }}
+            >
+              {Array.from({ length: numColumns }, (_, i) => (
+                <div key={i} className="min-h-[60px]">
+                  <DropZone zone={`column-${i}`} />
+                </div>
+              ))}
+            </div>
+          );
+        },
+      },
+
+      // Container Component - Simple wrapper with padding and background
+      Container: {
+        label: 'Container',
+        defaultProps: {
+          padding: 'medium',
+          background: 'none',
+          border: false,
+          rounded: 'medium',
+          maxWidth: 'full',
+        },
+        fields: {
+          padding: {
+            type: 'select',
+            label: 'Padding',
+            options: [
+              { label: 'Nenhum', value: 'none' },
+              { label: 'Pequeno', value: 'small' },
+              { label: 'Médio', value: 'medium' },
+              { label: 'Grande', value: 'large' },
+            ],
+          },
+          background: {
+            type: 'select',
+            label: 'Fundo',
+            options: [
+              { label: 'Nenhum', value: 'none' },
+              { label: 'Sutil', value: 'subtle' },
+              { label: 'Card', value: 'card' },
+              { label: 'Primário', value: 'primary' },
+            ],
+          },
+          border: {
+            type: 'radio',
+            label: 'Borda',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+          rounded: {
+            type: 'select',
+            label: 'Bordas Arredondadas',
+            options: [
+              { label: 'Nenhum', value: 'none' },
+              { label: 'Pequeno', value: 'small' },
+              { label: 'Médio', value: 'medium' },
+              { label: 'Grande', value: 'large' },
+            ],
+          },
+          maxWidth: {
+            type: 'select',
+            label: 'Largura Máxima',
+            options: [
+              { label: 'Total', value: 'full' },
+              { label: 'Grande', value: 'lg' },
+              { label: 'Médio', value: 'md' },
+              { label: 'Pequeno', value: 'sm' },
+            ],
+          },
+        },
+        render: ({ padding, background, border, rounded, maxWidth }) => {
+          const paddingClasses: Record<string, string> = {
+            none: 'p-0',
+            small: 'p-2',
+            medium: 'p-4',
+            large: 'p-6',
+          };
+
+          const bgClasses: Record<string, string> = {
+            none: '',
+            subtle: 'bg-muted/50',
+            card: 'bg-card',
+            primary: 'bg-primary/10',
+          };
+
+          const roundedClasses: Record<string, string> = {
+            none: 'rounded-none',
+            small: 'rounded-sm',
+            medium: 'rounded-md',
+            large: 'rounded-lg',
+          };
+
+          const maxWidthClasses: Record<string, string> = {
+            full: 'max-w-full',
+            lg: 'max-w-4xl mx-auto',
+            md: 'max-w-2xl mx-auto',
+            sm: 'max-w-xl mx-auto',
+          };
+
+          return (
+            <div
+              className={cn(
+                'w-full',
+                paddingClasses[padding] || paddingClasses.medium,
+                bgClasses[background] || '',
+                roundedClasses[rounded] || roundedClasses.medium,
+                maxWidthClasses[maxWidth] || maxWidthClasses.full,
+                border && 'border border-border'
+              )}
+              style={{ minHeight: '60px' }}
+            >
+              <DropZone zone="content" />
+            </div>
+          );
+        },
+      },
+
+      // Card Component - Card wrapper with optional header
+      Card: {
+        label: 'Card',
+        defaultProps: {
+          title: '',
+          padding: 'medium',
+          shadow: true,
+        },
+        fields: {
+          title: {
+            type: 'text',
+            label: 'Título (opcional)',
+          },
+          padding: {
+            type: 'select',
+            label: 'Padding',
+            options: [
+              { label: 'Pequeno', value: 'small' },
+              { label: 'Médio', value: 'medium' },
+              { label: 'Grande', value: 'large' },
+            ],
+          },
+          shadow: {
+            type: 'radio',
+            label: 'Sombra',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+        },
+        render: ({ title, padding, shadow }) => {
+          const paddingClasses: Record<string, string> = {
+            small: 'p-3',
+            medium: 'p-4',
+            large: 'p-6',
+          };
+
+          return (
+            <div
+              className={cn(
+                'bg-card border border-border rounded-lg',
+                shadow && 'shadow-sm',
+              )}
+            >
+              {title && (
+                <div className="px-4 py-3 border-b border-border">
+                  <h3 className="font-semibold text-foreground">{title}</h3>
+                </div>
+              )}
+              <div className={cn(paddingClasses[padding] || paddingClasses.medium)} style={{ minHeight: '60px' }}>
+                <DropZone zone="card-content" />
+              </div>
+            </div>
+          );
+        },
+      },
+
+      // ============================================
+      // EXISTING COMPONENTS
+      // ============================================
       // Header Component
       Header: {
         ...createPuckComponent(HeaderBlockComponent, {
@@ -739,57 +1018,6 @@ export function createPuckConfig(): Config {
         },
       },
 
-      // Row Component
-      Row: {
-        ...createPuckComponent(RowBlockComponent, {
-          columns: 2,
-          columnWidths: ['50%', '50%'],
-          gap: 'medium',
-          verticalAlign: 'top',
-          stackOnMobile: true,
-        }),
-        label: 'Linha/Colunas',
-        fields: {
-          columns: {
-            type: 'select',
-            label: 'Colunas',
-            options: [
-              { label: '1 Coluna', value: 1 },
-              { label: '2 Colunas', value: 2 },
-              { label: '3 Colunas', value: 3 },
-              { label: '4 Colunas', value: 4 },
-            ],
-          },
-          gap: {
-            type: 'select',
-            label: 'Espaçamento',
-            options: [
-              { label: 'Nenhum', value: 'none' },
-              { label: 'Pequeno', value: 'small' },
-              { label: 'Médio', value: 'medium' },
-              { label: 'Grande', value: 'large' },
-            ],
-          },
-          verticalAlign: {
-            type: 'select',
-            label: 'Alinhamento Vertical',
-            options: [
-              { label: 'Topo', value: 'top' },
-              { label: 'Centro', value: 'center' },
-              { label: 'Base', value: 'bottom' },
-              { label: 'Esticar', value: 'stretch' },
-            ],
-          },
-          stackOnMobile: {
-            type: 'radio',
-            label: 'Empilhar no Mobile',
-            options: [
-              { label: 'Sim', value: true },
-              { label: 'Não', value: false },
-            ],
-          },
-        },
-      },
     },
   };
 }

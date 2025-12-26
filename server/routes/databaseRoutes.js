@@ -1159,4 +1159,92 @@ router.post('/nocodb/metadata', async (req, res) => {
   }
 });
 
+// GET /api/database-connections/:id/data - Buscar dados da tabela (admin - para preview no page builder)
+router.get('/:id/data', async (req, res) => {
+  const { id } = req.params;
+  const { limit = 50, offset = 0 } = req.query;
+
+  try {
+    logger.info('Admin: Fetching table data for preview', {
+      connectionId: id,
+      limit,
+      offset,
+      endpoint: `GET /database-connections/${id}/data`,
+    });
+
+    // Buscar conexão
+    const connection = await DatabaseConnectionService.getConnectionById(id);
+
+    if (!connection) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conexão não encontrada',
+        code: 'CONNECTION_NOT_FOUND',
+      });
+    }
+
+    // Processar baseado no tipo de conexão
+    if (connection.type === 'SUPABASE') {
+      const result = await SupabaseConnectionService.fetchRecords(connection, {
+        page: 1,
+        limit: parseInt(limit),
+        orderBy: 'created_at',
+        ascending: false,
+      });
+
+      return res.json({
+        success: true,
+        data: result.data || [],
+        count: result.count || 0,
+      });
+    }
+
+    if (connection.type === 'NOCODB') {
+      // Buscar dados do NocoDB
+      const axios = require('axios');
+      const api = axios.create({
+        baseURL: connection.host,
+        headers: {
+          'xc-token': connection.nocodb_token || connection.password,
+        },
+        timeout: 15000,
+      });
+
+      const tableId = connection.nocodb_table_id || connection.table_name;
+      const response = await api.get(`/api/v1/db/data/noco/${connection.nocodb_project_id}/${tableId}`, {
+        params: {
+          limit: parseInt(limit),
+          offset: parseInt(offset),
+        },
+      });
+
+      return res.json({
+        success: true,
+        data: response.data.list || [],
+        count: response.data.pageInfo?.totalRows || 0,
+      });
+    }
+
+    // Tipo não suportado
+    return res.status(501).json({
+      success: false,
+      error: 'Tipo de conexão não suportado para esta operação',
+      code: 'NOT_IMPLEMENTED',
+      connectionType: connection.type,
+    });
+  } catch (err) {
+    logger.error('Admin: Error fetching table data', {
+      connectionId: id,
+      error: err.message,
+      endpoint: `GET /database-connections/${id}/data`,
+    });
+
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao buscar dados da tabela',
+      message: err.message,
+    });
+  }
+});
+
 module.exports = router;

@@ -1,0 +1,464 @@
+/**
+ * Puck Editor Custom Styles
+ * 
+ * Overrides for better integration with the system's design system.
+ * Uses CSS custom properties for theme compatibility.
+ */
+
+/* ============================================
+   ROOT VARIABLES - Match system theme
+   ============================================ */
+[class*="Puck"] {
+  --puck-color-azure-04: hsl(var(--primary));
+  --puck-color-azure-05: hsl(var(--primary));
+  --puck-color-azure-06: hsl(var(--primary) / 0.9);
+  --puck-color-azure-07: hsl(var(--primary) / 0.8);
+  --puck-color-azure-08: hsl(var(--primary) / 0.1);
+  --puck-color-azure-09: hsl(var(--primary) / 0.05);
+  
+  --puck-color-grey-01: hsl(var(--foreground));
+  --puck-color-grey-02: hsl(var(--foreground) / 0.9);
+  --puck-color-grey-03: hsl(var(--foreground) / 0.8);
+  --puck-color-grey-04: hsl(var(--foreground) / 0.7);
+  --puck-color-grey-05: hsl(var(--border));
+  --puck-color-grey-06: hsl(var(--border) / 0.8);
+  --puck-color-grey-07: hsl(var(--muted));
+  --puck-color-grey-08: hsl(var(--muted) / 0.8);
+  --puck-color-grey-09: hsl(var(--background));
+  --puck-color-grey-10: hsl(var(--background));
+  --puck-color-grey-11: hsl(var(--card));
+  --puck-color-grey-12: hsl(var(--card));
+  
+  --puck-color-white: hsl(var(--background));
+  --puck-color-black: hsl(var(--foreground));
+  
+  --puck-font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  
+  font-family: var(--puck-font-family);
+}
+
+/* Force text colors in Puck to use foreground */
+[class*="Puck"] button:not([class*="Button--primary"]),
+[class*="Puck"] [class*="title"],
+[class*="Puck"] [class*="Title"],
+[class*="Puck"] [class*="label"],
+[class*="Puck"] [class*="Label"] {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Main Puck container */
+[class*="Puck-root"],
+[class*="Puck "] {
+  background: hsl(var(--card)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+/* ============================================
+   HEADER STYLES
+   ============================================ */
+[class*="Puck-header"] {
+  background: hsl(var(--card)) !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+  padding: 0.75rem 1rem !important;
+  min-height: auto !important;
+}
+
+[class*="Puck-headerInner"] {
+  gap: 1rem !important;
+}
+
+[class*="Puck-headerTitle"] {
+  font-size: 0.875rem !important;
+  font-weight: 600 !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Header actions */
+[class*="Puck-headerActions"] {
+  gap: 0.5rem !important;
+}
+
+/* ============================================
+   SIDEBAR STYLES
+   ============================================ */
+[class*="Puck-leftSideBar"],
+[class*="Puck-rightSideBar"] {
+  background: hsl(var(--card)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+[class*="SidebarSection"] {
+  border-color: hsl(var(--border)) !important;
+}
+
+[class*="SidebarSection-title"] {
+  font-size: 0.75rem !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  color: hsl(var(--foreground)) !important;
+  padding: 0.75rem 1rem !important;
+  background: hsl(var(--muted) / 0.5) !important;
+}
+
+/* Fix section title button text color */
+[class*="SidebarSection-title"] button,
+[class*="SidebarSection-title"] span,
+[class*="SidebarSection"] > button {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* ============================================
+   COMPONENT LIST STYLES
+   ============================================ */
+[class*="ComponentList"] {
+  padding: 0.5rem !important;
+}
+
+[class*="ComponentList-item"] {
+  background: hsl(var(--background)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: 0.5rem !important;
+  padding: 0.625rem 0.75rem !important;
+  margin-bottom: 0.375rem !important;
+  font-size: 0.8125rem !important;
+  font-weight: 500 !important;
+  color: hsl(var(--foreground)) !important;
+  transition: all 0.15s ease !important;
+  cursor: grab !important;
+}
+
+[class*="ComponentList-item"]:hover {
+  background: hsl(var(--accent)) !important;
+  border-color: hsl(var(--primary) / 0.3) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 2px 8px hsl(var(--foreground) / 0.08) !important;
+}
+
+[class*="ComponentList-item"]:active {
+  cursor: grabbing !important;
+  transform: scale(0.98) !important;
+}
+
+/* Component icons */
+[class*="ComponentList-item"] svg {
+  color: hsl(var(--muted-foreground)) !important;
+  width: 1rem !important;
+  height: 1rem !important;
+}
+
+/* ============================================
+   CANVAS / FRAME STYLES
+   ============================================ */
+[class*="Puck-frame"] {
+  background: hsl(var(--muted) / 0.3) !important;
+  padding: 1.5rem !important;
+}
+
+[class*="Puck-canvas"] {
+  background: hsl(var(--background)) !important;
+  border-radius: 0.75rem !important;
+  box-shadow: 
+    0 1px 3px hsl(var(--foreground) / 0.05),
+    0 4px 12px hsl(var(--foreground) / 0.08) !important;
+}
+
+/* ============================================
+   DROPZONE STYLES
+   ============================================ */
+[class*="DropZone"] {
+  min-height: 80px !important;
+  border: 2px dashed hsl(var(--border)) !important;
+  border-radius: 0.5rem !important;
+  background: hsl(var(--muted) / 0.2) !important;
+}
+
+/* Root dropzone should be taller */
+[class*="DropZone--isRootZone"] {
+  min-height: 120px !important;
+}
+
+/* Nested dropzones (inside columns, containers, cards) */
+[class*="DropZone"]:not([class*="DropZone--isRootZone"]) {
+  min-height: 60px !important;
+  border-width: 1px !important;
+}
+
+[class*="DropZone"]:empty::before {
+  content: 'Arraste aqui' !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  height: 100% !important;
+  min-height: inherit !important;
+  color: hsl(var(--muted-foreground)) !important;
+  font-size: 0.75rem !important;
+  font-weight: 500 !important;
+}
+
+/* Root dropzone empty state */
+[class*="DropZone--isRootZone"]:empty::before {
+  content: 'Arraste componentes aqui' !important;
+  font-size: 0.875rem !important;
+  min-height: 120px !important;
+}
+
+[class*="DropZone--isAreaSelected"],
+[class*="DropZone--isRootZone"][class*="DropZone--hasChildren"] {
+  border-color: hsl(var(--primary) / 0.5) !important;
+  background: hsl(var(--primary) / 0.05) !important;
+}
+
+[class*="DropZone--isDestination"] {
+  border-color: hsl(var(--primary)) !important;
+  background: hsl(var(--primary) / 0.1) !important;
+  border-style: solid !important;
+}
+
+/* When dropzone has children, reduce visual noise */
+[class*="DropZone--hasChildren"] {
+  border-color: transparent !important;
+  background: transparent !important;
+}
+
+/* But show border on hover for nested zones */
+[class*="DropZone--hasChildren"]:hover {
+  border-color: hsl(var(--border) / 0.5) !important;
+}
+
+/* ============================================
+   DRAGGABLE COMPONENT STYLES
+   ============================================ */
+/* Let Puck handle selection - only style the visual appearance */
+[class*="DraggableComponent"] {
+  border-radius: 0.375rem !important;
+}
+
+/* ============================================
+   FIELD / INPUT STYLES
+   ============================================ */
+[class*="Input"] input,
+[class*="Input"] textarea,
+[class*="Input"] select {
+  background: hsl(var(--background)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: 0.375rem !important;
+  padding: 0.5rem 0.75rem !important;
+  font-size: 0.875rem !important;
+  color: hsl(var(--foreground)) !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+}
+
+[class*="Input"] input:focus,
+[class*="Input"] textarea:focus,
+[class*="Input"] select:focus {
+  outline: none !important;
+  border-color: hsl(var(--primary)) !important;
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.1) !important;
+}
+
+[class*="Input"] input::placeholder,
+[class*="Input"] textarea::placeholder {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+/* Field labels */
+[class*="FieldLabel"] {
+  font-size: 0.8125rem !important;
+  font-weight: 500 !important;
+  color: hsl(var(--foreground)) !important;
+  margin-bottom: 0.375rem !important;
+}
+
+/* ============================================
+   BUTTON STYLES
+   ============================================ */
+[class*="Button--primary"] {
+  background: hsl(var(--primary)) !important;
+  color: hsl(var(--primary-foreground)) !important;
+  border: none !important;
+  border-radius: 0.375rem !important;
+  font-weight: 500 !important;
+  padding: 0.5rem 1rem !important;
+  transition: all 0.15s ease !important;
+}
+
+[class*="Button--primary"]:hover {
+  background: hsl(var(--primary) / 0.9) !important;
+  transform: translateY(-1px) !important;
+}
+
+[class*="Button--secondary"] {
+  background: hsl(var(--secondary)) !important;
+  color: hsl(var(--secondary-foreground)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: 0.375rem !important;
+}
+
+[class*="Button--secondary"]:hover {
+  background: hsl(var(--accent)) !important;
+}
+
+/* Icon buttons */
+[class*="IconButton"] {
+  border-radius: 0.375rem !important;
+  transition: all 0.15s ease !important;
+}
+
+[class*="IconButton"]:hover {
+  background: hsl(var(--accent)) !important;
+}
+
+/* ============================================
+   OUTLINE / TREE VIEW STYLES
+   ============================================ */
+[class*="LayerTree"] {
+  padding: 0.5rem !important;
+}
+
+[class*="LayerTree-item"] {
+  border-radius: 0.375rem !important;
+  padding: 0.375rem 0.5rem !important;
+  margin-bottom: 0.125rem !important;
+  font-size: 0.8125rem !important;
+  transition: background 0.15s ease !important;
+}
+
+[class*="LayerTree-item"]:hover {
+  background: hsl(var(--accent)) !important;
+}
+
+[class*="LayerTree-item--isSelected"] {
+  background: hsl(var(--primary) / 0.1) !important;
+  color: hsl(var(--primary)) !important;
+}
+
+/* ============================================
+   VIEWPORT CONTROLS
+   ============================================ */
+[class*="ViewportControls"] {
+  background: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: 0.5rem !important;
+  padding: 0.25rem !important;
+  gap: 0.25rem !important;
+}
+
+[class*="ViewportControls"] button {
+  border-radius: 0.375rem !important;
+  padding: 0.375rem !important;
+  transition: all 0.15s ease !important;
+}
+
+[class*="ViewportControls"] button:hover {
+  background: hsl(var(--accent)) !important;
+}
+
+[class*="ViewportControls"] button[disabled] {
+  background: hsl(var(--primary) / 0.1) !important;
+  color: hsl(var(--primary)) !important;
+}
+
+/* ============================================
+   ZOOM CONTROLS
+   ============================================ */
+[class*="Zoom"] {
+  background: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: 0.375rem !important;
+}
+
+/* ============================================
+   SCROLLBAR STYLES
+   ============================================ */
+.puck-Root ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.puck-Root ::-webkit-scrollbar-track {
+  background: hsl(var(--muted) / 0.3);
+  border-radius: 4px;
+}
+
+.puck-Root ::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 4px;
+}
+
+.puck-Root ::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* ============================================
+   ANIMATIONS - Disabled to prevent flickering
+   ============================================ */
+/* Loading states - no animation to prevent conflicts */
+[class*="--isLoading"] {
+  opacity: 0.7;
+}
+
+/* ============================================
+   DARK MODE ADJUSTMENTS
+   ============================================ */
+.dark [class*="Puck"] {
+  --puck-color-white: hsl(var(--background));
+  --puck-color-black: hsl(var(--foreground));
+}
+
+.dark [class*="Puck-canvas"] {
+  box-shadow: 
+    0 1px 3px hsl(var(--foreground) / 0.1),
+    0 4px 12px hsl(var(--foreground) / 0.15) !important;
+}
+
+.dark [class*="ComponentList-item"]:hover {
+  box-shadow: 0 2px 8px hsl(var(--foreground) / 0.15) !important;
+}
+
+/* Dark mode: Fix sidebar section titles for better readability */
+.dark [class*="SidebarSection-title"],
+.dark [class*="SidebarSection-title"] button,
+.dark [class*="SidebarSection-title"] span,
+.dark [class*="SidebarSection"] > button,
+.dark [class*="Puck-leftSideBar"] [class*="SidebarSection"] button {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Dark mode: Ensure all text in sidebars is readable */
+.dark [class*="Puck-leftSideBar"] span,
+.dark [class*="Puck-rightSideBar"] span,
+.dark [class*="Puck-leftSideBar"] label,
+.dark [class*="Puck-rightSideBar"] label {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Dark mode: Fix accordion/collapsible headers */
+.dark [class*="Puck"] [class*="Accordion"] button,
+.dark [class*="Puck"] [class*="Collapsible"] button {
+  color: hsl(var(--foreground)) !important;
+}
+
+/* ============================================
+   RESPONSIVE ADJUSTMENTS
+   ============================================ */
+@media (max-width: 768px) {
+  [class*="Puck-leftSideBar"],
+  [class*="Puck-rightSideBar"] {
+    width: 280px !important;
+  }
+  
+  [class*="ComponentList-item"] {
+    padding: 0.5rem 0.625rem !important;
+    font-size: 0.75rem !important;
+  }
+}
+
+/* ============================================
+   EMPTY STATE IMPROVEMENTS
+   ============================================ */
+[class*="Puck-frame"]:has([class*="DropZone"]:empty) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

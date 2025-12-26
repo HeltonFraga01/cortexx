@@ -23,6 +23,7 @@ interface ConnectionSelectorProps {
   selectedConnectionId: string | null;
   onConnectionChange: (connection: DatabaseConnection | null, fields: FieldMetadata[]) => void;
   disabled?: boolean;
+  compact?: boolean;
 }
 
 /**
@@ -46,6 +47,7 @@ export function ConnectionSelector({
   selectedConnectionId,
   onConnectionChange,
   disabled = false,
+  compact = false,
 }: ConnectionSelectorProps) {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -123,6 +125,14 @@ export function ConnectionSelector({
   };
 
   if (loading) {
+    if (compact) {
+      return (
+        <div className="flex items-center gap-2 text-muted-foreground h-8">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span className="text-sm">Carregando...</span>
+        </div>
+      );
+    }
     return (
       <div className="space-y-2">
         <Label>Conexão de Banco de Dados</Label>
@@ -135,6 +145,14 @@ export function ConnectionSelector({
   }
 
   if (error) {
+    if (compact) {
+      return (
+        <div className="flex items-center gap-2 text-destructive h-8">
+          <AlertCircle className="h-4 w-4" />
+          <span className="text-sm">Erro ao carregar</span>
+        </div>
+      );
+    }
     return (
       <Alert variant="destructive">
         <AlertCircle className="h-4 w-4" />
@@ -144,6 +162,14 @@ export function ConnectionSelector({
   }
 
   if (connections.length === 0) {
+    if (compact) {
+      return (
+        <div className="flex items-center gap-2 text-muted-foreground h-8">
+          <Database className="h-4 w-4" />
+          <span className="text-sm">Nenhuma conexão</span>
+        </div>
+      );
+    }
     return (
       <Alert>
         <Database className="h-4 w-4" />
@@ -152,6 +178,33 @@ export function ConnectionSelector({
           Configure uma conexão antes de criar temas.
         </AlertDescription>
       </Alert>
+    );
+  }
+
+  if (compact) {
+    return (
+      <div className="flex items-center gap-2">
+        <Database className="h-4 w-4 text-muted-foreground shrink-0" />
+        <Select
+          value={selectedConnectionId || ''}
+          onValueChange={handleConnectionSelect}
+          disabled={disabled || loadingFields}
+        >
+          <SelectTrigger className="h-8 text-sm">
+            <SelectValue placeholder="Selecione conexão..." />
+          </SelectTrigger>
+          <SelectContent>
+            {connections.map((conn) => (
+              <SelectItem key={conn.id} value={conn.id || ''}>
+                {conn.name} ({conn.type})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {loadingFields && (
+          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+        )}
+      </div>
     );
   }
 

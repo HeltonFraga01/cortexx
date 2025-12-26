@@ -119,6 +119,20 @@
 
 ---
 
+## Task 9: Layout Components with DropZones
+
+**Requirements:** REQ-4 (Interface do Editor) - Nested component support
+
+### Subtasks:
+- [x] 9.1 Create Columns component with multiple DropZones for side-by-side layout
+- [x] 9.2 Create Container component with single DropZone for wrapper functionality
+- [x] 9.3 Create Card component with DropZone for card-based layouts
+- [x] 9.4 Add DropZone CSS styles for nested zones
+- [x] 9.5 Update categories to include new layout components
+- [x] 9.6 Remove legacy Row component (used block.children instead of DropZone)
+
+---
+
 ## Summary
 
 All core implementation tasks have been completed:
@@ -131,6 +145,7 @@ All core implementation tasks have been completed:
 6. **PuckThemeRenderer** - Render component for displaying saved themes
 7. **Legacy Migration** - Automatic detection and migration of legacy theme formats
 8. **Integration** - PageBuilderPage updated to use new Puck-based editor
+9. **Layout Components with DropZones** - Columns, Container, and Card components with native Puck DropZones for nested component support
 
 ### Files Created:
 - `src/components/features/page-builder/puck/PuckPageBuilder.tsx`

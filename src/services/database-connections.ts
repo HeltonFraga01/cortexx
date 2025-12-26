@@ -1093,6 +1093,52 @@ export class DatabaseConnectionsService {
   }
 
   /**
+   * Buscar dados de uma tabela (admin - para preview no page builder)
+   * Não requer token de usuário, usa endpoint admin
+   */
+  async getTableData(connectionId: number | string, limit = 50, offset = 0): Promise<any[]> {
+    const cacheKey = `admin-table-data:${connectionId}:${limit}:${offset}`;
+
+    // Try cache first
+    const cached = connectionCache.get<any[]>(cacheKey);
+    if (cached) {
+      if (IS_DEVELOPMENT) {
+        console.log('📦 Cache hit: admin table data', { connectionId });
+      }
+      return cached;
+    }
+
+    try {
+      const response = await backendApi.get<ApiResponse<any[]>>(
+        `/database-connections/${connectionId}/data`,
+        { params: { limit, offset } }
+      );
+
+      if (!response.success) {
+        throw new DatabaseNavigationException(
+          response.error || 'Erro ao buscar dados da tabela',
+          DatabaseNavigationError.DATABASE_ERROR
+        );
+      }
+
+      const data = response.data?.data || [];
+
+      // Cache for 2 minutes (120000ms)
+      connectionCache.set(cacheKey, data, 120000);
+
+      return data;
+    } catch (error: any) {
+      if (error instanceof DatabaseNavigationException) {
+        throw error;
+      }
+      throw new DatabaseNavigationException(
+        error.message || 'Erro de rede ao buscar dados',
+        DatabaseNavigationError.NETWORK_ERROR
+      );
+    }
+  }
+
+  /**
    * Buscar dados de uma tabela para um usuário específico
    * Implementa cache de 2 minutos para melhorar performance
    */
