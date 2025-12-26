@@ -19,14 +19,21 @@ const FIELD_MAPPING = {
   fieldMappings: 'field_mappings',
   viewConfiguration: 'view_configuration',
   defaultViewMode: 'default_view_mode',
-  assignedUsers: 'assigned_users'
+  assignedUsers: 'assigned_users',
+  // Supabase-specific field mappings
+  supabaseUrl: 'supabase_url',
+  supabaseKey: 'supabase_key',
+  supabaseKeyType: 'supabase_key_type',
+  supabaseTable: 'supabase_table'
 };
 
 // Allowed fields for insert/update
 const ALLOWED_FIELDS = [
   'account_id', 'name', 'type', 'host', 'port', 'database_name', 'username', 'password',
   'table_name', 'status', 'nocodb_token', 'nocodb_project_id', 'nocodb_table_id',
-  'user_link_field', 'field_mappings', 'view_configuration', 'default_view_mode', 'assigned_users'
+  'user_link_field', 'field_mappings', 'view_configuration', 'default_view_mode', 'assigned_users',
+  // Supabase-specific fields
+  'supabase_url', 'supabase_key', 'supabase_key_type', 'supabase_table'
 ];
 
 class DatabaseConnectionService {

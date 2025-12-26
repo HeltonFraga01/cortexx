@@ -5,7 +5,7 @@
  * @module validators/databaseConnectionValidator
  */
 
-const VALID_TYPES = ['POSTGRES', 'MYSQL', 'NOCODB', 'API'];
+const VALID_TYPES = ['POSTGRES', 'MYSQL', 'NOCODB', 'API', 'SUPABASE'];
 const MIN_NAME_LENGTH = 1;
 const MAX_NAME_LENGTH = 100;
 const MIN_PORT = 1;

@@ -59,6 +59,20 @@ This implementation adds native Supabase support to the Database Navigation syst
     - Document setup process, permissions, error codes
     - _Requirements: All_
 
+- [x] 6. Phase 6 - NocoDB Connection Testing Fix
+  - [x] 6.1 Create NocoDBConnectionService backend service
+    - Server-side connection testing to avoid CORS issues
+    - Error handling with Portuguese messages
+    - Support for testing credentials before saving
+  - [x] 6.2 Add NocoDB test endpoints to databaseRoutes
+    - POST /:id/test-nocodb - Test existing connection
+    - POST /test-nocodb-credentials - Test credentials before saving
+    - Updated POST /:id/test to support both NocoDB and Supabase
+  - [x] 6.3 Update frontend database-connections service
+    - Changed testNocoDBConnection to use backend endpoint
+    - Added testNocoDBCredentials method
+    - Updated testAndUpdateConnectionStatus to use backend for NocoDB
+
 ## Notes
 
 - Follow existing patterns from NocoDB integration

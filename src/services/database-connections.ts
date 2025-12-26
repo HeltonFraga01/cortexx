@@ -328,32 +328,29 @@ export class DatabaseConnectionsService {
   }
 
   /**
-   * Testar conexão com NocoDB
+   * Testar conexão com NocoDB via backend (evita problemas de CORS)
    */
-  async testNocoDBConnection(connection: DatabaseConnection): Promise<{ success: boolean; error?: string }> {
+  async testNocoDBConnection(connectionId: number): Promise<{ success: boolean; message: string; details?: any }> {
     try {
-      const testApi = axios.create({
-        baseURL: connection.host,
-        headers: {
-          'xc-token': connection.nocodb_token || connection.password || '',
-        },
-        timeout: 10000,
-      });
+      const response = await backendApi.post<ApiResponse<any>>(`/database-connections/${connectionId}/test-nocodb`);
 
-      // Testar com a API do NocoDB
-      const response = await testApi.get(
-        `/api/v1/db/data/noco/${connection.nocodb_project_id || connection.database}/${connection.nocodb_table_id || connection.table_name}`,
-        {
-          params: { limit: 1 },
-        }
-      );
+      if (!response.success) {
+        return {
+          success: false,
+          message: response.error || 'Erro ao testar conexão',
+        };
+      }
 
-      return { success: true };
+      return {
+        success: response.data?.success ?? true,
+        message: response.data?.message || 'Conexão estabelecida com sucesso',
+        details: response.data?.details,
+      };
     } catch (error: any) {
-      console.error('Erro ao testar NocoDB:', error);
+      console.error('Erro ao testar conexão NocoDB:', error);
       return {
         success: false,
-        error: error.response?.data?.message || error.message || 'Erro de conexão com NocoDB'
+        message: error.message || 'Erro de rede ao testar conexão',
       };
     }
   }
@@ -370,7 +367,13 @@ export class DatabaseConnectionsService {
       let testResult = { success: false, error: 'Tipo não suportado' };
 
       if (connection.type === 'NOCODB') {
-        testResult = await this.testNocoDBConnection(connection);
+        // Usar endpoint do backend para evitar CORS
+        const result = await this.testNocoDBConnection(connection.id);
+        testResult = { success: result.success, error: result.message };
+      } else if (connection.type === 'SUPABASE') {
+        // Testar conexão Supabase via backend
+        const result = await this.testSupabaseConnection(connection.id);
+        testResult = { success: result.success, error: result.message };
       }
       // Adicionar outros tipos de teste aqui no futuro (POSTGRES, MYSQL, API)
 
@@ -647,6 +650,44 @@ export class DatabaseConnectionsService {
       return {
         success: false,
         message: error.message || 'Erro de rede ao testar conexão',
+      };
+    }
+  }
+
+  /**
+   * Testar credenciais NocoDB antes de salvar (via backend para evitar CORS)
+   */
+  async testNocoDBCredentials(
+    host: string,
+    nocodbToken: string,
+    nocodbProjectId: string,
+    nocodbTableId: string
+  ): Promise<{ success: boolean; message: string; details?: any }> {
+    try {
+      const response = await backendApi.post<ApiResponse<any>>('/database-connections/test-nocodb-credentials', {
+        host,
+        nocodb_token: nocodbToken,
+        nocodb_project_id: nocodbProjectId,
+        nocodb_table_id: nocodbTableId,
+      });
+
+      if (!response.success) {
+        return {
+          success: false,
+          message: response.error || 'Erro ao testar credenciais',
+        };
+      }
+
+      return {
+        success: response.data?.success ?? true,
+        message: response.data?.message || 'Conexão estabelecida com sucesso',
+        details: response.data?.details,
+      };
+    } catch (error: any) {
+      console.error('Erro ao testar credenciais NocoDB:', error);
+      return {
+        success: false,
+        message: error.message || 'Erro de rede ao testar credenciais',
       };
     }
   }

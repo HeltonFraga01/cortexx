@@ -228,9 +228,23 @@ const AdminDatabases = () => {
                         <span className="font-mono bg-muted px-2 py-0.5 rounded">
                           {database.type}
                         </span>
-                        <span className="truncate">{database.host}:{database.port}</span>
-                        {database.database && <span className="truncate">DB: {database.database}</span>}
-                        {database.table_name && <span className="truncate hidden sm:inline">Tabela: {database.table_name}</span>}
+                        {database.type === 'SUPABASE' ? (
+                          <>
+                            <span className="truncate">{database.supabase_url}</span>
+                            {database.supabase_table && <span className="truncate">Tabela: {database.supabase_table}</span>}
+                          </>
+                        ) : database.type === 'NOCODB' ? (
+                          <>
+                            <span className="truncate">{database.host}</span>
+                            {database.table_name && <span className="truncate">Tabela: {database.table_name}</span>}
+                          </>
+                        ) : (
+                          <>
+                            <span className="truncate">{database.host}:{database.port}</span>
+                            {database.database && <span className="truncate">DB: {database.database}</span>}
+                            {database.table_name && <span className="truncate hidden sm:inline">Tabela: {database.table_name}</span>}
+                          </>
+                        )}
                       </div>
                       {database.assignedUsers && database.assignedUsers.length > 0 && (
                         <div className="mt-2 text-xs text-muted-foreground truncate">
@@ -273,6 +287,7 @@ const AdminDatabases = () => {
             <div>
               <h4 className="font-medium mb-2">Tipos de Conexão Suportados</h4>
               <ul className="text-sm text-muted-foreground space-y-1">
+                <li>• Supabase - Banco PostgreSQL na nuvem</li>
                 <li>• NocoDB - Interface visual para bancos</li>
                 <li>• PostgreSQL - Banco relacional avançado</li>
                 <li>• MySQL - Banco relacional</li>

@@ -10,6 +10,7 @@ const { adminLimiter } = require('../middleware/rateLimiter');
 const { featureMiddleware } = require('../middleware/featureEnforcement');
 const DatabaseConnectionService = require('../services/DatabaseConnectionService');
 const SupabaseConnectionService = require('../services/SupabaseConnectionService');
+const NocoDBConnectionService = require('../services/NocoDBConnectionService');
 const { withCircuitBreaker } = require('../utils/circuitBreaker');
 
 const router = express.Router();
@@ -337,17 +338,53 @@ router.post('/:id/test', async (req, res) => {
       });
     }
 
-    // Para tipos de banco não implementados, retornar mensagem apropriada
-    res.json({
-      success: true,
-      message: 'Teste de conexão não implementado para este tipo de banco',
-      data: {
+    let result;
+
+    // Test based on connection type
+    if (connection.type === 'NOCODB') {
+      const circuitKey = `nocodb:${id}`;
+      result = await withCircuitBreaker(circuitKey, async () => {
+        return await NocoDBConnectionService.testConnection(connection);
+      });
+    } else if (connection.type === 'SUPABASE') {
+      const circuitKey = `supabase:${id}`;
+      result = await withCircuitBreaker(circuitKey, async () => {
+        return await SupabaseConnectionService.testConnection(connection);
+      });
+    } else {
+      // Para tipos de banco não implementados, retornar mensagem apropriada
+      result = {
+        success: false,
         status: 'unknown',
-        type: connection.type
-      }
+        message: 'Teste de conexão não implementado para este tipo de banco',
+        details: { type: connection.type }
+      };
+    }
+
+    // Update connection status based on test result
+    const newStatus = result.success ? 'connected' : 'error';
+    await DatabaseConnectionService.updateConnectionStatus(id, newStatus);
+
+    res.json({
+      success: result.success,
+      message: result.message,
+      data: {
+        status: result.status,
+        details: result.details,
+      },
     });
   } catch (err) {
     logger.error('Erro ao testar conexão:', err.message);
+    
+    // Handle circuit breaker errors
+    if (err.code === 'CIRCUIT_OPEN') {
+      return res.status(503).json({
+        success: false,
+        error: 'Serviço temporariamente indisponível',
+        code: 'CIRCUIT_OPEN',
+        message: err.userMessage || 'Muitas falhas recentes. Aguarde antes de tentar novamente.',
+      });
+    }
     
     // Atualizar status para error
     try {
@@ -357,8 +394,9 @@ router.post('/:id/test', async (req, res) => {
     }
     
     return res.status(500).json({ 
+      success: false,
       error: 'Erro ao testar conexão',
-      message: err.message 
+      message: err.userMessage || err.message 
     });
   }
 });
@@ -835,6 +873,172 @@ router.post('/supabase/columns', async (req, res) => {
     return res.status(500).json({
       success: false,
       error: 'Erro ao obter colunas',
+      message: err.userMessage || err.message,
+    });
+  }
+});
+
+// ============================================
+// NOCODB-SPECIFIC ENDPOINTS
+// ============================================
+
+// POST /api/database-connections/:id/test-nocodb - Testar conexão NocoDB
+router.post('/:id/test-nocodb', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const connection = await DatabaseConnectionService.getConnectionById(id);
+
+    if (!connection) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conexão não encontrada',
+        code: 'CONNECTION_NOT_FOUND',
+        message: `Conexão com ID ${id} não existe`,
+      });
+    }
+
+    if (connection.type !== 'NOCODB') {
+      return res.status(400).json({
+        success: false,
+        error: 'Tipo inválido',
+        code: 'INVALID_TYPE',
+        message: 'Esta rota é apenas para conexões do tipo NOCODB',
+      });
+    }
+
+    // Log credential access for security audit
+    securityLogger.logSensitiveDataAccess({
+      userId: req.session?.userId,
+      ip: req.ip,
+      resource: `database_connection:${id}:nocodb_token`,
+      action: 'test_nocodb_connection',
+    });
+
+    // Use circuit breaker for connection test
+    const circuitKey = `nocodb:${id}`;
+    const result = await withCircuitBreaker(circuitKey, async () => {
+      return await NocoDBConnectionService.testConnection(connection);
+    });
+
+    // Update connection status based on test result
+    const newStatus = result.success ? 'connected' : 'error';
+    await DatabaseConnectionService.updateConnectionStatus(id, newStatus);
+
+    res.json({
+      success: result.success,
+      message: result.message,
+      data: {
+        status: result.status,
+        details: result.details,
+      },
+    });
+  } catch (err) {
+    logger.error('Erro ao testar conexão NocoDB', {
+      connectionId: id,
+      error: err.message,
+      userId: req.session?.userId,
+    });
+
+    // Update status to error
+    try {
+      await DatabaseConnectionService.updateConnectionStatus(id, 'error');
+    } catch (updateErr) {
+      logger.error('Erro ao atualizar status', { error: updateErr.message });
+    }
+
+    // Handle circuit breaker errors
+    if (err.code === 'CIRCUIT_OPEN') {
+      return res.status(503).json({
+        success: false,
+        error: 'Serviço temporariamente indisponível',
+        code: 'CIRCUIT_OPEN',
+        message: err.userMessage || 'Muitas falhas recentes. Aguarde antes de tentar novamente.',
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao testar conexão',
+      message: err.userMessage || err.message,
+    });
+  }
+});
+
+// POST /api/database-connections/test-nocodb-credentials - Testar credenciais NocoDB antes de salvar
+router.post('/test-nocodb-credentials', async (req, res) => {
+  const { host, nocodb_token, nocodb_project_id, nocodb_table_id } = req.body;
+
+  // Basic validation
+  if (!host) {
+    return res.status(400).json({
+      success: false,
+      error: 'Dados inválidos',
+      code: 'VALIDATION_ERROR',
+      message: 'URL do NocoDB é obrigatória',
+    });
+  }
+
+  if (!nocodb_token) {
+    return res.status(400).json({
+      success: false,
+      error: 'Dados inválidos',
+      code: 'VALIDATION_ERROR',
+      message: 'Token do NocoDB é obrigatório',
+    });
+  }
+
+  if (!nocodb_project_id) {
+    return res.status(400).json({
+      success: false,
+      error: 'Dados inválidos',
+      code: 'VALIDATION_ERROR',
+      message: 'Project ID do NocoDB é obrigatório',
+    });
+  }
+
+  if (!nocodb_table_id) {
+    return res.status(400).json({
+      success: false,
+      error: 'Dados inválidos',
+      code: 'VALIDATION_ERROR',
+      message: 'Table ID do NocoDB é obrigatório',
+    });
+  }
+
+  try {
+    // Log credential access
+    securityLogger.logSensitiveDataAccess({
+      userId: req.session?.userId,
+      ip: req.ip,
+      resource: 'nocodb_credentials:test',
+      action: 'test_credentials_before_save',
+    });
+
+    const result = await NocoDBConnectionService.testCredentials({
+      host,
+      nocodb_token,
+      nocodb_project_id,
+      nocodb_table_id,
+    });
+
+    res.json({
+      success: result.success,
+      message: result.message,
+      data: {
+        status: result.status,
+        details: result.details,
+      },
+    });
+  } catch (err) {
+    logger.error('Erro ao testar credenciais NocoDB', {
+      error: err.message,
+      userId: req.session?.userId,
+    });
+
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao testar credenciais',
       message: err.userMessage || err.message,
     });
   }
