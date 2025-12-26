@@ -149,6 +149,25 @@ npm run docker:logs
 | `REDIS_PASSWORD` | ❌ | Senha do Redis |
 | `REDIS_ENABLED` | ❌ | Habilitar cache (padrão: true) |
 
+#### Variáveis de Observabilidade (v1.6+)
+
+| Variável | Obrigatória | Descrição |
+|----------|-------------|-----------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | ❌ | Endpoint do Jaeger (padrão: http://jaeger:4318/v1/traces) |
+| `OTEL_SERVICE_NAME` | ❌ | Nome do serviço para tracing (padrão: wuzapi-manager) |
+| `ALERT_WEBHOOK_URL` | ❌ | URL do webhook para alertas (Discord/Slack) |
+| `GRAFANA_PASSWORD` | ❌ | Senha do Grafana (padrão: admin) |
+
+#### Variáveis de Rate Limiting (v1.6+)
+
+| Variável | Obrigatória | Descrição |
+|----------|-------------|-----------|
+| `RATE_LIMIT_FREE` | ❌ | Limite por minuto para plano free (padrão: 100) |
+| `RATE_LIMIT_STARTER` | ❌ | Limite por minuto para plano starter (padrão: 200) |
+| `RATE_LIMIT_PRO` | ❌ | Limite por minuto para plano pro (padrão: 500) |
+| `RATE_LIMIT_BUSINESS` | ❌ | Limite por minuto para plano business (padrão: 1000) |
+| `RATE_LIMIT_ENTERPRISE` | ❌ | Limite por minuto para plano enterprise (padrão: 2000) |
+
 ### Docker Compose
 
 ```yaml
@@ -210,12 +229,39 @@ Para documentação completa da API, consulte [docs/api/README.md](docs/api/READ
 # Health check
 curl http://localhost:3000/health
 
+# Prometheus metrics
+curl http://localhost:3000/metrics
+
 # Status do Docker
 npm run docker:status
 
 # Logs em tempo real
 npm run docker:logs
 ```
+
+### Observabilidade (v1.6+)
+
+O sistema inclui recursos avançados de observabilidade:
+
+| Recurso | Descrição | Documentação |
+|---------|-----------|--------------|
+| **Prometheus Metrics** | Métricas HTTP, cache, filas | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) |
+| **OpenTelemetry Tracing** | Distributed tracing com Jaeger | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) |
+| **Grafana Dashboards** | Dashboards pré-configurados | `monitoring/grafana/dashboards/` |
+| **Sistema de Alertas** | Alertas via webhook (Discord/Slack) | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) |
+
+### Performance (v1.6+)
+
+| Recurso | Descrição |
+|---------|-----------|
+| **Brotli Compression** | Compressão 15-20% menor que gzip |
+| **Redis Cache** | Cache distribuído para endpoints frequentes |
+| **Bundle Splitting** | Chunks otimizados por rota |
+| **PWA/Service Worker** | Cache de assets estáticos |
+| **Tenant Rate Limiting** | Rate limiting por plano de assinatura |
+| **BullMQ Queues** | Processamento assíncrono de campanhas |
+
+Para mais detalhes, consulte [docs/SCALING.md](docs/SCALING.md).
 
 ## 🧪 Testes
 

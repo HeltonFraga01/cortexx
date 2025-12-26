@@ -22,6 +22,8 @@ const { featureMiddleware } = require('../middleware/featureEnforcement');
 const { quotaMiddleware } = require('../middleware/quotaEnforcement');
 const { validateSupabaseToken } = require('../middleware/supabaseAuth');
 const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
+// Task 10.11: Import campaign queue for async processing
+const { addCampaignJob, getCampaignJobStatus } = require('../queues/campaignQueue');
 
 const router = express.Router();
 
@@ -263,7 +265,48 @@ router.post('/', campaignCreationLimiter, verifyUserToken, featureMiddleware.bul
       }).catch(err => logger.warn('Failed to log audit entry', { error: err.message }));
     }
 
-    // Se não for agendada, iniciar imediatamente
+    // Task 10.11: Use BullMQ queue for large campaigns (> 100 contacts) or when explicitly requested
+    const useQueue = req.query.async === 'true' || contacts.length > 100;
+    
+    if (useQueue) {
+      // Add campaign to BullMQ queue for async processing
+      const job = await addCampaignJob({
+        campaignId,
+        userId: req.userId || req.session?.userId,
+        tenantId: req.context?.tenantId,
+        inboxId: req.inboxId,
+        userToken,
+        contacts: normalizedContacts,
+        messageTemplate: sanitizedContent,
+        messageType,
+        mediaUrl,
+        mediaType,
+        mediaFileName,
+        delayMin,
+        delayMax,
+        randomizeOrder,
+        sendingWindow,
+        inboxes
+      });
+
+      logger.info('Campaign queued for async processing', {
+        campaignId,
+        jobId: job?.id,
+        contactCount: contacts.length,
+        useQueue: true
+      });
+
+      return res.status(202).json({
+        success: true,
+        campaignId,
+        jobId: job?.id,
+        status: 'queued',
+        message: 'Campanha adicionada à fila para processamento assíncrono',
+        statusUrl: `/api/jobs/${job?.id}/status`
+      });
+    }
+
+    // Se não for agendada, iniciar imediatamente (sync mode for small campaigns)
     if (!isScheduled && scheduler) {
       scheduler.startCampaignNow(campaignId).catch(error => {
         logger.error('Erro ao iniciar campanha:', {

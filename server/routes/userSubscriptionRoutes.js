@@ -5,6 +5,7 @@
  * Uses existing services with user context.
  * 
  * Requirements: 1.1, 1.2, 1.3, 1.5, 6.1, 6.2, 7.1
+ * Task 1.3: Redis cache for user subscription
  */
 
 const express = require('express');
@@ -14,6 +15,7 @@ const { logger } = require('../utils/logger');
 const SubscriptionService = require('../services/SubscriptionService');
 const QuotaService = require('../services/QuotaService');
 const FeatureFlagService = require('../services/FeatureFlagService');
+const CacheService = require('../services/CacheService');
 
 // Services initialized at module level (use SupabaseService internally)
 const subscriptionService = new SubscriptionService();
@@ -23,13 +25,19 @@ const featureFlagService = new FeatureFlagService();
 /**
  * GET /api/user/subscription
  * Get current user's subscription details
+ * Task 1.3: Cache with 5 min TTL
  */
 router.get('/subscription', requireUser, async (req, res) => {
   const userId = getUserId(req);
   try {
-    
-    
-    const subscription = await subscriptionService.getUserSubscription(userId);
+    const cacheKey = CacheService.CACHE_KEYS.USER_SUBSCRIPTION(userId);
+    const { data: subscription, fromCache } = await CacheService.getOrSet(
+      cacheKey,
+      CacheService.TTL.USER_SUBSCRIPTION,
+      async () => {
+        return await subscriptionService.getUserSubscription(userId);
+      }
+    );
     
     if (!subscription) {
       return res.status(404).json({
@@ -38,6 +46,7 @@ router.get('/subscription', requireUser, async (req, res) => {
       });
     }
     
+    res.setHeader('X-Cache', fromCache ? 'HIT' : 'MISS');
     res.json({
       success: true,
       data: subscription

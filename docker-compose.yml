@@ -74,6 +74,13 @@ services:
       - NODE_ENV=development
       - LOG_LEVEL=debug
       - DEBUG=cortexx:*
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-cortexx_redis_dev}
+      # Task 6: OpenTelemetry tracing
+      - OTEL_ENABLED=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318/v1/traces
+      - OTEL_SERVICE_NAME=wuzapi-manager
     volumes:
       # Persistir logs
       - ./logs:/app/logs
@@ -92,13 +99,6 @@ services:
     depends_on:
       - traefik-dev
       - redis
-    environment:
-      - NODE_ENV=development
-      - LOG_LEVEL=debug
-      - DEBUG=cortexx:*
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-cortexx_redis_dev}
     labels:
       - "traefik.enable=true"
       
@@ -158,6 +158,26 @@ services:
       - "traefik.http.routers.prometheus-dev.rule=Host(`prometheus.localhost`)"
       - "traefik.http.routers.prometheus-dev.entrypoints=web"
       - "traefik.http.services.prometheus-dev.loadbalancer.server.port=9090"
+
+  # Jaeger para distributed tracing (Task 6)
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: cortexx-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4318:4318"    # OTLP HTTP
+    networks:
+      - cortexx-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.jaeger-dev.rule=Host(`jaeger.localhost`)"
+      - "traefik.http.routers.jaeger-dev.entrypoints=web"
+      - "traefik.http.services.jaeger-dev.loadbalancer.server.port=16686"
 
   # Grafana para visualização (opcional)
   grafana:

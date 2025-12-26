@@ -1,64 +1,34 @@
-# Configuração do Prometheus para monitoramento do Cortexx
+# Task 8.1: Prometheus Configuration
+# Scrape configuration for WUZAPI Manager metrics
 
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
-  external_labels:
-    monitor: 'cortexx-monitor'
 
-rule_files:
-  - "rules/*.yml"
-  - "rules/cortexx-alerts.yml"
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files: []
 
 scrape_configs:
+  # WUZAPI Manager application metrics
+  - job_name: 'wuzapi-manager'
+    static_configs:
+      - targets: ['wuzapi-manager:3001']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+
+  # Node.js process metrics (if using prom-client)
+  - job_name: 'wuzapi-manager-process'
+    static_configs:
+      - targets: ['wuzapi-manager:3001']
+    metrics_path: '/api/metrics'
+    scrape_interval: 30s
+
   # Prometheus self-monitoring
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
-    scrape_interval: 30s
-    metrics_path: /metrics
-
-  # Cortexx Application
-  - job_name: 'cortexx'
-    static_configs:
-      - targets: ['cortexx-dev:3001']
-    scrape_interval: 15s
-    metrics_path: /metrics
-    scrape_timeout: 10s
-    honor_labels: true
-    params:
-      format: ['prometheus']
-
-  # Traefik Metrics
-  - job_name: 'traefik'
-    static_configs:
-      - targets: ['traefik-dev:8080']
-    scrape_interval: 30s
-    metrics_path: /metrics
-
-  # Node Exporter (se disponível)
-  - job_name: 'node-exporter'
-    static_configs:
-      - targets: ['node-exporter:9100']
-    scrape_interval: 30s
-    honor_labels: true
-
-  # Docker Engine Metrics (se disponível)
-  - job_name: 'docker'
-    static_configs:
-      - targets: ['host.docker.internal:9323']
-    scrape_interval: 30s
-    metrics_path: /metrics
-
-# Alerting configuration
-alerting:
-  alertmanagers:
-    - static_configs:
-        - targets:
-          # - alertmanager:9093
-
-# Storage configuration
-storage:
-  tsdb:
-    retention.time: 15d
-    retention.size: 1GB

@@ -21,9 +21,21 @@ if (!process.env.SESSION_SECRET) {
   process.env.SESSION_SECRET = 'dev_fallback_secret_key_12345';
 }
 
+// Task 6.7: Initialize OpenTelemetry tracing BEFORE other imports
+// This must be done early to instrument all subsequent requires
+if (process.env.OTEL_ENABLED === 'true' || process.env.NODE_ENV === 'production') {
+  try {
+    require('./telemetry/tracing');
+    console.log('✅ OpenTelemetry tracing initialized');
+  } catch (error) {
+    console.warn('⚠️ OpenTelemetry tracing not available:', error.message);
+  }
+}
+
 const express = require('express');
 const cors = require('cors');
-const compression = require('compression'); // HTTP compression middleware
+// Task 4: Enhanced compression with Brotli support
+const { getCompressionMiddleware } = require('./middleware/compression');
 const bodyParser = require('body-parser');
 // path already required at top
 const axios = require('axios');
@@ -45,6 +57,8 @@ const sessionConfig = require('./middleware/session');
 const { csrfProtection, getCsrfToken, csrfErrorHandler } = require('./middleware/csrf');
 const { logAdminRequests, logUnauthorizedAttempts } = require('./middleware/securityLogging');
 const verifyUserToken = require('./middleware/verifyUserToken');
+// Task 9.7: Tenant rate limiter for API routes
+const { createTenantRateLimiter } = require('./middleware/tenantRateLimiter');
 const authRoutes = require('./routes/authRoutes');
 const sessionRoutes = require('./routes/sessionRoutes');
 const adminRoutes = require('./routes/adminRoutes');
@@ -75,6 +89,7 @@ const adminReportRoutes = require('./routes/adminReportRoutes');
 const adminSettingsRoutes = require('./routes/adminSettingsRoutes');
 const adminApiSettingsRoutes = require('./routes/adminApiSettingsRoutes');
 const adminStripeRoutes = require('./routes/adminStripeRoutes');
+const adminCreditPackagesRoutes = require('./routes/adminCreditPackagesRoutes');
 const stripeWebhookRoutes = require('./routes/stripeWebhookRoutes');
 // User Account Routes (subscription, quotas, features)
 const userSubscriptionRoutes = require('./routes/userSubscriptionRoutes');
@@ -128,17 +143,13 @@ const PORT = process.env.PORT || 3001;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PRODUCTION = NODE_ENV === 'production';
 
-// HTTP Compression middleware (before other middleware)
+// Task 4: HTTP Compression middleware with Brotli support (before other middleware)
 // Reduces response size by 60-80% for text-based content
-app.use(compression({
-  level: 6, // Balanced compression level
+// Brotli provides 15-20% better compression than gzip
+app.use(getCompressionMiddleware({
+  brotliLevel: 4, // Task 4.4: Balanced Brotli level
+  gzipLevel: 6,   // Task 4.4: Balanced Gzip level
   threshold: 1024, // Only compress responses > 1KB
-  filter: (req, res) => {
-    // Don't compress if client doesn't accept it
-    if (req.headers['x-no-compression']) return false;
-    // Use default filter for other cases
-    return compression.filter(req, res);
-  }
 }));
 
 // Keep-Alive headers for connection reuse (improves performance by ~20-30%)
@@ -670,6 +681,7 @@ app.use('/api/admin/reports', adminReportRoutes);
 app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/admin/api-settings', adminApiSettingsRoutes);
 app.use('/api/admin/stripe', adminStripeRoutes);
+app.use('/api/admin/credit-packages', adminCreditPackagesRoutes);
 // Generic admin routes
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/branding', brandingRoutes);
@@ -699,8 +711,14 @@ app.use('/api/user/database-connections', require('./routes/databaseContactRoute
 // Rotas de Analytics
 app.use('/api/user/analytics', require('./routes/analyticsRoutes'));
 
-// Rotas de Campanhas em Massa
-app.use('/api/user/bulk-campaigns', require('./routes/bulkCampaignRoutes'));
+// Task 9.7: Create tenant rate limiter instance for bulk campaigns
+const tenantRateLimiter = createTenantRateLimiter({
+  keyPrefix: 'ratelimit:bulk',
+  windowSize: 60, // 1 minute window
+});
+
+// Rotas de Campanhas em Massa (with tenant rate limiting)
+app.use('/api/user/bulk-campaigns', tenantRateLimiter, require('./routes/bulkCampaignRoutes'));
 
 // Rotas de Relatórios
 app.use('/api/user/reports', require('./routes/reportRoutes'));

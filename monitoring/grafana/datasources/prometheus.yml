@@ -1,24 +1,18 @@
-# Configuração de datasource Prometheus para Grafana
+# Grafana Datasource Configuration
+# Task 8: Prometheus datasource for Grafana
 
 apiVersion: 1
 
 datasources:
   - name: Prometheus
     type: prometheus
+    uid: prometheus
     access: proxy
     url: http://prometheus:9090
     isDefault: true
-    editable: true
+    editable: false
     jsonData:
       httpMethod: POST
       manageAlerts: true
       prometheusType: Prometheus
-      prometheusVersion: 2.40.0
-      cacheLevel: 'High'
-      disableRecordingRules: false
-      incrementalQueryOverlapWindow: 10m
-      queryTimeout: 60s
-      timeInterval: 30s
-    secureJsonFields: {}
-    version: 1
-    readOnly: false
+      prometheusVersion: "2.45.0"

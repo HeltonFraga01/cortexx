@@ -1,10 +1,14 @@
 /**
- * Metrics Routes (Task 4.2, 4.3)
+ * Metrics Routes (Task 4.2, 4.3, Task 5.9)
  * Handles performance metrics collection and Prometheus-compatible endpoint
+ * 
+ * Task 5.9: Enhanced Prometheus metrics endpoint
  */
 const express = require('express');
 const router = express.Router();
-const logger = require('../utils/logger');
+const { logger } = require('../utils/logger');
+const { prometheusMetrics } = require('../telemetry/metrics');
+const CacheService = require('../services/CacheService');
 
 // In-memory metrics storage (for simplicity - use Redis in production for persistence)
 const metricsStore = {
@@ -61,90 +65,76 @@ router.post('/', express.json(), (req, res) => {
 });
 
 /**
- * GET /metrics
- * Prometheus-compatible metrics endpoint
+ * GET /metrics or GET /api/metrics
+ * Task 5.9: Prometheus-compatible metrics endpoint
  */
 router.get('/', (req, res) => {
   try {
-    const lines = [];
-    const now = Date.now();
+    // Get Prometheus format output from telemetry module
+    let output = prometheusMetrics.generatePrometheusOutput();
     
-    // Add header
-    lines.push('# HELP wuzapi_web_vitals Core Web Vitals metrics');
-    lines.push('# TYPE wuzapi_web_vitals gauge');
+    // Add cache statistics
+    const cacheStats = CacheService.getStats();
+    output += '# HELP wuzapi_cache_hit_rate Cache hit rate percentage\n';
+    output += '# TYPE wuzapi_cache_hit_rate gauge\n';
+    output += `wuzapi_cache_hit_rate ${cacheStats.hitRateValue.toFixed(2)}\n\n`;
     
-    // Web Vitals metrics
+    output += '# HELP wuzapi_cache_hits_total Total cache hits\n';
+    output += '# TYPE wuzapi_cache_hits_total counter\n';
+    output += `wuzapi_cache_hits_total ${cacheStats.hits}\n\n`;
+    
+    output += '# HELP wuzapi_cache_misses_total Total cache misses\n';
+    output += '# TYPE wuzapi_cache_misses_total counter\n';
+    output += `wuzapi_cache_misses_total ${cacheStats.misses}\n\n`;
+    
+    // Add web vitals from frontend
+    output += '# HELP wuzapi_web_vitals Core Web Vitals metrics\n';
+    output += '# TYPE wuzapi_web_vitals gauge\n';
     for (const [key, data] of metricsStore.webVitals.entries()) {
       const [metric, rating] = key.split(':');
       const avg = data.count > 0 ? data.sum / data.count : 0;
-      
-      lines.push(`wuzapi_web_vitals{metric="${metric}",rating="${rating}",stat="count"} ${data.count}`);
-      lines.push(`wuzapi_web_vitals{metric="${metric}",rating="${rating}",stat="avg"} ${avg.toFixed(2)}`);
-      lines.push(`wuzapi_web_vitals{metric="${metric}",rating="${rating}",stat="min"} ${data.min === Infinity ? 0 : data.min.toFixed(2)}`);
-      lines.push(`wuzapi_web_vitals{metric="${metric}",rating="${rating}",stat="max"} ${data.max === -Infinity ? 0 : data.max.toFixed(2)}`);
+      output += `wuzapi_web_vitals{metric="${metric}",rating="${rating}",stat="count"} ${data.count}\n`;
+      output += `wuzapi_web_vitals{metric="${metric}",rating="${rating}",stat="avg"} ${avg.toFixed(2)}\n`;
     }
+    output += '\n';
     
-    // HTTP request metrics
-    lines.push('');
-    lines.push('# HELP wuzapi_http_requests_total Total HTTP requests');
-    lines.push('# TYPE wuzapi_http_requests_total counter');
-    lines.push(`wuzapi_http_requests_total ${metricsStore.httpRequests.total}`);
-    
-    // Requests by status code
-    lines.push('');
-    lines.push('# HELP wuzapi_http_requests_by_status HTTP requests by status code');
-    lines.push('# TYPE wuzapi_http_requests_by_status counter');
-    for (const [status, count] of metricsStore.httpRequests.byStatus.entries()) {
-      lines.push(`wuzapi_http_requests_by_status{status="${status}"} ${count}`);
-    }
-    
-    // Request duration histogram
-    if (metricsStore.httpRequests.durations.length > 0) {
-      const durations = metricsStore.httpRequests.durations;
-      const sorted = [...durations].sort((a, b) => a - b);
-      const p50 = sorted[Math.floor(sorted.length * 0.5)] || 0;
-      const p90 = sorted[Math.floor(sorted.length * 0.9)] || 0;
-      const p99 = sorted[Math.floor(sorted.length * 0.99)] || 0;
-      const avg = durations.reduce((a, b) => a + b, 0) / durations.length;
-      
-      lines.push('');
-      lines.push('# HELP wuzapi_http_request_duration_seconds HTTP request duration');
-      lines.push('# TYPE wuzapi_http_request_duration_seconds summary');
-      lines.push(`wuzapi_http_request_duration_seconds{quantile="0.5"} ${(p50 / 1000).toFixed(4)}`);
-      lines.push(`wuzapi_http_request_duration_seconds{quantile="0.9"} ${(p90 / 1000).toFixed(4)}`);
-      lines.push(`wuzapi_http_request_duration_seconds{quantile="0.99"} ${(p99 / 1000).toFixed(4)}`);
-      lines.push(`wuzapi_http_request_duration_seconds_sum ${(durations.reduce((a, b) => a + b, 0) / 1000).toFixed(4)}`);
-      lines.push(`wuzapi_http_request_duration_seconds_count ${durations.length}`);
-      lines.push(`wuzapi_http_request_duration_seconds_avg ${(avg / 1000).toFixed(4)}`);
-    }
-    
-    // Process metrics
-    const memUsage = process.memoryUsage();
-    lines.push('');
-    lines.push('# HELP wuzapi_process_memory_bytes Process memory usage');
-    lines.push('# TYPE wuzapi_process_memory_bytes gauge');
-    lines.push(`wuzapi_process_memory_bytes{type="heapUsed"} ${memUsage.heapUsed}`);
-    lines.push(`wuzapi_process_memory_bytes{type="heapTotal"} ${memUsage.heapTotal}`);
-    lines.push(`wuzapi_process_memory_bytes{type="rss"} ${memUsage.rss}`);
-    lines.push(`wuzapi_process_memory_bytes{type="external"} ${memUsage.external}`);
-    
-    // Uptime
-    lines.push('');
-    lines.push('# HELP wuzapi_process_uptime_seconds Process uptime');
-    lines.push('# TYPE wuzapi_process_uptime_seconds gauge');
-    lines.push(`wuzapi_process_uptime_seconds ${process.uptime().toFixed(0)}`);
-    
-    // Metrics collection age
-    lines.push('');
-    lines.push('# HELP wuzapi_metrics_age_seconds Time since metrics were last reset');
-    lines.push('# TYPE wuzapi_metrics_age_seconds gauge');
-    lines.push(`wuzapi_metrics_age_seconds ${((now - metricsStore.lastReset) / 1000).toFixed(0)}`);
+    // Add legacy HTTP metrics for backward compatibility
+    output += '# HELP wuzapi_http_requests_legacy_total Legacy HTTP requests counter\n';
+    output += '# TYPE wuzapi_http_requests_legacy_total counter\n';
+    output += `wuzapi_http_requests_legacy_total ${metricsStore.httpRequests.total}\n\n`;
     
     res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
-    res.send(lines.join('\n'));
+    res.send(output);
   } catch (error) {
     logger.error('Error generating metrics', { error: error.message });
     res.status(500).send('# Error generating metrics');
+  }
+});
+
+/**
+ * GET /api/metrics/summary
+ * JSON summary of all metrics
+ */
+router.get('/summary', (req, res) => {
+  try {
+    const summary = prometheusMetrics.getSummary();
+    const cacheStats = CacheService.getStats();
+    
+    res.json({
+      success: true,
+      data: {
+        ...summary,
+        cache: cacheStats,
+        webVitals: Object.fromEntries(metricsStore.webVitals),
+        legacyHttp: {
+          total: metricsStore.httpRequests.total,
+          byStatus: Object.fromEntries(metricsStore.httpRequests.byStatus),
+        },
+      },
+    });
+  } catch (error) {
+    logger.error('Error generating metrics summary', { error: error.message });
+    res.status(500).json({ error: 'Failed to generate metrics summary' });
   }
 });
 
@@ -188,6 +178,7 @@ function resetMetrics() {
   metricsStore.httpRequests.byRoute.clear();
   metricsStore.httpRequests.durations = [];
   metricsStore.lastReset = Date.now();
+  prometheusMetrics.reset();
 }
 
 module.exports = router;

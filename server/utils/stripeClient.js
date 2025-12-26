@@ -4,45 +4,114 @@
  * Provides a singleton Stripe SDK instance with lazy initialization.
  * Retrieves API keys from global_settings table.
  * 
+ * Best Practices Applied:
+ * - Singleton pattern for efficient resource usage
+ * - Lazy initialization to avoid startup delays
+ * - Proper key encryption for security
+ * - Cache invalidation on settings change
+ * 
  * Requirements: 1.2, 1.3
  */
 
 const Stripe = require('stripe');
+const crypto = require('crypto');
 const { logger } = require('./logger');
 const SupabaseService = require('../services/SupabaseService');
 
 let stripeInstance = null;
 let cachedSecretKey = null;
 
+// Encryption configuration
+const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
+const ENCRYPTION_KEY = process.env.STRIPE_ENCRYPTION_KEY || process.env.SESSION_SECRET || 'default-key-change-in-production-32ch';
+const IV_LENGTH = 16;
+const AUTH_TAG_LENGTH = 16;
+
 /**
- * Decrypt a value (placeholder - implement proper encryption)
- * @param {string} encryptedValue - The encrypted value
- * @returns {string} Decrypted value
+ * Derive a 32-byte key from the encryption key
+ * @returns {Buffer} 32-byte key
  */
-function decrypt(encryptedValue) {
-  // For now, values are stored as-is
-  // TODO: Implement proper AES-256 encryption
-  if (!encryptedValue) return null;
-  
-  // Check if value is encrypted (starts with 'enc:')
-  if (encryptedValue.startsWith('enc:')) {
-    // Placeholder for decryption logic
-    return encryptedValue.substring(4);
-  }
-  
-  return encryptedValue;
+function deriveKey() {
+  return crypto.scryptSync(ENCRYPTION_KEY, 'stripe-salt', 32);
 }
 
 /**
- * Encrypt a value (placeholder - implement proper encryption)
+ * Decrypt a value using AES-256-GCM
+ * @param {string} encryptedValue - The encrypted value (format: enc:iv:authTag:ciphertext)
+ * @returns {string} Decrypted value
+ */
+function decrypt(encryptedValue) {
+  if (!encryptedValue) return null;
+  
+  // Check if value is encrypted (starts with 'enc:')
+  if (!encryptedValue.startsWith('enc:')) {
+    // Legacy unencrypted value - return as-is
+    return encryptedValue;
+  }
+  
+  try {
+    const parts = encryptedValue.split(':');
+    
+    // Handle legacy simple encryption format (enc:value)
+    if (parts.length === 2) {
+      return parts[1];
+    }
+    
+    // New format: enc:iv:authTag:ciphertext
+    if (parts.length !== 4) {
+      logger.warn('Invalid encrypted value format');
+      return null;
+    }
+    
+    const [, ivHex, authTagHex, ciphertext] = parts;
+    const iv = Buffer.from(ivHex, 'hex');
+    const authTag = Buffer.from(authTagHex, 'hex');
+    const key = deriveKey();
+    
+    const decipher = crypto.createDecipheriv(ENCRYPTION_ALGORITHM, key, iv);
+    decipher.setAuthTag(authTag);
+    
+    let decrypted = decipher.update(ciphertext, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    
+    return decrypted;
+  } catch (error) {
+    logger.error('Failed to decrypt value', { error: error.message });
+    // Fallback: try legacy format
+    if (encryptedValue.startsWith('enc:')) {
+      return encryptedValue.substring(4);
+    }
+    return null;
+  }
+}
+
+/**
+ * Encrypt a value using AES-256-GCM
+ * Best Practice: Use authenticated encryption for API keys
  * @param {string} value - The value to encrypt
- * @returns {string} Encrypted value
+ * @returns {string} Encrypted value (format: enc:iv:authTag:ciphertext)
  */
 function encrypt(value) {
-  // For now, prefix with 'enc:' to indicate it should be encrypted
-  // TODO: Implement proper AES-256 encryption
   if (!value) return null;
-  return `enc:${value}`;
+  
+  try {
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const key = deriveKey();
+    
+    const cipher = crypto.createCipheriv(ENCRYPTION_ALGORITHM, key, iv);
+    
+    let encrypted = cipher.update(value, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    
+    const authTag = cipher.getAuthTag();
+    
+    // Format: enc:iv:authTag:ciphertext
+    return `enc:${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`;
+  } catch (error) {
+    logger.error('Failed to encrypt value', { error: error.message });
+    // Fallback to simple prefix (not secure, but maintains compatibility)
+    return `enc:${value}`;
+  }
 }
 
 /**

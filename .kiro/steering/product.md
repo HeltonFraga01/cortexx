@@ -2,99 +2,69 @@
 inclusion: always
 ---
 
-# Contexto do Produto & Domínio
+# Product Context & Domain Rules
 
-WUZAPI Manager: Plataforma de gerenciamento da API WhatsApp Business com suporte multi-usuário, envio de mensagens, configuração de webhooks e integração com banco de dados externo.
+Cortexx is a multi-tenant WhatsApp Business API management platform with messaging, webhooks, AI automation, and external database integration.
 
-## Autenticação & Autorização
+## Security Model (CRITICAL)
 
-**Modelo de segurança de três papéis (CRÍTICO):**
+Three-role authentication - enforce strictly:
 
-| Papel | Capacidades | Token | Escopo de Dados |
-|-------|-------------|-------|-----------------|
-| Admin | Gerenciamento de usuários, configurações do sistema, branding, config global | admin token | Todos os dados |
-| User | Envio de mensagens, config de webhook, navegação no banco de dados | user token | Apenas dados próprios |
-| Public | Visualização da landing page | nenhum | Sem autenticação |
+| Role | Token | Data Scope | Route Pattern |
+|------|-------|------------|---------------|
+| Admin | admin token | All tenant data | `server/routes/admin*.js` |
+| User | user token | Own data only | `server/routes/user*.js` |
+| Public | none | No auth | `server/routes/public*.js` |
 
-**Aplicação de segurança (SEMPRE):**
-- Endpoints admin DEVEM rejeitar tokens de usuário (`server/routes/admin*.js`)
-- Endpoints user DEVEM limitar queries ao usuário autenticado (`server/routes/user*.js`)
-- NUNCA permitir acesso a dados entre usuários
-- Endpoints públicos não requerem autenticação (`server/routes/public*.js`)
+**Mandatory Rules:**
+- Admin endpoints MUST reject user tokens
+- User endpoints MUST filter queries by `userId` or `tenantId`
+- NEVER allow cross-user/cross-tenant data access
+- Always validate token type before processing requests
 
-## Integrações Externas
+## Required Abstractions
 
-**WUZAPI (WhatsApp Business API):**
-- Backend: `server/utils/wuzapiClient.js` (**SEMPRE use este**)
-- Frontend: `src/services/wuzapi.ts`
-- Recursos: 40+ eventos webhook, envio de mensagens, mídia, QR codes
-- Eventos principais: `message.received`, `message.sent`, `qr.code`, `connection.status`
+| Integration | Backend Module | Frontend Module |
+|-------------|----------------|-----------------|
+| WhatsApp API | `server/utils/wuzapiClient.js` | `src/services/wuzapi.ts` |
+| Payments | `server/services/StripeService.js` | - |
+| External DB | - | `src/services/nocodb.ts` |
 
-**NocoDB (Banco de Dados Externo):**
-- Frontend: `src/services/nocodb.ts`
-- Recursos: Mapeamento de campos, CRUD, filtragem, ordenação, paginação
-- **DEVE implementar paginação em todas as visualizações de lista**
-- Todas as operações limitadas ao token do usuário autenticado
+**Never bypass these layers with direct API calls.**
 
-**Stripe (Sistema de Pagamentos):**
-- Backend: `server/services/StripeService.js`
-- Recursos: Assinaturas, checkout, webhooks de pagamento
-- Tabelas: `plans`, `user_subscriptions`, `user_quota_usage`
-- Webhooks: `checkout.session.completed`, `invoice.paid`, `customer.subscription.*`
+## Core Features
 
-**Opcionais:**
-- Chatwoot (suporte ao cliente)
-- Typebot (fluxos de chatbot)
-
-## Funcionalidades Principais
-
-**Branding:**
-- Armazenamento: tabela `branding` (logo, cores, nome da empresa)
-- Carregamento: `BrandingContext` na inicialização do app
-- Atualizações: Aplicadas imediatamente (sem reiniciar)
-- Escopo: Landing page, cabeçalho do dashboard, templates de email
+**Messaging:**
+- Variable substitution: `{{name}}`, `{{phone}}`
+- Bulk: CSV upload → queue processing → status tracking
+- Rate limiting enforced
 
 **Webhooks:**
-- URLs definidas pelo usuário para encaminhamento de eventos WUZAPI
-- Usuários selecionam tipos de eventos (40+ disponíveis)
-- Escopo por usuário via token de usuário
+- User-defined URLs for WUZAPI event forwarding
+- 40+ event types: `message.received`, `message.sent`, `qr.code`, `connection.status`
 
-**Mensagens:**
-- Individual: Baseado em formulário com substituição de variáveis (`{{name}}`, `{{phone}}`)
-- Em massa: Upload CSV com processamento em fila e rastreamento de status
-- Rate limiting aplicado para prevenir spam
+**Branding:**
+- Table: `branding` (logo, colors, company name)
+- Context: `BrandingContext` - loads on app init, updates immediately
 
-**Navegação no Banco de Dados:**
-- Usuários conectam suas próprias instâncias NocoDB
-- Mapeamento de campos necessário para CRUD
-- **Todas as visualizações de lista DEVEM implementar paginação**
-- Todas as operações limitadas ao usuário autenticado
+**Payments (Stripe):**
+- Tables: `plans`, `user_subscriptions`, `user_quota_usage`
+- Webhooks: `checkout.session.completed`, `invoice.paid`, `customer.subscription.*`
 
-**Sistema de Pagamentos (Stripe):**
-- Planos de assinatura com diferentes limites de recursos
-- Checkout integrado via Stripe
-- Controle de quotas (mensagens, bots, campanhas)
-- Webhooks para atualização automática de status
+**Database Navigation (NocoDB):**
+- User-scoped connections
+- **All list views MUST implement pagination**
 
-## Gerenciamento de Estado
+## State Management
 
-**Estado global (React Context):**
-- `AuthContext` → Estado de autenticação, token, papel do usuário
-- `BrandingContext` → Logo, cores, informações da empresa
-- `WuzAPIContext` → Status de conexão WhatsApp
+| Type | Tool | Usage |
+|------|------|-------|
+| Global | React Context | `AuthContext`, `BrandingContext`, `WuzAPIContext` |
+| Server | TanStack Query | Cache, refetch, optimistic updates |
+| Forms | React Hook Form + Zod | Schema validation, type-safe handling |
 
-**Estado do servidor (TanStack Query):**
-- Cache e refetch automáticos
-- Atualizações otimistas para melhor UX
-- Sincronização em background
+## UX Patterns
 
-**Estado de formulários (React Hook Form + Zod):**
-- Validação baseada em schema
-- Manipulação de formulários type-safe
-- Exibição consistente de erros
-
-## Padrões de UX
-
-- **Sucesso/Erro:** Notificações toast (hook `useToast`)
-- **Carregamento:** Estados de loading para operações assíncronas (estados `isLoading`)
-- **Ações destrutivas:** Diálogos de confirmação antes da execução
+- Success/Error: `useToast` hook for notifications
+- Loading: `isLoading` states for async operations
+- Destructive actions: Confirmation dialogs required

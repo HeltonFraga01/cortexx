@@ -326,6 +326,104 @@ async function handleInvoicePaid(invoice) {
 }
 
 /**
+ * Handle customer.subscription.created event
+ * Best Practice: Handle subscription creation separately from checkout
+ */
+async function handleSubscriptionCreated(subscription) {
+  logger.info('Processing customer.subscription.created', { 
+    subscriptionId: subscription.id,
+    customerId: subscription.customer,
+    status: subscription.status,
+  });
+
+  // Find account by customer ID
+  const { data: account } = await SupabaseService.adminClient
+    .from('accounts')
+    .select('id')
+    .eq('stripe_customer_id', subscription.customer)
+    .single();
+
+  if (!account) {
+    logger.warn('Account not found for subscription', { 
+      customerId: subscription.customer,
+      subscriptionId: subscription.id,
+    });
+    return;
+  }
+
+  // Check if subscription already exists
+  const { data: existingSub } = await SupabaseService.adminClient
+    .from('user_subscriptions')
+    .select('id')
+    .eq('stripe_subscription_id', subscription.id)
+    .single();
+
+  if (!existingSub) {
+    // Create new subscription record
+    await SupabaseService.adminClient
+      .from('user_subscriptions')
+      .insert({
+        account_id: account.id,
+        stripe_subscription_id: subscription.id,
+        status: subscription.status,
+        current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
+        current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+      });
+
+    logger.info('Subscription record created from webhook', { 
+      accountId: account.id, 
+      subscriptionId: subscription.id,
+    });
+  }
+}
+
+/**
+ * Handle payment_intent.succeeded event
+ * Best Practice: Track successful payments for analytics
+ */
+async function handlePaymentIntentSucceeded(paymentIntent) {
+  logger.info('Processing payment_intent.succeeded', { 
+    paymentIntentId: paymentIntent.id,
+    amount: paymentIntent.amount,
+    currency: paymentIntent.currency,
+  });
+
+  // Log payment for analytics (optional - can be used for reporting)
+  // This is informational - actual subscription/credit updates happen via other events
+}
+
+/**
+ * Handle payment_intent.payment_failed event
+ * Best Practice: Track failed payments for debugging and customer support
+ */
+async function handlePaymentIntentFailed(paymentIntent) {
+  logger.warn('Processing payment_intent.payment_failed', { 
+    paymentIntentId: paymentIntent.id,
+    amount: paymentIntent.amount,
+    currency: paymentIntent.currency,
+    lastError: paymentIntent.last_payment_error?.message,
+    declineCode: paymentIntent.last_payment_error?.decline_code,
+  });
+
+  // Find account by customer ID if available
+  if (paymentIntent.customer) {
+    const { data: account } = await SupabaseService.adminClient
+      .from('accounts')
+      .select('id')
+      .eq('stripe_customer_id', paymentIntent.customer)
+      .single();
+
+    if (account) {
+      // TODO: Send notification to user about failed payment
+      logger.info('Payment failed for account', { 
+        accountId: account.id,
+        paymentIntentId: paymentIntent.id,
+      });
+    }
+  }
+}
+
+/**
  * POST /api/webhooks/stripe
  * Main webhook endpoint
  */
@@ -368,10 +466,15 @@ router.post('/', async (req, res) => {
     }
 
     // Process event based on type
+    // Best Practice: Handle all relevant webhook events for complete payment lifecycle
     try {
       switch (event.type) {
         case 'checkout.session.completed':
           await handleCheckoutCompleted(event.data.object);
+          break;
+
+        case 'customer.subscription.created':
+          await handleSubscriptionCreated(event.data.object);
           break;
 
         case 'customer.subscription.updated':
@@ -388,6 +491,14 @@ router.post('/', async (req, res) => {
 
         case 'invoice.paid':
           await handleInvoicePaid(event.data.object);
+          break;
+
+        case 'payment_intent.succeeded':
+          await handlePaymentIntentSucceeded(event.data.object);
+          break;
+
+        case 'payment_intent.payment_failed':
+          await handlePaymentIntentFailed(event.data.object);
           break;
 
         default:

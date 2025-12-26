@@ -5,6 +5,8 @@
  * with the multi-user system services (agents, teams, inboxes).
  * 
  * Supports both JWT (req.user) and session-based (req.session) authentication.
+ * 
+ * Task 1.4-1.6: Redis cache for agents, teams, and roles
  */
 
 const router = require('express').Router();
@@ -20,6 +22,7 @@ const CustomRoleService = require('../services/CustomRoleService');
 const MultiUserAuditService = require('../services/MultiUserAuditService');
 const AgentDatabaseAccessService = require('../services/AgentDatabaseAccessService');
 const SupabaseService = require('../services/SupabaseService');
+const CacheService = require('../services/CacheService');
 
 // Services initialized at module level (no db parameter needed)
 const agentService = new AgentService();
@@ -104,16 +107,32 @@ module.exports.getOrCreateAccount = getOrCreateAccount;
 /**
  * GET /api/session/agents
  * List all agents in the account (for admin or account owner)
+ * Task 1.4: Cache with 5 min TTL
  */
 router.get('/agents', requireAuth, async (req, res) => {
   try {
-    
-    
-    
     const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
     const { status, role, availability, limit, offset } = req.query;
     
+    // Only cache if no filters are applied
+    const hasFilters = status || role || availability || limit || offset;
+    
+    if (!hasFilters) {
+      const cacheKey = CacheService.CACHE_KEYS.SESSION_AGENTS(account.id);
+      const { data: agents, fromCache } = await CacheService.getOrSet(
+        cacheKey,
+        CacheService.TTL.SESSION_AGENTS,
+        async () => {
+          return await agentService.listAgents(account.id, {});
+        }
+      );
+      
+      res.setHeader('X-Cache', fromCache ? 'HIT' : 'MISS');
+      return res.json({ success: true, data: agents });
+    }
+    
+    // With filters, skip cache
     const agents = await agentService.listAgents(account.id, {
       status,
       role,
@@ -484,15 +503,22 @@ router.post('/agents/:id/activate', requireAuth, async (req, res) => {
 /**
  * GET /api/session/teams
  * List all teams in the account
+ * Task 1.5: Cache with 5 min TTL
  */
 router.get('/teams', requireAuth, async (req, res) => {
   try {
-    
-    
-    
     const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
-    const teams = await teamService.listTeamsWithStats(account.id);
     
+    const cacheKey = CacheService.CACHE_KEYS.SESSION_TEAMS(account.id);
+    const { data: teams, fromCache } = await CacheService.getOrSet(
+      cacheKey,
+      CacheService.TTL.SESSION_TEAMS,
+      async () => {
+        return await teamService.listTeamsWithStats(account.id);
+      }
+    );
+    
+    res.setHeader('X-Cache', fromCache ? 'HIT' : 'MISS');
     res.json({
       success: true,
       data: teams
@@ -1361,91 +1387,99 @@ router.get('/inboxes/:id/status', requireAuth, async (req, res) => {
 /**
  * GET /api/session/roles
  * List all roles (default + custom)
+ * Task 1.6: Cache with 10 min TTL
  */
 router.get('/roles', requireAuth, async (req, res) => {
   try {
-    
-    
-    
     const account = await getOrCreateAccount(getUserId(req), getUserToken(req));
     
-    // Default roles with permissions
-    const defaultRoles = [
-      { 
-        id: 'owner', 
-        name: 'owner', 
-        description: 'Acesso total ao sistema', 
-        isDefault: true,
-        permissions: ['*']
-      },
-      { 
-        id: 'administrator', 
-        name: 'administrator', 
-        description: 'Gerenciamento de agentes e configurações', 
-        isDefault: true,
-        permissions: [
+    const cacheKey = CacheService.CACHE_KEYS.SESSION_ROLES(account.id);
+    const { data: rolesData, fromCache } = await CacheService.getOrSet(
+      cacheKey,
+      CacheService.TTL.SESSION_ROLES,
+      async () => {
+        // Default roles with permissions
+        const defaultRoles = [
+          { 
+            id: 'owner', 
+            name: 'owner', 
+            description: 'Acesso total ao sistema', 
+            isDefault: true,
+            permissions: ['*']
+          },
+          { 
+            id: 'administrator', 
+            name: 'administrator', 
+            description: 'Gerenciamento de agentes e configurações', 
+            isDefault: true,
+            permissions: [
+              'conversations:view', 'conversations:create', 'conversations:assign', 'conversations:delete',
+              'messages:send', 'messages:delete',
+              'contacts:view', 'contacts:create', 'contacts:edit', 'contacts:delete',
+              'agents:view', 'agents:create', 'agents:edit', 'agents:delete',
+              'teams:view', 'teams:manage',
+              'inboxes:view', 'inboxes:manage',
+              'settings:view', 'settings:edit',
+              'reports:view'
+            ]
+          },
+          { 
+            id: 'agent', 
+            name: 'agent', 
+            description: 'Atendimento e conversas', 
+            isDefault: true,
+            permissions: [
+              'conversations:view', 'conversations:create', 'conversations:assign',
+              'messages:send',
+              'contacts:view', 'contacts:create', 'contacts:edit'
+            ]
+          },
+          { 
+            id: 'viewer', 
+            name: 'viewer', 
+            description: 'Apenas visualização', 
+            isDefault: true,
+            permissions: [
+              'conversations:view',
+              'contacts:view',
+              'reports:view'
+            ]
+          }
+        ];
+        
+        // Custom roles
+        let customRoles = [];
+        try {
+          customRoles = await customRoleService.listCustomRoles(account.id);
+        } catch (e) {
+          // CustomRoleService may not exist yet
+          logger.debug('CustomRoleService not available', { error: e.message });
+        }
+        
+        // All available permissions
+        const availablePermissions = [
           'conversations:view', 'conversations:create', 'conversations:assign', 'conversations:delete',
           'messages:send', 'messages:delete',
           'contacts:view', 'contacts:create', 'contacts:edit', 'contacts:delete',
           'agents:view', 'agents:create', 'agents:edit', 'agents:delete',
           'teams:view', 'teams:manage',
           'inboxes:view', 'inboxes:manage',
-          'settings:view', 'settings:edit',
+          'settings:view', 'settings:edit', 'webhooks:manage', 'integrations:manage',
           'reports:view'
-        ]
-      },
-      { 
-        id: 'agent', 
-        name: 'agent', 
-        description: 'Atendimento e conversas', 
-        isDefault: true,
-        permissions: [
-          'conversations:view', 'conversations:create', 'conversations:assign',
-          'messages:send',
-          'contacts:view', 'contacts:create', 'contacts:edit'
-        ]
-      },
-      { 
-        id: 'viewer', 
-        name: 'viewer', 
-        description: 'Apenas visualização', 
-        isDefault: true,
-        permissions: [
-          'conversations:view',
-          'contacts:view',
-          'reports:view'
-        ]
+        ];
+        
+        return {
+          defaultRoles,
+          customRoles,
+          availablePermissions
+        };
       }
-    ];
+    );
     
-    // Custom roles
-    let customRoles = [];
-    try {
-      customRoles = await customRoleService.listCustomRoles(account.id);
-    } catch (e) {
-      // CustomRoleService may not exist yet
-      logger.debug('CustomRoleService not available', { error: e.message });
-    }
-    
-    // All available permissions
-    const availablePermissions = [
-      'conversations:view', 'conversations:create', 'conversations:assign', 'conversations:delete',
-      'messages:send', 'messages:delete',
-      'contacts:view', 'contacts:create', 'contacts:edit', 'contacts:delete',
-      'agents:view', 'agents:create', 'agents:edit', 'agents:delete',
-      'teams:view', 'teams:manage',
-      'inboxes:view', 'inboxes:manage',
-      'settings:view', 'settings:edit', 'webhooks:manage', 'integrations:manage',
-      'reports:view'
-    ];
-    
+    res.setHeader('X-Cache', fromCache ? 'HIT' : 'MISS');
     res.json({
       success: true,
-      data: {
-        defaultRoles,
-        customRoles,
-        availablePermissions
-      }
+      data: rolesData
     });
   } catch (error) {
     logger.error('List roles failed', { error: error.message, userId: req.session?.userId });

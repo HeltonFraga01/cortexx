@@ -1914,17 +1914,46 @@ async function fetchWithCsrf<T>(
     body: body ? JSON.stringify(body) : undefined
   })
 
-  const data = await response.json()
+  // Handle empty responses gracefully
+  let data: T | null = null
+  const contentType = response.headers.get('content-type')
+  const contentLength = response.headers.get('content-length')
+  
+  // Only try to parse JSON if there's content
+  if (contentLength !== '0' && contentType?.includes('application/json')) {
+    try {
+      const text = await response.text()
+      if (text && text.trim()) {
+        data = JSON.parse(text)
+      }
+    } catch (parseError) {
+      if (import.meta.env.DEV) {
+        console.error('[API] Failed to parse JSON response:', parseError, { url, status: response.status })
+      }
+      // Return error response if JSON parsing fails
+      return { 
+        data: { error: 'Invalid JSON response from server' } as T, 
+        status: response.status 
+      }
+    }
+  } else if (!contentType?.includes('application/json') && response.status >= 400) {
+    // Non-JSON error response
+    const text = await response.text()
+    return { 
+      data: { error: text || `HTTP ${response.status}` } as T, 
+      status: response.status 
+    }
+  }
   
   // If CSRF validation failed and we haven't retried yet, refresh token and retry
-  if (response.status === 403 && data?.code === 'CSRF_VALIDATION_FAILED' && !retried) {
+  if (response.status === 403 && (data as Record<string, unknown>)?.code === 'CSRF_VALIDATION_FAILED' && !retried) {
     clearCsrfToken() // Clear the invalid token
     return fetchWithCsrf<T>(url, method, body, config, true)
   }
   
   // Note: 401 without JWT is expected for public endpoints - no warning needed
   
-  return { data, status: response.status }
+  return { data: data as T, status: response.status }
 }
 
 /**

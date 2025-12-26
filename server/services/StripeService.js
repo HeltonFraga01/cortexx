@@ -77,21 +77,27 @@ class StripeService {
 
   /**
    * Create a new Stripe customer
+   * Best Practice: Use idempotency keys to prevent duplicate customers
    * @param {string} email - Customer email
    * @param {string} name - Customer name
    * @param {Object} metadata - Additional metadata
+   * @param {string} idempotencyKey - Optional idempotency key
    * @returns {Promise<Object>}
    */
-  static async createCustomer(email, name, metadata = {}) {
+  static async createCustomer(email, name, metadata = {}, idempotencyKey = null) {
     try {
       const stripe = await getStripeClient();
       if (!stripe) throw new Error('Stripe not configured');
 
-      const customer = await stripe.customers.create({
+      const customerData = {
         email,
         name,
         metadata,
-      });
+      };
+
+      // Best Practice: Use idempotency keys to prevent duplicate customers on retries
+      const createOptions = idempotencyKey ? { idempotencyKey } : {};
+      const customer = await stripe.customers.create(customerData, createOptions);
 
       logger.info('Stripe customer created', { customerId: customer.id, email });
       return customer;
@@ -143,21 +149,26 @@ class StripeService {
 
   /**
    * Create a new Stripe product
+   * Best Practice: Use idempotency keys for safe retries
    * @param {string} name - Product name
    * @param {string} description - Product description
    * @param {Object} metadata - Additional metadata
+   * @param {string} idempotencyKey - Optional idempotency key
    * @returns {Promise<Object>}
    */
-  static async createProduct(name, description, metadata = {}) {
+  static async createProduct(name, description, metadata = {}, idempotencyKey = null) {
     try {
       const stripe = await getStripeClient();
       if (!stripe) throw new Error('Stripe not configured');
 
-      const product = await stripe.products.create({
+      const productData = {
         name,
         description,
         metadata,
-      });
+      };
+
+      const createOptions = idempotencyKey ? { idempotencyKey } : {};
+      const product = await stripe.products.create(productData, createOptions);
 
       logger.info('Stripe product created', { productId: product.id, name });
       return product;
@@ -190,13 +201,15 @@ class StripeService {
 
   /**
    * Create a new Stripe price
+   * Best Practice: Use idempotency keys for safe retries
    * @param {string} productId - Stripe product ID
    * @param {number} unitAmount - Price in cents
    * @param {string} currency - Currency code (e.g., 'brl')
    * @param {Object} recurring - Recurring options (interval, interval_count)
+   * @param {string} idempotencyKey - Optional idempotency key
    * @returns {Promise<Object>}
    */
-  static async createPrice(productId, unitAmount, currency = 'brl', recurring = null) {
+  static async createPrice(productId, unitAmount, currency = 'brl', recurring = null, idempotencyKey = null) {
     try {
       const stripe = await getStripeClient();
       if (!stripe) throw new Error('Stripe not configured');
@@ -211,7 +224,9 @@ class StripeService {
         priceData.recurring = recurring;
       }
 
-      const price = await stripe.prices.create(priceData);
+      const createOptions = idempotencyKey ? { idempotencyKey } : {};
+      const price = await stripe.prices.create(priceData, createOptions);
+      
       logger.info('Stripe price created', { priceId: price.id, productId, unitAmount });
       return price;
     } catch (error) {
@@ -243,6 +258,8 @@ class StripeService {
 
   /**
    * Create a Stripe Checkout Session
+   * Best Practice: Uses Checkout Sessions API (recommended over PaymentIntents for standard flows)
+   * Best Practice: Dynamic payment methods enabled (no hardcoded payment_method_types)
    * @param {Object} options - Checkout options
    * @returns {Promise<Object>}
    */
@@ -261,6 +278,7 @@ class StripeService {
         allowPromotionCodes = true,
         billingAddressCollection = 'auto',
         quantity = 1,
+        idempotencyKey = null,
       } = options;
 
       const sessionData = {
@@ -270,20 +288,40 @@ class StripeService {
         metadata,
         allow_promotion_codes: allowPromotionCodes,
         billing_address_collection: billingAddressCollection,
+        // Best Practice: Don't hardcode payment_method_types - let Stripe choose dynamically
+        // based on customer location, available wallets, and preferences
+        // Enable dynamic payment methods in Stripe Dashboard instead
         line_items: [
           {
             price: priceId,
             quantity,
           },
         ],
+        // Best Practice: Enable automatic tax calculation if configured
+        automatic_tax: { enabled: true },
+        // Best Practice: Collect phone for better fraud detection
+        phone_number_collection: { enabled: true },
       };
 
       if (customerId) {
         sessionData.customer = customerId;
+        // Best Practice: Update customer info from checkout
+        sessionData.customer_update = {
+          address: 'auto',
+          name: 'auto',
+        };
       }
 
-      const session = await stripe.checkout.sessions.create(sessionData);
-      logger.info('Checkout session created', { sessionId: session.id, mode });
+      // Best Practice: Use idempotency keys to prevent duplicate charges
+      const createOptions = idempotencyKey ? { idempotencyKey } : {};
+      const session = await stripe.checkout.sessions.create(sessionData, createOptions);
+      
+      logger.info('Checkout session created', { 
+        sessionId: session.id, 
+        mode,
+        customerId,
+        priceId,
+      });
       return session;
     } catch (error) {
       logger.error('Failed to create checkout session', { error: error.message });

@@ -72,7 +72,9 @@ export function StripeSettings() {
         form.setValue('connectEnabled', data.connectEnabled)
       }
     } catch (error) {
-      // API might not be available yet - show empty state
+      // Show error message to user
+      const message = error instanceof Error ? error.message : 'Erro ao carregar configurações'
+      toast.error(message)
       setSettings(null)
     } finally {
       setLoading(false)

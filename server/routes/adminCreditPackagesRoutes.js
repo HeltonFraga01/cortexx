@@ -8,7 +8,7 @@
  */
 
 const router = require('express').Router();
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const TenantCreditPackageService = require('../services/TenantCreditPackageService');
 
@@ -25,7 +25,7 @@ function getTenantId(req) {
  * GET /api/admin/credit-packages
  * List all credit packages for the tenant
  */
-router.get('/', authenticate, requireAdmin, async (req, res) => {
+router.get('/', requireAuth, requireAdmin, async (req, res) => {
   try {
     const tenantId = getTenantId(req);
     if (!tenantId) {
@@ -65,7 +65,7 @@ router.get('/', authenticate, requireAdmin, async (req, res) => {
  * GET /api/admin/credit-packages/:id
  * Get a specific credit package
  */
-router.get('/:id', authenticate, requireAdmin, async (req, res) => {
+router.get('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const tenantId = getTenantId(req);
     if (!tenantId) {
@@ -95,7 +95,7 @@ router.get('/:id', authenticate, requireAdmin, async (req, res) => {
  * POST /api/admin/credit-packages
  * Create a new credit package
  */
-router.post('/', authenticate, requireAdmin, async (req, res) => {
+router.post('/', requireAuth, requireAdmin, async (req, res) => {
   try {
     const tenantId = getTenantId(req);
     if (!tenantId) {
@@ -147,7 +147,7 @@ router.post('/', authenticate, requireAdmin, async (req, res) => {
  * PUT /api/admin/credit-packages/:id
  * Update a credit package
  */
-router.put('/:id', authenticate, requireAdmin, async (req, res) => {
+router.put('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const tenantId = getTenantId(req);
     if (!tenantId) {
@@ -197,7 +197,7 @@ router.put('/:id', authenticate, requireAdmin, async (req, res) => {
  * DELETE /api/admin/credit-packages/:id
  * Delete a credit package (soft delete by setting status to inactive)
  */
-router.delete('/:id', authenticate, requireAdmin, async (req, res) => {
+router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const tenantId = getTenantId(req);
     if (!tenantId) {

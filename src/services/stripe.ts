@@ -32,7 +32,19 @@ import type {
  */
 export async function getStripeSettings(): Promise<StripeSettings> {
   const response = await api.get('/api/admin/stripe/settings')
-  return response.data.data
+  
+  // Handle error responses
+  if (response.status >= 400) {
+    const errorMessage = (response.data as { error?: string })?.error || `HTTP ${response.status}`
+    throw new Error(errorMessage)
+  }
+  
+  // Handle empty or invalid responses
+  if (!response.data || !(response.data as { data?: StripeSettings }).data) {
+    throw new Error('Resposta inválida do servidor')
+  }
+  
+  return (response.data as { data: StripeSettings }).data
 }
 
 /**
@@ -96,6 +108,14 @@ export async function getUnsyncedPlans(): Promise<Plan[]> {
  */
 export async function getPaymentAnalytics(): Promise<PaymentAnalytics> {
   const response = await api.get('/api/admin/stripe/analytics')
+  return response.data.data
+}
+
+/**
+ * Get affiliate configuration
+ */
+export async function getAffiliateConfig(): Promise<AffiliateConfig> {
+  const response = await api.get('/api/admin/stripe/affiliate-config')
   return response.data.data
 }
 
@@ -277,6 +297,7 @@ export const stripeService = {
   getPlans,
   getUnsyncedPlans,
   getAnalytics: getPaymentAnalytics,
+  getAffiliateConfig,
   updateAffiliateConfig,
 
   // Subscriptions

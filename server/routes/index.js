@@ -6,6 +6,7 @@
 const { logger } = require('../utils/logger');
 const { validateSupabaseToken } = require('../middleware/supabaseAuth');
 const { requireAdmin } = require('../middleware/auth');
+const { createTenantRateLimiter } = require('../middleware/tenantRateLimiter');
 const sessionRoutes = require('./sessionRoutes');
 const adminRoutes = require('./adminRoutes');
 const brandingRoutes = require('./brandingRoutes');
@@ -31,6 +32,9 @@ const mediaRoutes = require('./mediaRoutes');
 const botProxyRoutes = require('./botProxyRoutes');
 const linkPreviewRoutes = require('./linkPreviewRoutes');
 const userDashboardRoutes = require('./userDashboardRoutes');
+
+// Job Status Routes (queue monitoring)
+const jobStatusRoutes = require('./jobStatusRoutes');
 
 // Chat API v1 Routes (external API)
 const chatApiV1Routes = require('./api/v1/chatRoutes');
@@ -99,6 +103,12 @@ logger.debug('contactImportRoutes loaded', {
  * @param {Express} app - Express application instance
  */
 function setupRoutes(app) {
+  // Task 9.7: Create tenant rate limiter middleware instance
+  const tenantRateLimiter = createTenantRateLimiter({
+    keyPrefix: 'ratelimit:api',
+    windowSize: 60, // 1 minute window
+  });
+
   // Public Routes (sem autenticação) - devem vir ANTES das rotas protegidas
   app.use('/api/branding', brandingRoutes);
   app.use('/api/auth', authRoutes);
@@ -156,48 +166,53 @@ function setupRoutes(app) {
     routeCount: contactImportRoutes.stack ? contactImportRoutes.stack.length : 0 
   });
   // New contacts routes (Supabase-based) - more specific paths first
-  app.use('/api/user/contacts/tags', userContactsRoutes);
-  app.use('/api/user/contacts/groups', userContactsRoutes);
-  app.use('/api/user/contacts/import', userContactsRoutes);
-  app.use('/api/user/contacts/migrate', userContactsRoutes);
-  app.use('/api/user/contacts', userContactsRoutes);
+  // Task 9.7: Apply tenant rate limiter to user API routes
+  app.use('/api/user/contacts/tags', tenantRateLimiter, userContactsRoutes);
+  app.use('/api/user/contacts/groups', tenantRateLimiter, userContactsRoutes);
+  app.use('/api/user/contacts/import', tenantRateLimiter, userContactsRoutes);
+  app.use('/api/user/contacts/migrate', tenantRateLimiter, userContactsRoutes);
+  app.use('/api/user/contacts', tenantRateLimiter, userContactsRoutes);
   // Legacy contact import routes (for backward compatibility)
-  app.use('/api/user/contacts', contactImportRoutes);
+  app.use('/api/user/contacts', tenantRateLimiter, contactImportRoutes);
   app.use('/api/user/plans', userPlanRoutes); // Available plans for upgrade - MUST come BEFORE generic user routes
-  app.use('/api/user', userSubscriptionRoutes); // subscription, quotas, features
-  app.use('/api/user', userBillingRoutes); // Stripe billing routes
-  app.use('/api/reseller', resellerRoutes); // Reseller/Connect routes
-  app.use('/api/user/drafts', userDraftRoutes);
+  app.use('/api/user', tenantRateLimiter, userSubscriptionRoutes); // subscription, quotas, features
+  app.use('/api/user', tenantRateLimiter, userBillingRoutes); // Stripe billing routes
+  app.use('/api/reseller', tenantRateLimiter, resellerRoutes); // Reseller/Connect routes
+  app.use('/api/user/drafts', tenantRateLimiter, userDraftRoutes);
   // Inbox Context Routes (Supabase Auth user inbox binding)
-  app.use('/api/user', inboxContextRoutes);
+  app.use('/api/user', tenantRateLimiter, inboxContextRoutes);
   // Inbox Status Routes (Provider API as source of truth)
-  app.use('/api/user', userInboxStatusRoutes);
+  app.use('/api/user', tenantRateLimiter, userInboxStatusRoutes);
   // Session Inbox Webhook Routes (tenant-scoped webhook configuration)
-  app.use('/api/session/inboxes', sessionInboxWebhookRoutes);
+  app.use('/api/session/inboxes', tenantRateLimiter, sessionInboxWebhookRoutes);
   // IMPORTANT: userBotTestRoutes MUST come BEFORE userBotRoutes
   // because userBotRoutes has a /:id catch-all route that would intercept test routes
-  app.use('/api/user/bots', userBotTestRoutes); // Bot test chat routes
-  app.use('/api/user/bots', userBotRoutes);
-  app.use('/api/user/outgoing-webhooks', userWebhookRoutes);
-  app.use('/api/user/custom-themes', userCustomThemesRoutes);
-  app.use('/api/user', userRoutes);
-  app.use('/api/webhook', webhookRoutes);
-  app.use('/api/chat', chatRoutes);
-  app.use('/api/chat/inbox', chatInboxRoutes);
-  app.use('/api/tables', userTableAccessRoutes);
-  app.use('/api/media', mediaRoutes);
-  app.use('/api/bot', botProxyRoutes);
-  app.use('/api/link-preview', linkPreviewRoutes);
-  app.use('/api/user/dashboard', userDashboardRoutes);
+  app.use('/api/user/bots', tenantRateLimiter, userBotTestRoutes); // Bot test chat routes
+  app.use('/api/user/bots', tenantRateLimiter, userBotRoutes);
+  app.use('/api/user/outgoing-webhooks', tenantRateLimiter, userWebhookRoutes);
+  app.use('/api/user/custom-themes', tenantRateLimiter, userCustomThemesRoutes);
+  app.use('/api/user', tenantRateLimiter, userRoutes);
+  app.use('/api/webhook', tenantRateLimiter, webhookRoutes);
+  app.use('/api/chat', tenantRateLimiter, chatRoutes);
+  app.use('/api/chat/inbox', tenantRateLimiter, chatInboxRoutes);
+  app.use('/api/tables', tenantRateLimiter, userTableAccessRoutes);
+  app.use('/api/media', tenantRateLimiter, mediaRoutes);
+  app.use('/api/bot', tenantRateLimiter, botProxyRoutes);
+  app.use('/api/link-preview', tenantRateLimiter, linkPreviewRoutes);
+  app.use('/api/user/dashboard', tenantRateLimiter, userDashboardRoutes);
   
   // Chat API v1 (external API with API key auth)
   // Requirements: REQ-2.1, REQ-2.2 (chat-api-realtime-migration)
-  app.use('/api/v1/chat', chatApiV1Routes);
-  app.use('/api/v1/webhooks', webhookApiV1Routes);
-  app.use('/api/v1/api-keys', apiKeyRoutes);
+  // Task 9.7: Apply tenant rate limiter to external API
+  app.use('/api/v1/chat', tenantRateLimiter, chatApiV1Routes);
+  app.use('/api/v1/webhooks', tenantRateLimiter, webhookApiV1Routes);
+  app.use('/api/v1/api-keys', tenantRateLimiter, apiKeyRoutes);
   
   // Stripe Webhook (no auth - uses signature verification)
   app.use('/api/webhooks/stripe', stripeWebhookRoutes);
+  
+  // Job Status Routes (queue monitoring)
+  app.use('/api/jobs', jobStatusRoutes);
   
   // Monitoring Routes (root level)
   app.use('/', monitoringRoutes);

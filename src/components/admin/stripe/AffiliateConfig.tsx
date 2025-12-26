@@ -35,9 +35,8 @@ export function AffiliateConfig() {
   async function loadConfig() {
     try {
       setLoading(true)
-      // Load from API - for now use defaults
-      // const data = await stripeService.getAffiliateConfig()
-      // setConfig(data)
+      const data = await stripeService.getAffiliateConfig()
+      setConfig(data)
     } catch (error) {
       toast.error('Falha ao carregar configuração de afiliados')
     } finally {
