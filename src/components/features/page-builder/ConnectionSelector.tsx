@@ -20,7 +20,7 @@ import type { DatabaseConnection, FieldMetadata } from '@/lib/types';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface ConnectionSelectorProps {
-  selectedConnectionId: number | null;
+  selectedConnectionId: string | null;
   onConnectionChange: (connection: DatabaseConnection | null, fields: FieldMetadata[]) => void;
   disabled?: boolean;
 }
@@ -112,8 +112,7 @@ export function ConnectionSelector({
 
   // Handle connection selection
   const handleConnectionSelect = async (connectionId: string) => {
-    const id = parseInt(connectionId, 10);
-    const connection = connections.find(c => c.id === id) || null;
+    const connection = connections.find(c => c.id === connectionId) || null;
     
     if (!connection) {
       onConnectionChange(null, []);
@@ -160,7 +159,7 @@ export function ConnectionSelector({
     <div className="space-y-2">
       <Label htmlFor="connection-select">Conexão de Banco de Dados</Label>
       <Select
-        value={selectedConnectionId?.toString() || ''}
+        value={selectedConnectionId || ''}
         onValueChange={handleConnectionSelect}
         disabled={disabled || loadingFields}
       >
@@ -169,12 +168,8 @@ export function ConnectionSelector({
         </SelectTrigger>
         <SelectContent>
           {connections.map((conn) => (
-            <SelectItem key={conn.id} value={conn.id!.toString()}>
-              <div className="flex items-center gap-2">
-                <Database className="h-4 w-4" />
-                <span>{conn.name}</span>
-                <span className="text-muted-foreground text-xs">({conn.type})</span>
-              </div>
+            <SelectItem key={conn.id} value={conn.id || ''}>
+              {conn.name} ({conn.type})
             </SelectItem>
           ))}
         </SelectContent>

@@ -53,7 +53,7 @@ export interface ThemeSchema {
   id: string;
   name: string;
   description: string;
-  connectionId?: number;
+  connectionId?: string;
   blocks: ThemeBlock[];
   createdAt: string;
   updatedAt: string;
@@ -63,10 +63,10 @@ export interface ThemeSchema {
  * Custom theme record from database
  */
 export interface CustomTheme {
-  id: number;
+  id: string;
   name: string;
   description: string;
-  connection_id?: number;
+  connection_id?: string;
   schema: ThemeSchema;
   preview_image?: string;
   created_at: string;
@@ -124,7 +124,7 @@ export interface BlockComponentProps {
  * Page builder state
  */
 export interface PageBuilderState {
-  connectionId: number | null;
+  connectionId: string | null;
   connection: DatabaseConnection | null;
   fields: FieldMetadata[];
   blocks: ThemeBlock[];

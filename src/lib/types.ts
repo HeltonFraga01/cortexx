@@ -235,9 +235,9 @@ export interface NocoDBColumn {
 }
 
 export interface DatabaseConnection {
-  id?: number;
+  id?: string;
   name: string;
-  type: 'POSTGRES' | 'MYSQL' | 'NOCODB' | 'API';
+  type: 'POSTGRES' | 'MYSQL' | 'NOCODB' | 'API' | 'SUPABASE';
   host: string;
   port: number;
   database: string;
