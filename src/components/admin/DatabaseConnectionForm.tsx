@@ -6,9 +6,9 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { DatabaseConnection, databaseConnectionsService } from '@/services/database-connections';
+import { DatabaseConnection, databaseConnectionsService, SupabaseTable, SupabaseColumn, SupabaseKeyType } from '@/services/database-connections';
 import { DatabaseAdvancedTab } from './DatabaseAdvancedTab';
-import { Loader2, Database, ArrowLeft, Save } from 'lucide-react';
+import { Loader2, Database, ArrowLeft, Save, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface NocoDBOption {
@@ -36,6 +36,15 @@ export function DatabaseConnectionForm() {
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [selectedTable, setSelectedTable] = useState<string>('');
 
+  // Supabase states
+  const [supabaseTables, setSupabaseTables] = useState<SupabaseTable[]>([]);
+  const [supabaseColumns, setSupabaseColumns] = useState<SupabaseColumn[]>([]);
+  const [loadingSupabaseTables, setLoadingSupabaseTables] = useState(false);
+  const [loadingSupabaseColumns, setLoadingSupabaseColumns] = useState(false);
+  const [testingSupabase, setTestingSupabase] = useState(false);
+  const [supabaseTestResult, setSupabaseTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [selectedSupabaseTable, setSelectedSupabaseTable] = useState<string>('');
+
   const [formData, setFormData] = useState<Partial<DatabaseConnection>>({
     name: '',
     type: 'API',
@@ -50,6 +59,10 @@ export function DatabaseConnectionForm() {
     nocodb_token: '',
     nocodb_project_id: '',
     nocodb_table_id: '',
+    supabase_url: '',
+    supabase_key: '',
+    supabase_key_type: 'anon',
+    supabase_table: '',
     user_link_field: '',
     fieldMappings: [],
     default_view_mode: 'list',
@@ -212,6 +225,8 @@ export function DatabaseConnectionForm() {
       newData.port = 3306;
     } else if (type === 'NOCODB') {
       newData.port = 8080;
+    } else if (type === 'SUPABASE') {
+      newData.port = 443;
     } else if (type === 'API') {
       newData.port = 443;
     }
@@ -225,6 +240,13 @@ export function DatabaseConnectionForm() {
       setSelectedWorkspace('');
       setSelectedProject('');
       setSelectedTable('');
+    }
+
+    if (type !== 'SUPABASE') {
+      setSupabaseTables([]);
+      setSupabaseColumns([]);
+      setSelectedSupabaseTable('');
+      setSupabaseTestResult(null);
     }
   };
 
@@ -268,6 +290,100 @@ export function DatabaseConnectionForm() {
     });
   };
 
+  // ============================================
+  // SUPABASE HANDLERS
+  // ============================================
+
+  const handleTestSupabaseCredentials = async () => {
+    if (!formData.supabase_url || !formData.supabase_key) {
+      toast.error('URL e API Key são obrigatórios');
+      return;
+    }
+
+    setTestingSupabase(true);
+    setSupabaseTestResult(null);
+
+    try {
+      const result = await databaseConnectionsService.testSupabaseCredentials(
+        formData.supabase_url,
+        formData.supabase_key,
+        formData.supabase_key_type || 'anon'
+      );
+
+      setSupabaseTestResult(result);
+
+      if (result.success) {
+        toast.success(result.message);
+      } else {
+        toast.error(result.message);
+      }
+    } catch (error: any) {
+      setSupabaseTestResult({ success: false, message: error.message });
+      toast.error(error.message || 'Erro ao testar credenciais');
+    } finally {
+      setTestingSupabase(false);
+    }
+  };
+
+  const handleLoadSupabaseTables = async () => {
+    if (!formData.supabase_url || !formData.supabase_key) {
+      toast.error('URL e API Key são obrigatórios');
+      return;
+    }
+
+    setLoadingSupabaseTables(true);
+
+    try {
+      const tables = await databaseConnectionsService.getSupabaseTablesWithCredentials(
+        formData.supabase_url,
+        formData.supabase_key,
+        formData.supabase_key_type || 'anon'
+      );
+
+      setSupabaseTables(tables);
+
+      if (tables.length === 0) {
+        toast.info('Nenhuma tabela encontrada no schema public');
+      } else {
+        toast.success(`${tables.length} tabela(s) encontrada(s)`);
+      }
+    } catch (error: any) {
+      console.error('Erro ao carregar tabelas:', error);
+      toast.error(error.message || 'Erro ao carregar tabelas');
+      setSupabaseTables([]);
+    } finally {
+      setLoadingSupabaseTables(false);
+    }
+  };
+
+  const handleSupabaseTableChange = async (tableName: string) => {
+    setSelectedSupabaseTable(tableName);
+    setFormData({
+      ...formData,
+      supabase_table: tableName,
+      table_name: tableName,
+    });
+
+    // Carregar colunas da tabela selecionada
+    if (tableName && formData.supabase_url && formData.supabase_key) {
+      setLoadingSupabaseColumns(true);
+      try {
+        const columns = await databaseConnectionsService.getSupabaseColumnsWithCredentials(
+          formData.supabase_url,
+          formData.supabase_key,
+          formData.supabase_key_type || 'anon',
+          tableName
+        );
+        setSupabaseColumns(columns);
+      } catch (error: any) {
+        console.error('Erro ao carregar colunas:', error);
+        setSupabaseColumns([]);
+      } finally {
+        setLoadingSupabaseColumns(false);
+      }
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -305,6 +421,26 @@ export function DatabaseConnectionForm() {
         connectionData.nocodb_token = formData.nocodb_token;
         connectionData.nocodb_project_id = formData.nocodb_project_id || selectedProject;
         connectionData.nocodb_table_id = formData.nocodb_table_id || selectedTable;
+      } else if (formData.type === 'SUPABASE') {
+        if (!formData.supabase_url) {
+          throw new Error('URL do Supabase é obrigatória');
+        }
+        if (!formData.supabase_key) {
+          throw new Error('API Key do Supabase é obrigatória');
+        }
+        if (!formData.supabase_table && !selectedSupabaseTable) {
+          throw new Error('Tabela é obrigatória para Supabase');
+        }
+
+        connectionData.host = formData.supabase_url;
+        connectionData.database = 'supabase';
+        connectionData.username = 'supabase';
+        connectionData.password = formData.supabase_key;
+        connectionData.table_name = formData.supabase_table || selectedSupabaseTable || '';
+        connectionData.supabase_url = formData.supabase_url;
+        connectionData.supabase_key = formData.supabase_key;
+        connectionData.supabase_key_type = formData.supabase_key_type || 'anon';
+        connectionData.supabase_table = formData.supabase_table || selectedSupabaseTable;
       } else {
         connectionData.database = formData.database!;
         connectionData.username = formData.username!;
@@ -399,6 +535,7 @@ export function DatabaseConnectionForm() {
                       <SelectItem value="POSTGRES">PostgreSQL</SelectItem>
                       <SelectItem value="MYSQL">MySQL</SelectItem>
                       <SelectItem value="NOCODB">NocoDB</SelectItem>
+                      <SelectItem value="SUPABASE">Supabase</SelectItem>
                       <SelectItem value="API">API REST</SelectItem>
                     </SelectContent>
                   </Select>
@@ -443,75 +580,7 @@ export function DatabaseConnectionForm() {
                 </TabsList>
 
                 <TabsContent value="connection" className="space-y-6 mt-6">
-                  {formData.type !== 'NOCODB' ? (
-                    <>
-                      <div className="grid grid-cols-3 gap-4">
-                        <div className="col-span-2 space-y-2">
-                          <Label htmlFor="host">Host *</Label>
-                          <Input
-                            id="host"
-                            value={formData.host}
-                            onChange={(e) => setFormData({ ...formData, host: e.target.value })}
-                            required
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor="port">Porta *</Label>
-                          <Input
-                            id="port"
-                            type="number"
-                            value={formData.port}
-                            onChange={(e) => setFormData({ ...formData, port: parseInt(e.target.value) })}
-                            required
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="database">Nome do Banco *</Label>
-                        <Input
-                          id="database"
-                          value={formData.database}
-                          onChange={(e) => setFormData({ ...formData, database: e.target.value })}
-                          required
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="username">Usuário *</Label>
-                          <Input
-                            id="username"
-                            value={formData.username}
-                            onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                            required
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor="password">Senha *</Label>
-                          <Input
-                            id="password"
-                            type="password"
-                            placeholder="••••••••"
-                            value={formData.password}
-                            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                            required
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="table_name">Nome da Tabela</Label>
-                        <Input
-                          id="table_name"
-                          value={formData.table_name}
-                          onChange={(e) => setFormData({ ...formData, table_name: e.target.value })}
-                        />
-                      </div>
-                    </>
-                  ) : (
+                  {formData.type === 'NOCODB' ? (
                     <>
                       <div className="space-y-2">
                         <Label htmlFor="nocodb_host">URL do NocoDB *</Label>
@@ -529,7 +598,6 @@ export function DatabaseConnectionForm() {
                         <Input
                           id="nocodb_token"
                           type="password"
-                          placeholder="Token do NocoDB"
                           value={formData.nocodb_token}
                           onChange={(e) => setFormData({ ...formData, nocodb_token: e.target.value })}
                           required
@@ -653,6 +721,265 @@ export function DatabaseConnectionForm() {
                           </div>
                         </CardContent>
                       </Card>
+                    </>
+                  ) : formData.type === 'SUPABASE' ? (
+                    <>
+                      {/* Supabase Configuration */}
+                      <div className="space-y-2">
+                        <Label htmlFor="supabase_url">URL do Projeto Supabase *</Label>
+                        <Input
+                          id="supabase_url"
+                          placeholder="https://seu-projeto.supabase.co"
+                          value={formData.supabase_url}
+                          onChange={(e) => setFormData({ ...formData, supabase_url: e.target.value })}
+                          required
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Encontre em: Supabase Dashboard → Settings → API → Project URL
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="col-span-2 space-y-2">
+                          <Label htmlFor="supabase_key">API Key *</Label>
+                          <Input
+                            id="supabase_key"
+                            type="password"
+                            value={formData.supabase_key}
+                            onChange={(e) => setFormData({ ...formData, supabase_key: e.target.value })}
+                            required
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="supabase_key_type">Tipo de Key</Label>
+                          <Select
+                            value={formData.supabase_key_type || 'anon'}
+                            onValueChange={(value: SupabaseKeyType) => setFormData({ ...formData, supabase_key_type: value })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="anon">Anon (Pública)</SelectItem>
+                              <SelectItem value="service_role">Service Role</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        <strong>Anon:</strong> Respeita RLS (Row Level Security) - recomendado para usuários.<br />
+                        <strong>Service Role:</strong> Ignora RLS - use apenas para admin.
+                      </p>
+
+                      {/* Test Connection Button */}
+                      <div className="flex items-center gap-4">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleTestSupabaseCredentials}
+                          disabled={testingSupabase || !formData.supabase_url || !formData.supabase_key}
+                        >
+                          {testingSupabase ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : (
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                          )}
+                          Testar Conexão
+                        </Button>
+
+                        {supabaseTestResult && (
+                          <div className={`flex items-center gap-2 text-sm ${supabaseTestResult.success ? 'text-green-600' : 'text-red-600'}`}>
+                            {supabaseTestResult.success ? (
+                              <CheckCircle className="h-4 w-4" />
+                            ) : (
+                              <XCircle className="h-4 w-4" />
+                            )}
+                            {supabaseTestResult.message}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Dynamic Table Selection */}
+                      {formData.supabase_url && formData.supabase_key && (
+                        <Card>
+                          <CardHeader>
+                            <CardTitle className="flex items-center space-x-2">
+                              <Database className="h-4 w-4" />
+                              <span>Seleção de Tabela</span>
+                            </CardTitle>
+                            <CardDescription>
+                              Carregue as tabelas disponíveis no schema public
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={handleLoadSupabaseTables}
+                              disabled={loadingSupabaseTables}
+                            >
+                              {loadingSupabaseTables ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <RefreshCw className="mr-2 h-4 w-4" />
+                              )}
+                              Carregar Tabelas
+                            </Button>
+
+                            {supabaseTables.length > 0 && (
+                              <div className="space-y-2">
+                                <Label>Tabela *</Label>
+                                <Select
+                                  value={selectedSupabaseTable || formData.supabase_table}
+                                  onValueChange={handleSupabaseTableChange}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Selecione uma tabela" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {supabaseTables.map((table) => (
+                                      <SelectItem key={table.name} value={table.name}>
+                                        {table.name}
+                                        {table.rlsEnabled && (
+                                          <span className="ml-2 text-xs text-muted-foreground">(RLS)</span>
+                                        )}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            )}
+
+                            {/* Column Preview */}
+                            {supabaseColumns.length > 0 && (
+                              <div className="space-y-2">
+                                <Label>Colunas da Tabela</Label>
+                                <div className="p-3 bg-muted rounded-lg max-h-40 overflow-y-auto">
+                                  <div className="grid grid-cols-2 gap-2 text-sm">
+                                    {supabaseColumns.map((col) => (
+                                      <div key={col.name} className="flex items-center gap-2">
+                                        <span className="font-mono">{col.name}</span>
+                                        <span className="text-xs text-muted-foreground">
+                                          ({col.dataType})
+                                        </span>
+                                        {col.isPrimaryKey && (
+                                          <span className="text-xs bg-primary/10 text-primary px-1 rounded">PK</span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {loadingSupabaseColumns && (
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Carregando colunas...
+                              </div>
+                            )}
+
+                            {/* Status */}
+                            {(selectedSupabaseTable || formData.supabase_table) && (
+                              <div className="p-4 bg-green-50 dark:bg-green-950 rounded-lg border border-green-200 dark:border-green-800">
+                                <div className="font-medium text-green-800 dark:text-green-200 mb-1">Configuração Válida:</div>
+                                <div className="text-green-700 dark:text-green-300 text-sm">
+                                  URL: {formData.supabase_url?.replace(/https:\/\/([^.]+).*/, '$1.supabase.co')}<br />
+                                  Tabela: {selectedSupabaseTable || formData.supabase_table}<br />
+                                  Tipo de Key: {formData.supabase_key_type === 'service_role' ? 'Service Role' : 'Anon'}
+                                </div>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {/* Manual Table Input */}
+                      <Card>
+                        <CardHeader>
+                          <CardTitle>Ou preencha manualmente:</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="space-y-2">
+                            <Label htmlFor="supabase_table">Nome da Tabela</Label>
+                            <Input
+                              id="supabase_table"
+                              placeholder="users"
+                              value={formData.supabase_table}
+                              onChange={(e) => setFormData({ ...formData, supabase_table: e.target.value, table_name: e.target.value })}
+                            />
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="col-span-2 space-y-2">
+                          <Label htmlFor="host">Host *</Label>
+                          <Input
+                            id="host"
+                            value={formData.host}
+                            onChange={(e) => setFormData({ ...formData, host: e.target.value })}
+                            required
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="port">Porta *</Label>
+                          <Input
+                            id="port"
+                            type="number"
+                            value={formData.port}
+                            onChange={(e) => setFormData({ ...formData, port: parseInt(e.target.value) })}
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="database">Nome do Banco *</Label>
+                        <Input
+                          id="database"
+                          value={formData.database}
+                          onChange={(e) => setFormData({ ...formData, database: e.target.value })}
+                          required
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="username">Usuário *</Label>
+                          <Input
+                            id="username"
+                            value={formData.username}
+                            onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                            required
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="password">Senha *</Label>
+                          <Input
+                            id="password"
+                            type="password"
+                            placeholder="••••••••"
+                            value={formData.password}
+                            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="table_name">Nome da Tabela</Label>
+                        <Input
+                          id="table_name"
+                          value={formData.table_name}
+                          onChange={(e) => setFormData({ ...formData, table_name: e.target.value })}
+                        />
+                      </div>
                     </>
                   )}
                 </TabsContent>

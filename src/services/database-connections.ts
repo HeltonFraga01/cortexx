@@ -63,10 +63,34 @@ export interface NocoDBColumn {
   uidt: string; // UI Data Type (Date, DateTime, SingleLineText, etc.)
 }
 
+// Metadados de tabela do Supabase
+export interface SupabaseTable {
+  name: string;
+  schema: string;
+  rowCount?: number;
+  rlsEnabled: boolean;
+  comment?: string;
+}
+
+// Metadados de coluna do Supabase
+export interface SupabaseColumn {
+  name: string;
+  dataType: string;
+  isNullable: boolean;
+  isPrimaryKey: boolean;
+  isForeignKey: boolean;
+  foreignKeyTable?: string;
+  defaultValue?: string;
+  comment?: string;
+}
+
+// Tipo de chave do Supabase
+export type SupabaseKeyType = 'service_role' | 'anon';
+
 export interface DatabaseConnection {
   id?: number;
   name: string;
-  type: 'POSTGRES' | 'MYSQL' | 'NOCODB' | 'API';
+  type: 'POSTGRES' | 'MYSQL' | 'NOCODB' | 'API' | 'SUPABASE';
   host: string;
   port: number;
   database: string;
@@ -80,6 +104,11 @@ export interface DatabaseConnection {
   nocodb_token?: string;
   nocodb_project_id?: string;
   nocodb_table_id?: string;
+  // Campos específicos do Supabase
+  supabase_url?: string;
+  supabase_key?: string;
+  supabase_key_type?: SupabaseKeyType;
+  supabase_table?: string;
   // Campos avançados
   user_link_field?: string;
   userLinkField?: string;
@@ -551,6 +580,210 @@ export class DatabaseConnectionsService {
           'Verifique se o token e IDs do NocoDB estão corretos'
         );
       }
+    }
+  }
+
+  // ============================================
+  // SUPABASE METHODS
+  // ============================================
+
+  /**
+   * Testar conexão Supabase com credenciais temporárias (antes de salvar)
+   */
+  async testSupabaseCredentials(
+    supabaseUrl: string,
+    supabaseKey: string,
+    supabaseKeyType: SupabaseKeyType = 'anon'
+  ): Promise<{ success: boolean; message: string; details?: any }> {
+    try {
+      const response = await backendApi.post<ApiResponse<any>>('/database-connections/test-supabase-credentials', {
+        supabase_url: supabaseUrl,
+        supabase_key: supabaseKey,
+        supabase_key_type: supabaseKeyType,
+      });
+
+      if (!response.success) {
+        return {
+          success: false,
+          message: response.error || 'Erro ao testar credenciais',
+        };
+      }
+
+      return {
+        success: response.data?.success ?? true,
+        message: response.data?.message || 'Conexão estabelecida com sucesso',
+        details: response.data?.details,
+      };
+    } catch (error: any) {
+      console.error('Erro ao testar credenciais Supabase:', error);
+      return {
+        success: false,
+        message: error.message || 'Erro de rede ao testar credenciais',
+      };
+    }
+  }
+
+  /**
+   * Testar conexão Supabase existente
+   */
+  async testSupabaseConnection(connectionId: number): Promise<{ success: boolean; message: string; details?: any }> {
+    try {
+      const response = await backendApi.post<ApiResponse<any>>(`/database-connections/${connectionId}/test-supabase`);
+
+      if (!response.success) {
+        return {
+          success: false,
+          message: response.error || 'Erro ao testar conexão',
+        };
+      }
+
+      return {
+        success: response.data?.success ?? true,
+        message: response.data?.message || 'Conexão estabelecida com sucesso',
+        details: response.data?.details,
+      };
+    } catch (error: any) {
+      console.error('Erro ao testar conexão Supabase:', error);
+      return {
+        success: false,
+        message: error.message || 'Erro de rede ao testar conexão',
+      };
+    }
+  }
+
+  /**
+   * Buscar tabelas do Supabase com credenciais temporárias
+   */
+  async getSupabaseTablesWithCredentials(
+    supabaseUrl: string,
+    supabaseKey: string,
+    supabaseKeyType: SupabaseKeyType = 'anon'
+  ): Promise<SupabaseTable[]> {
+    try {
+      const response = await backendApi.post<ApiResponse<SupabaseTable[]>>('/database-connections/supabase/tables', {
+        supabase_url: supabaseUrl,
+        supabase_key: supabaseKey,
+        supabase_key_type: supabaseKeyType,
+      });
+
+      if (!response.success) {
+        throw new Error(response.error || 'Erro ao buscar tabelas');
+      }
+
+      return response.data?.data || [];
+    } catch (error: any) {
+      console.error('Erro ao buscar tabelas Supabase:', error);
+      throw new DatabaseNavigationException(
+        error.message || 'Erro ao buscar tabelas do Supabase',
+        DatabaseNavigationError.DATABASE_ERROR
+      );
+    }
+  }
+
+  /**
+   * Buscar tabelas do Supabase de uma conexão existente
+   */
+  async getSupabaseTables(connectionId: number): Promise<SupabaseTable[]> {
+    const cacheKey = `supabase-tables:${connectionId}`;
+
+    // Try cache first
+    const cached = connectionCache.get<SupabaseTable[]>(cacheKey);
+    if (cached) {
+      if (IS_DEVELOPMENT) {
+        console.log('📦 Cache hit: supabase tables', { connectionId });
+      }
+      return cached;
+    }
+
+    try {
+      const response = await backendApi.get<ApiResponse<SupabaseTable[]>>(`/database-connections/${connectionId}/supabase/tables`);
+
+      if (!response.success) {
+        throw new Error(response.error || 'Erro ao buscar tabelas');
+      }
+
+      const tables = response.data?.data || [];
+
+      // Cache for 10 minutes
+      connectionCache.set(cacheKey, tables, 600000);
+
+      return tables;
+    } catch (error: any) {
+      console.error('Erro ao buscar tabelas Supabase:', error);
+      throw new DatabaseNavigationException(
+        error.message || 'Erro ao buscar tabelas do Supabase',
+        DatabaseNavigationError.DATABASE_ERROR
+      );
+    }
+  }
+
+  /**
+   * Buscar colunas de uma tabela Supabase com credenciais temporárias
+   */
+  async getSupabaseColumnsWithCredentials(
+    supabaseUrl: string,
+    supabaseKey: string,
+    supabaseKeyType: SupabaseKeyType,
+    tableName: string
+  ): Promise<SupabaseColumn[]> {
+    try {
+      const response = await backendApi.post<ApiResponse<SupabaseColumn[]>>('/database-connections/supabase/columns', {
+        supabase_url: supabaseUrl,
+        supabase_key: supabaseKey,
+        supabase_key_type: supabaseKeyType,
+        table_name: tableName,
+      });
+
+      if (!response.success) {
+        throw new Error(response.error || 'Erro ao buscar colunas');
+      }
+
+      return response.data?.data || [];
+    } catch (error: any) {
+      console.error('Erro ao buscar colunas Supabase:', error);
+      throw new DatabaseNavigationException(
+        error.message || 'Erro ao buscar colunas do Supabase',
+        DatabaseNavigationError.DATABASE_ERROR
+      );
+    }
+  }
+
+  /**
+   * Buscar colunas de uma tabela Supabase de uma conexão existente
+   */
+  async getSupabaseColumns(connectionId: number, tableName: string): Promise<SupabaseColumn[]> {
+    const cacheKey = `supabase-columns:${connectionId}:${tableName}`;
+
+    // Try cache first
+    const cached = connectionCache.get<SupabaseColumn[]>(cacheKey);
+    if (cached) {
+      if (IS_DEVELOPMENT) {
+        console.log('📦 Cache hit: supabase columns', { connectionId, tableName });
+      }
+      return cached;
+    }
+
+    try {
+      const response = await backendApi.get<ApiResponse<SupabaseColumn[]>>(
+        `/database-connections/${connectionId}/supabase/columns/${encodeURIComponent(tableName)}`
+      );
+
+      if (!response.success) {
+        throw new Error(response.error || 'Erro ao buscar colunas');
+      }
+
+      const columns = response.data?.data || [];
+
+      // Cache for 10 minutes
+      connectionCache.set(cacheKey, columns, 600000);
+
+      return columns;
+    } catch (error: any) {
+      console.error('Erro ao buscar colunas Supabase:', error);
+      throw new DatabaseNavigationException(
+        error.message || 'Erro ao buscar colunas do Supabase',
+        DatabaseNavigationError.DATABASE_ERROR
+      );
     }
   }
 

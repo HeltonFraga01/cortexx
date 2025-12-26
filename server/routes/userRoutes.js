@@ -6,6 +6,9 @@ const { validateSupabaseToken } = require('../middleware/supabaseAuth');
 const { inboxContextMiddleware } = require('../middleware/inboxContextMiddleware');
 const { skipCsrf } = require('../middleware/csrf');
 const UserDataService = require('../services/UserDataService');
+const SupabaseConnectionService = require('../services/SupabaseConnectionService');
+const DatabaseConnectionService = require('../services/DatabaseConnectionService');
+const { withCircuitBreaker } = require('../utils/circuitBreaker');
 
 const router = express.Router();
 
@@ -359,19 +362,71 @@ router.get('/database-connections/:id/record', verifyUserToken, async (req, res)
 router.get('/database-connections/:id/data', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const userToken = req.userToken;
+    const { page = 1, limit = 25, orderBy, ascending } = req.query;
+    const userId = req.userId || req.user?.id;
     
     logger.info('Solicitação de dados da tabela:', { 
       connectionId: id, 
-      userToken: userToken.substring(0, 8) + '...' 
+      userId,
+      page,
+      limit
     });
     
-    // NOTE: getUserTableData requires NocoDB/external DB integration
-    // This needs to be implemented in a dedicated service
+    // Buscar conexão
+    const connection = await DatabaseConnectionService.getConnectionById(id);
+    
+    if (!connection) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conexão não encontrada',
+        code: 'CONNECTION_NOT_FOUND',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Verificar se usuário tem acesso à conexão
+    const assignedUsers = connection.assigned_users || connection.assignedUsers || [];
+    if (assignedUsers.length > 0 && !assignedUsers.includes(userId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado',
+        code: 'ACCESS_DENIED',
+        message: 'Você não tem permissão para acessar esta conexão',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Processar baseado no tipo de conexão
+    if (connection.type === 'SUPABASE') {
+      const circuitKey = `supabase:${id}`;
+      const result = await withCircuitBreaker(circuitKey, async () => {
+        return await SupabaseConnectionService.fetchRecords(connection, {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          orderBy: orderBy || 'created_at',
+          ascending: ascending === 'true',
+          userId,
+          userLinkField: connection.user_link_field
+        });
+      });
+      
+      return res.json({
+        success: true,
+        data: result.data,
+        count: result.count,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Para outros tipos (NocoDB, etc.) - ainda não implementado
     return res.status(501).json({
       success: false,
-      error: 'External database data fetch not yet migrated to new service',
+      error: 'Tipo de conexão não suportado para esta operação',
       code: 'NOT_IMPLEMENTED',
+      connectionType: connection.type,
       timestamp: new Date().toISOString()
     });
     
@@ -382,23 +437,26 @@ router.get('/database-connections/:id/data', verifyUserToken, async (req, res) =
     });
     
     let statusCode = 500;
-    let errorType = 'Internal Server Error';
+    let errorCode = 'INTERNAL_ERROR';
     
-    if (error.message.includes('Connection not found')) {
-      statusCode = 404;
-      errorType = 'Not Found';
-    } else if (error.message.includes('Access denied')) {
-      statusCode = 403;
-      errorType = 'Forbidden';
-    } else if (error.message.includes('Invalid or expired token')) {
+    if (error.code === 'CIRCUIT_OPEN') {
+      statusCode = 503;
+      errorCode = 'SERVICE_UNAVAILABLE';
+    } else if (error.code === 'SUPABASE_AUTH_FAILED') {
       statusCode = 401;
-      errorType = 'Unauthorized';
+      errorCode = error.code;
+    } else if (error.code === 'SUPABASE_PERMISSION_DENIED' || error.code === 'SUPABASE_RLS_VIOLATION') {
+      statusCode = 403;
+      errorCode = error.code;
+    } else if (error.code === 'SUPABASE_TABLE_NOT_FOUND') {
+      statusCode = 404;
+      errorCode = error.code;
     }
     
     res.status(statusCode).json({
       success: false,
-      error: errorType,
-      message: error.message,
+      error: error.userMessage || error.message,
+      code: errorCode,
       timestamp: new Date().toISOString()
     });
   }
@@ -408,23 +466,91 @@ router.get('/database-connections/:id/data', verifyUserToken, async (req, res) =
 router.post('/database-connections/:id/data', verifyUserToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const userToken = req.userToken;
     const recordData = req.body;
+    const userId = req.userId || req.user?.id;
     
-    // NOTE: createUserTableRecord requires NocoDB/external DB integration
-    // This needs to be implemented in a dedicated service
+    logger.info('Criando registro na tabela:', { 
+      connectionId: id, 
+      userId
+    });
+    
+    // Buscar conexão
+    const connection = await DatabaseConnectionService.getConnectionById(id);
+    
+    if (!connection) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conexão não encontrada',
+        code: 'CONNECTION_NOT_FOUND',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Verificar se usuário tem acesso à conexão
+    const assignedUsers = connection.assigned_users || connection.assignedUsers || [];
+    if (assignedUsers.length > 0 && !assignedUsers.includes(userId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado',
+        code: 'ACCESS_DENIED',
+        message: 'Você não tem permissão para acessar esta conexão',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Processar baseado no tipo de conexão
+    if (connection.type === 'SUPABASE') {
+      // Adicionar user_link_field se configurado
+      const dataToCreate = { ...recordData };
+      if (connection.user_link_field && userId) {
+        dataToCreate[connection.user_link_field] = userId;
+      }
+      
+      const circuitKey = `supabase:${id}`;
+      const result = await withCircuitBreaker(circuitKey, async () => {
+        return await SupabaseConnectionService.createRecord(connection, dataToCreate);
+      });
+      
+      return res.status(201).json({
+        success: true,
+        data: result,
+        message: 'Registro criado com sucesso',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Para outros tipos - ainda não implementado
     return res.status(501).json({
       success: false,
-      error: 'External database record creation not yet migrated to new service',
+      error: 'Tipo de conexão não suportado para esta operação',
       code: 'NOT_IMPLEMENTED',
+      connectionType: connection.type,
       timestamp: new Date().toISOString()
     });
-  } catch (err) {
-    logger.error('Erro ao criar registro:', err.message);
-    res.status(500).json({ 
+  } catch (error) {
+    logger.error('Erro ao criar registro:', { 
+      connectionId: req.params.id,
+      error: error.message 
+    });
+    
+    let statusCode = 500;
+    let errorCode = 'INTERNAL_ERROR';
+    
+    if (error.code === 'CIRCUIT_OPEN') {
+      statusCode = 503;
+      errorCode = 'SERVICE_UNAVAILABLE';
+    } else if (error.code === 'SUPABASE_AUTH_FAILED') {
+      statusCode = 401;
+      errorCode = error.code;
+    } else if (error.code === 'SUPABASE_PERMISSION_DENIED' || error.code === 'SUPABASE_RLS_VIOLATION') {
+      statusCode = 403;
+      errorCode = error.code;
+    }
+    
+    res.status(statusCode).json({ 
       success: false,
-      error: err.message,
-      code: 500,
+      error: error.userMessage || error.message,
+      code: errorCode,
       timestamp: new Date().toISOString()
     });
   }
@@ -434,20 +560,85 @@ router.post('/database-connections/:id/data', verifyUserToken, async (req, res) 
 router.get('/database-connections/:id/data/:recordId', verifyUserToken, async (req, res) => {
   try {
     const { id, recordId } = req.params;
-    const userToken = req.userToken;
+    const userId = req.userId || req.user?.id;
     
     logger.info('Solicitação de registro específico:', { 
       connectionId: id, 
       recordId,
-      userToken: userToken.substring(0, 8) + '...' 
+      userId
     });
     
-    // NOTE: getUserTableRecordById requires NocoDB/external DB integration
-    // This needs to be implemented in a dedicated service
+    // Buscar conexão
+    const connection = await DatabaseConnectionService.getConnectionById(id);
+    
+    if (!connection) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conexão não encontrada',
+        code: 'CONNECTION_NOT_FOUND',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Verificar se usuário tem acesso à conexão
+    const assignedUsers = connection.assigned_users || connection.assignedUsers || [];
+    if (assignedUsers.length > 0 && !assignedUsers.includes(userId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado',
+        code: 'ACCESS_DENIED',
+        message: 'Você não tem permissão para acessar esta conexão',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Processar baseado no tipo de conexão
+    if (connection.type === 'SUPABASE') {
+      const circuitKey = `supabase:${id}`;
+      const result = await withCircuitBreaker(circuitKey, async () => {
+        // Buscar registro com filtro de usuário se configurado
+        const filters = { id: recordId };
+        if (connection.user_link_field && userId) {
+          filters[connection.user_link_field] = userId;
+        }
+        
+        const records = await SupabaseConnectionService.fetchRecords(connection, {
+          page: 1,
+          limit: 1,
+          filters,
+          userId,
+          userLinkField: connection.user_link_field
+        });
+        
+        if (!records.data || records.data.length === 0) {
+          return null;
+        }
+        
+        return records.data[0];
+      });
+      
+      if (!result) {
+        return res.status(404).json({
+          success: false,
+          error: 'Registro não encontrado',
+          code: 'RECORD_NOT_FOUND',
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      return res.json({
+        success: true,
+        data: result,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Para outros tipos - ainda não implementado
     return res.status(501).json({
       success: false,
-      error: 'External database record fetch not yet migrated to new service',
+      error: 'Tipo de conexão não suportado para esta operação',
       code: 'NOT_IMPLEMENTED',
+      connectionType: connection.type,
       timestamp: new Date().toISOString()
     });
     
@@ -459,23 +650,23 @@ router.get('/database-connections/:id/data/:recordId', verifyUserToken, async (r
     });
     
     let statusCode = 500;
-    let errorType = 'Internal Server Error';
+    let errorCode = 'INTERNAL_ERROR';
     
-    if (error.message.includes('Connection not found')) {
-      statusCode = 404;
-      errorType = 'Not Found';
-    } else if (error.message.includes('Access denied')) {
-      statusCode = 403;
-      errorType = 'Forbidden';
-    } else if (error.message.includes('Invalid or expired token')) {
+    if (error.code === 'CIRCUIT_OPEN') {
+      statusCode = 503;
+      errorCode = 'SERVICE_UNAVAILABLE';
+    } else if (error.code === 'SUPABASE_AUTH_FAILED') {
       statusCode = 401;
-      errorType = 'Unauthorized';
+      errorCode = error.code;
+    } else if (error.code === 'SUPABASE_PERMISSION_DENIED' || error.code === 'SUPABASE_RLS_VIOLATION') {
+      statusCode = 403;
+      errorCode = error.code;
     }
     
     res.status(statusCode).json({
       success: false,
-      error: errorType,
-      message: error.message,
+      error: error.userMessage || error.message,
+      code: errorCode,
       timestamp: new Date().toISOString()
     });
   }
@@ -485,23 +676,110 @@ router.get('/database-connections/:id/data/:recordId', verifyUserToken, async (r
 router.put('/database-connections/:id/data/:recordId', verifyUserToken, async (req, res) => {
   try {
     const { id, recordId } = req.params;
-    const userToken = req.userToken;
     const recordData = req.body;
+    const userId = req.userId || req.user?.id;
     
-    // NOTE: updateUserTableRecord requires NocoDB/external DB integration
-    // This needs to be implemented in a dedicated service
+    logger.info('Atualizando registro:', { 
+      connectionId: id, 
+      recordId,
+      userId
+    });
+    
+    // Buscar conexão
+    const connection = await DatabaseConnectionService.getConnectionById(id);
+    
+    if (!connection) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conexão não encontrada',
+        code: 'CONNECTION_NOT_FOUND',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Verificar se usuário tem acesso à conexão
+    const assignedUsers = connection.assigned_users || connection.assignedUsers || [];
+    if (assignedUsers.length > 0 && !assignedUsers.includes(userId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado',
+        code: 'ACCESS_DENIED',
+        message: 'Você não tem permissão para acessar esta conexão',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Processar baseado no tipo de conexão
+    if (connection.type === 'SUPABASE') {
+      const circuitKey = `supabase:${id}`;
+      
+      // Primeiro, verificar se o registro pertence ao usuário (se user_link_field configurado)
+      if (connection.user_link_field && userId) {
+        const existingRecords = await withCircuitBreaker(circuitKey, async () => {
+          return await SupabaseConnectionService.fetchRecords(connection, {
+            page: 1,
+            limit: 1,
+            filters: { id: recordId },
+            userId,
+            userLinkField: connection.user_link_field
+          });
+        });
+        
+        if (!existingRecords.data || existingRecords.data.length === 0) {
+          return res.status(404).json({
+            success: false,
+            error: 'Registro não encontrado ou sem permissão',
+            code: 'RECORD_NOT_FOUND',
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+      
+      const result = await withCircuitBreaker(circuitKey, async () => {
+        return await SupabaseConnectionService.updateRecord(connection, recordId, recordData);
+      });
+      
+      return res.json({
+        success: true,
+        data: result,
+        message: 'Registro atualizado com sucesso',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Para outros tipos - ainda não implementado
     return res.status(501).json({
       success: false,
-      error: 'External database record update not yet migrated to new service',
+      error: 'Tipo de conexão não suportado para esta operação',
       code: 'NOT_IMPLEMENTED',
+      connectionType: connection.type,
       timestamp: new Date().toISOString()
     });
-  } catch (err) {
-    logger.error('Erro ao atualizar registro:', err.message);
-    res.status(500).json({ 
+  } catch (error) {
+    logger.error('Erro ao atualizar registro:', { 
+      connectionId: req.params.id,
+      recordId: req.params.recordId,
+      error: error.message 
+    });
+    
+    let statusCode = 500;
+    let errorCode = 'INTERNAL_ERROR';
+    
+    if (error.code === 'CIRCUIT_OPEN') {
+      statusCode = 503;
+      errorCode = 'SERVICE_UNAVAILABLE';
+    } else if (error.code === 'SUPABASE_AUTH_FAILED') {
+      statusCode = 401;
+      errorCode = error.code;
+    } else if (error.code === 'SUPABASE_PERMISSION_DENIED' || error.code === 'SUPABASE_RLS_VIOLATION') {
+      statusCode = 403;
+      errorCode = error.code;
+    }
+    
+    res.status(statusCode).json({ 
       success: false,
-      error: err.message,
-      code: 500,
+      error: error.userMessage || error.message,
+      code: errorCode,
       timestamp: new Date().toISOString()
     });
   }
@@ -511,22 +789,108 @@ router.put('/database-connections/:id/data/:recordId', verifyUserToken, async (r
 router.delete('/database-connections/:id/data/:recordId', verifyUserToken, async (req, res) => {
   try {
     const { id, recordId } = req.params;
-    const userToken = req.userToken;
+    const userId = req.userId || req.user?.id;
     
-    // NOTE: deleteUserTableRecord requires NocoDB/external DB integration
-    // This needs to be implemented in a dedicated service
+    logger.info('Deletando registro:', { 
+      connectionId: id, 
+      recordId,
+      userId
+    });
+    
+    // Buscar conexão
+    const connection = await DatabaseConnectionService.getConnectionById(id);
+    
+    if (!connection) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conexão não encontrada',
+        code: 'CONNECTION_NOT_FOUND',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Verificar se usuário tem acesso à conexão
+    const assignedUsers = connection.assigned_users || connection.assignedUsers || [];
+    if (assignedUsers.length > 0 && !assignedUsers.includes(userId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado',
+        code: 'ACCESS_DENIED',
+        message: 'Você não tem permissão para acessar esta conexão',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Processar baseado no tipo de conexão
+    if (connection.type === 'SUPABASE') {
+      const circuitKey = `supabase:${id}`;
+      
+      // Primeiro, verificar se o registro pertence ao usuário (se user_link_field configurado)
+      if (connection.user_link_field && userId) {
+        const existingRecords = await withCircuitBreaker(circuitKey, async () => {
+          return await SupabaseConnectionService.fetchRecords(connection, {
+            page: 1,
+            limit: 1,
+            filters: { id: recordId },
+            userId,
+            userLinkField: connection.user_link_field
+          });
+        });
+        
+        if (!existingRecords.data || existingRecords.data.length === 0) {
+          return res.status(404).json({
+            success: false,
+            error: 'Registro não encontrado ou sem permissão',
+            code: 'RECORD_NOT_FOUND',
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+      
+      await withCircuitBreaker(circuitKey, async () => {
+        return await SupabaseConnectionService.deleteRecord(connection, recordId);
+      });
+      
+      return res.json({
+        success: true,
+        message: 'Registro deletado com sucesso',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Para outros tipos - ainda não implementado
     return res.status(501).json({
       success: false,
-      error: 'External database record deletion not yet migrated to new service',
+      error: 'Tipo de conexão não suportado para esta operação',
       code: 'NOT_IMPLEMENTED',
+      connectionType: connection.type,
       timestamp: new Date().toISOString()
     });
-  } catch (err) {
-    logger.error('Erro ao deletar registro:', err.message);
-    res.status(500).json({ 
+  } catch (error) {
+    logger.error('Erro ao deletar registro:', { 
+      connectionId: req.params.id,
+      recordId: req.params.recordId,
+      error: error.message 
+    });
+    
+    let statusCode = 500;
+    let errorCode = 'INTERNAL_ERROR';
+    
+    if (error.code === 'CIRCUIT_OPEN') {
+      statusCode = 503;
+      errorCode = 'SERVICE_UNAVAILABLE';
+    } else if (error.code === 'SUPABASE_AUTH_FAILED') {
+      statusCode = 401;
+      errorCode = error.code;
+    } else if (error.code === 'SUPABASE_PERMISSION_DENIED' || error.code === 'SUPABASE_RLS_VIOLATION') {
+      statusCode = 403;
+      errorCode = error.code;
+    }
+    
+    res.status(statusCode).json({ 
       success: false,
-      error: err.message,
-      code: 500,
+      error: error.userMessage || error.message,
+      code: errorCode,
       timestamp: new Date().toISOString()
     });
   }

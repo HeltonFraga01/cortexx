@@ -3,11 +3,14 @@ const { logger } = require('../utils/logger');
 const securityLogger = require('../utils/securityLogger');
 const { validateViewConfiguration, validateFieldMappings } = require('../validators/viewConfigurationValidator');
 const { validateConnectionData } = require('../validators/databaseConnectionValidator');
+const { validateSupabaseConnection, validateSupabaseCredentials } = require('../validators/supabaseValidator');
 const { sanitizeConnection, sanitizeConnections } = require('../utils/credentialSanitizer');
 const { requireAdmin } = require('../middleware/auth');
 const { adminLimiter } = require('../middleware/rateLimiter');
 const { featureMiddleware } = require('../middleware/featureEnforcement');
 const DatabaseConnectionService = require('../services/DatabaseConnectionService');
+const SupabaseConnectionService = require('../services/SupabaseConnectionService');
+const { withCircuitBreaker } = require('../utils/circuitBreaker');
 
 const router = express.Router();
 
@@ -116,6 +119,18 @@ router.post('/', async (req, res) => {
         error: 'Dados inválidos',
         code: 'VALIDATION_ERROR',
         message: 'Para NocoDB, token, project ID e table ID são obrigatórios',
+      });
+    }
+  } else if (connectionData.type === 'SUPABASE') {
+    // Validação específica para Supabase
+    const supabaseValidation = validateSupabaseConnection(connectionData);
+    if (!supabaseValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: 'Dados inválidos',
+        code: 'VALIDATION_ERROR',
+        message: supabaseValidation.errors.join('; '),
+        errors: supabaseValidation.errors,
       });
     }
   } else {
@@ -408,6 +423,419 @@ router.delete('/:id', async (req, res) => {
     return res.status(500).json({ 
       error: 'Erro interno do servidor',
       message: err.message 
+    });
+  }
+});
+
+// ============================================
+// SUPABASE-SPECIFIC ENDPOINTS
+// ============================================
+
+// POST /api/database-connections/:id/test-supabase - Testar conexão Supabase
+router.post('/:id/test-supabase', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const connection = await DatabaseConnectionService.getConnectionById(id);
+
+    if (!connection) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conexão não encontrada',
+        code: 'CONNECTION_NOT_FOUND',
+        message: `Conexão com ID ${id} não existe`,
+      });
+    }
+
+    if (connection.type !== 'SUPABASE') {
+      return res.status(400).json({
+        success: false,
+        error: 'Tipo inválido',
+        code: 'INVALID_TYPE',
+        message: 'Esta rota é apenas para conexões do tipo SUPABASE',
+      });
+    }
+
+    // Log credential access for security audit
+    securityLogger.logSensitiveDataAccess({
+      userId: req.session?.userId,
+      ip: req.ip,
+      resource: `database_connection:${id}:supabase_key`,
+      action: 'test_supabase_connection',
+    });
+
+    // Use circuit breaker for connection test
+    const circuitKey = `supabase:${id}`;
+    const result = await withCircuitBreaker(circuitKey, async () => {
+      return await SupabaseConnectionService.testConnection(connection);
+    });
+
+    // Update connection status based on test result
+    const newStatus = result.success ? 'connected' : 'error';
+    await DatabaseConnectionService.updateConnectionStatus(id, newStatus);
+
+    res.json({
+      success: result.success,
+      message: result.message,
+      data: {
+        status: result.status,
+        details: result.details,
+      },
+    });
+  } catch (err) {
+    logger.error('Erro ao testar conexão Supabase', {
+      connectionId: id,
+      error: err.message,
+      userId: req.session?.userId,
+    });
+
+    // Update status to error
+    try {
+      await DatabaseConnectionService.updateConnectionStatus(id, 'error');
+    } catch (updateErr) {
+      logger.error('Erro ao atualizar status', { error: updateErr.message });
+    }
+
+    // Handle circuit breaker errors
+    if (err.code === 'CIRCUIT_OPEN') {
+      return res.status(503).json({
+        success: false,
+        error: 'Serviço temporariamente indisponível',
+        code: 'CIRCUIT_OPEN',
+        message: err.userMessage || 'Muitas falhas recentes. Aguarde antes de tentar novamente.',
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao testar conexão',
+      message: err.userMessage || err.message,
+    });
+  }
+});
+
+// POST /api/database-connections/test-supabase-credentials - Testar credenciais antes de salvar
+router.post('/test-supabase-credentials', async (req, res) => {
+  const { supabase_url, supabase_key, supabase_key_type } = req.body;
+
+  // Validate input - use credentials-only validation (no name required)
+  const validation = validateSupabaseCredentials({
+    supabase_url,
+    supabase_key,
+    supabase_key_type,
+  });
+
+  if (!validation.valid) {
+    return res.status(400).json({
+      success: false,
+      error: 'Dados inválidos',
+      code: 'VALIDATION_ERROR',
+      message: validation.errors.join('; '),
+      errors: validation.errors,
+    });
+  }
+
+  try {
+    // Log credential access
+    securityLogger.logSensitiveDataAccess({
+      userId: req.session?.userId,
+      ip: req.ip,
+      resource: 'supabase_credentials:test',
+      action: 'test_credentials_before_save',
+    });
+
+    const result = await SupabaseConnectionService.testConnection({
+      supabase_url,
+      supabase_key,
+      supabase_key_type,
+    });
+
+    res.json({
+      success: result.success,
+      message: result.message,
+      data: {
+        status: result.status,
+        details: result.details,
+      },
+    });
+  } catch (err) {
+    logger.error('Erro ao testar credenciais Supabase', {
+      error: err.message,
+      userId: req.session?.userId,
+    });
+
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao testar credenciais',
+      message: err.userMessage || err.message,
+    });
+  }
+});
+
+// GET /api/database-connections/:id/supabase/tables - Listar tabelas do Supabase
+router.get('/:id/supabase/tables', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const connection = await DatabaseConnectionService.getConnectionById(id);
+
+    if (!connection) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conexão não encontrada',
+        code: 'CONNECTION_NOT_FOUND',
+      });
+    }
+
+    if (connection.type !== 'SUPABASE') {
+      return res.status(400).json({
+        success: false,
+        error: 'Tipo inválido',
+        code: 'INVALID_TYPE',
+        message: 'Esta rota é apenas para conexões do tipo SUPABASE',
+      });
+    }
+
+    // Log credential access
+    securityLogger.logSensitiveDataAccess({
+      userId: req.session?.userId,
+      ip: req.ip,
+      resource: `database_connection:${id}:supabase_key`,
+      action: 'list_supabase_tables',
+    });
+
+    const circuitKey = `supabase:${id}`;
+    const tables = await withCircuitBreaker(circuitKey, async () => {
+      return await SupabaseConnectionService.listTables(connection);
+    });
+
+    res.json({
+      success: true,
+      data: tables,
+      count: tables.length,
+    });
+  } catch (err) {
+    logger.error('Erro ao listar tabelas Supabase', {
+      connectionId: id,
+      error: err.message,
+      userId: req.session?.userId,
+    });
+
+    if (err.code === 'CIRCUIT_OPEN') {
+      return res.status(503).json({
+        success: false,
+        error: 'Serviço temporariamente indisponível',
+        code: 'CIRCUIT_OPEN',
+        message: err.userMessage,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao listar tabelas',
+      message: err.userMessage || err.message,
+    });
+  }
+});
+
+// GET /api/database-connections/:id/supabase/columns/:table - Obter colunas de uma tabela
+router.get('/:id/supabase/columns/:table', async (req, res) => {
+  const { id, table } = req.params;
+
+  try {
+    const connection = await DatabaseConnectionService.getConnectionById(id);
+
+    if (!connection) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conexão não encontrada',
+        code: 'CONNECTION_NOT_FOUND',
+      });
+    }
+
+    if (connection.type !== 'SUPABASE') {
+      return res.status(400).json({
+        success: false,
+        error: 'Tipo inválido',
+        code: 'INVALID_TYPE',
+        message: 'Esta rota é apenas para conexões do tipo SUPABASE',
+      });
+    }
+
+    // Log credential access
+    securityLogger.logSensitiveDataAccess({
+      userId: req.session?.userId,
+      ip: req.ip,
+      resource: `database_connection:${id}:supabase_key`,
+      action: 'get_supabase_columns',
+    });
+
+    const circuitKey = `supabase:${id}`;
+    const columns = await withCircuitBreaker(circuitKey, async () => {
+      return await SupabaseConnectionService.getTableColumns(connection, table);
+    });
+
+    res.json({
+      success: true,
+      data: columns,
+      count: columns.length,
+    });
+  } catch (err) {
+    logger.error('Erro ao obter colunas Supabase', {
+      connectionId: id,
+      table,
+      error: err.message,
+      userId: req.session?.userId,
+    });
+
+    if (err.code === 'CIRCUIT_OPEN') {
+      return res.status(503).json({
+        success: false,
+        error: 'Serviço temporariamente indisponível',
+        code: 'CIRCUIT_OPEN',
+        message: err.userMessage,
+      });
+    }
+
+    if (err.code === 'SUPABASE_TABLE_NOT_FOUND') {
+      return res.status(404).json({
+        success: false,
+        error: 'Tabela não encontrada',
+        code: err.code,
+        message: err.userMessage,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao obter colunas',
+      message: err.userMessage || err.message,
+    });
+  }
+});
+
+// POST /api/database-connections/supabase/tables - Listar tabelas com credenciais temporárias
+router.post('/supabase/tables', async (req, res) => {
+  const { supabase_url, supabase_key, supabase_key_type } = req.body;
+
+  // Validate input - use credentials-only validation (no name required for temp credentials)
+  const validation = validateSupabaseCredentials({
+    supabase_url,
+    supabase_key,
+    supabase_key_type,
+  });
+
+  if (!validation.valid) {
+    return res.status(400).json({
+      success: false,
+      error: 'Dados inválidos',
+      code: 'VALIDATION_ERROR',
+      message: validation.errors.join('; '),
+    });
+  }
+
+  try {
+    // Log credential access
+    securityLogger.logSensitiveDataAccess({
+      userId: req.session?.userId,
+      ip: req.ip,
+      resource: 'supabase_credentials:temp',
+      action: 'list_tables_temp_credentials',
+    });
+
+    const tables = await SupabaseConnectionService.listTables({
+      supabase_url,
+      supabase_key,
+      supabase_key_type,
+    });
+
+    res.json({
+      success: true,
+      data: tables,
+      count: tables.length,
+    });
+  } catch (err) {
+    logger.error('Erro ao listar tabelas Supabase (temp)', {
+      error: err.message,
+      userId: req.session?.userId,
+    });
+
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao listar tabelas',
+      message: err.userMessage || err.message,
+    });
+  }
+});
+
+// POST /api/database-connections/supabase/columns - Obter colunas com credenciais temporárias
+router.post('/supabase/columns', async (req, res) => {
+  const { supabase_url, supabase_key, supabase_key_type, table_name } = req.body;
+
+  if (!table_name) {
+    return res.status(400).json({
+      success: false,
+      error: 'Dados inválidos',
+      code: 'VALIDATION_ERROR',
+      message: 'Nome da tabela é obrigatório',
+    });
+  }
+
+  // Validate input - use credentials-only validation (no name required for temp credentials)
+  const validation = validateSupabaseCredentials({
+    supabase_url,
+    supabase_key,
+    supabase_key_type,
+  });
+
+  if (!validation.valid) {
+    return res.status(400).json({
+      success: false,
+      error: 'Dados inválidos',
+      code: 'VALIDATION_ERROR',
+      message: validation.errors.join('; '),
+    });
+  }
+
+  try {
+    // Log credential access
+    securityLogger.logSensitiveDataAccess({
+      userId: req.session?.userId,
+      ip: req.ip,
+      resource: 'supabase_credentials:temp',
+      action: 'get_columns_temp_credentials',
+    });
+
+    const columns = await SupabaseConnectionService.getTableColumns(
+      { supabase_url, supabase_key, supabase_key_type },
+      table_name
+    );
+
+    res.json({
+      success: true,
+      data: columns,
+      count: columns.length,
+    });
+  } catch (err) {
+    logger.error('Erro ao obter colunas Supabase (temp)', {
+      table: table_name,
+      error: err.message,
+      userId: req.session?.userId,
+    });
+
+    if (err.code === 'SUPABASE_TABLE_NOT_FOUND') {
+      return res.status(404).json({
+        success: false,
+        error: 'Tabela não encontrada',
+        code: err.code,
+        message: err.userMessage,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao obter colunas',
+      message: err.userMessage || err.message,
     });
   }
 });

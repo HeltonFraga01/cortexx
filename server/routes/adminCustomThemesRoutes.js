@@ -25,16 +25,16 @@ const customThemeService = getCustomThemeService();
  */
 router.get('/', async (req, res) => {
   try {
-    const { connection_id, limit, offset } = req.query;
+    const { account_id, limit, offset } = req.query;
 
     const themes = await customThemeService.list({
-      connectionId: connection_id ? parseInt(connection_id, 10) : undefined,
+      accountId: account_id || undefined,
       limit: limit ? parseInt(limit, 10) : 100,
       offset: offset ? parseInt(offset, 10) : 0,
     });
 
     const total = await customThemeService.count({
-      connectionId: connection_id ? parseInt(connection_id, 10) : undefined,
+      accountId: account_id || undefined,
     });
 
     res.json({
@@ -91,7 +91,18 @@ router.get('/:id', async (req, res) => {
  */
 router.post('/', async (req, res) => {
   try {
-    const { name, description, connectionId, schema, previewImage } = req.body;
+    const { 
+      accountId, 
+      name, 
+      primaryColor, 
+      secondaryColor, 
+      backgroundColor, 
+      textColor, 
+      accentColor, 
+      logoUrl, 
+      customCss, 
+      isActive 
+    } = req.body;
 
     // Validate required fields
     if (!name || typeof name !== 'string' || name.trim() === '') {
@@ -101,19 +112,24 @@ router.post('/', async (req, res) => {
       });
     }
 
-    if (!schema || !Array.isArray(schema.blocks)) {
+    if (!accountId) {
       return res.status(400).json({
         success: false,
-        error: 'Valid schema with blocks array is required',
+        error: 'Account ID is required',
       });
     }
 
     const theme = await customThemeService.create({
+      accountId,
       name: name.trim(),
-      description: description?.trim() || null,
-      connectionId: connectionId || null,
-      schema,
-      previewImage: previewImage || null,
+      primaryColor: primaryColor || null,
+      secondaryColor: secondaryColor || null,
+      backgroundColor: backgroundColor || null,
+      textColor: textColor || null,
+      accentColor: accentColor || null,
+      logoUrl: logoUrl || null,
+      customCss: customCss || null,
+      isActive: isActive || false,
     });
 
     logger.info('Custom theme created via API', {
@@ -143,7 +159,17 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, connectionId, schema, previewImage } = req.body;
+    const { 
+      name, 
+      primaryColor, 
+      secondaryColor, 
+      backgroundColor, 
+      textColor, 
+      accentColor, 
+      logoUrl, 
+      customCss, 
+      isActive 
+    } = req.body;
 
     // Validate name if provided
     if (name !== undefined && (typeof name !== 'string' || name.trim() === '')) {
@@ -153,20 +179,16 @@ router.put('/:id', async (req, res) => {
       });
     }
 
-    // Validate schema if provided
-    if (schema !== undefined && (!schema || !Array.isArray(schema.blocks))) {
-      return res.status(400).json({
-        success: false,
-        error: 'Schema must have a blocks array',
-      });
-    }
-
-    const theme = await customThemeService.update(parseInt(id, 10), {
+    const theme = await customThemeService.update(id, {
       name: name?.trim(),
-      description: description !== undefined ? description?.trim() : undefined,
-      connectionId,
-      schema,
-      previewImage,
+      primaryColor,
+      secondaryColor,
+      backgroundColor,
+      textColor,
+      accentColor,
+      logoUrl,
+      customCss,
+      isActive,
     });
 
     logger.info('Custom theme updated via API', {

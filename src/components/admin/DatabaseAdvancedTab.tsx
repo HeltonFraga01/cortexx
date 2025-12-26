@@ -6,7 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { DatabaseConnection, FieldMapping, ViewConfiguration, databaseConnectionsService } from '@/services/database-connections';
-import { WuzAPIService, WuzAPIUser } from '@/services/wuzapi';
+import { adminUsersService, SupabaseUser } from '@/services/admin-users';
 import { ViewConfigurationSection } from './ViewConfigurationSection';
 
 import { Loader2, Users, Link2, Table2, Eye, EyeOff, Edit, Lock, RefreshCw, ArrowUp, ArrowDown } from 'lucide-react';
@@ -32,7 +32,7 @@ interface FieldMappingWithOrder extends FieldMapping {
 export function DatabaseAdvancedTab({ formData, onFormDataChange }: DatabaseAdvancedTabProps) {
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [loadingColumns, setLoadingColumns] = useState(false);
-  const [users, setUsers] = useState<WuzAPIUser[]>([]);
+  const [users, setUsers] = useState<SupabaseUser[]>([]);
   const [columns, setColumns] = useState<NocoDBColumn[]>([]);
   const [selectedUsers, setSelectedUsers] = useState<string[]>(formData.assignedUsers || formData.assigned_users || []);
   const [fieldMappings, setFieldMappings] = useState<FieldMapping[]>(formData.fieldMappings || formData.field_mappings || []);
@@ -48,8 +48,15 @@ export function DatabaseAdvancedTab({ formData, onFormDataChange }: DatabaseAdva
     if (formData.type === 'NOCODB' && formData.host && formData.nocodb_token && 
         (formData.nocodb_table_id || formData.table_name)) {
       loadColumns();
+    } else if (formData.type === 'SUPABASE' && formData.supabase_url && formData.supabase_key && 
+        (formData.supabase_table || formData.table_name)) {
+      loadSupabaseColumns();
+    } else if (formData.type === 'POSTGRES' && formData.host && formData.table_name) {
+      // Para PostgreSQL, carregar colunas se tiver conexão configurada
+      loadPostgresColumns();
     }
-  }, [formData.host, formData.nocodb_token, formData.nocodb_table_id, formData.table_name]);
+  }, [formData.host, formData.nocodb_token, formData.nocodb_table_id, formData.table_name, 
+      formData.supabase_url, formData.supabase_key, formData.supabase_table, formData.type]);
 
   // Sincronizar com formData quando mudar externamente
   useEffect(() => {
@@ -61,8 +68,7 @@ export function DatabaseAdvancedTab({ formData, onFormDataChange }: DatabaseAdva
   const loadUsers = async () => {
     setLoadingUsers(true);
     try {
-      const wuzapi = new WuzAPIService();
-      const usersList = await wuzapi.getUsers();
+      const usersList = await adminUsersService.listUsers();
       setUsers(usersList);
     } catch (error: any) {
       console.error('Erro ao carregar usuários:', error);
@@ -147,6 +153,114 @@ export function DatabaseAdvancedTab({ formData, onFormDataChange }: DatabaseAdva
       toast.error('Erro ao carregar colunas da tabela');
     } finally {
       setLoadingColumns(false);
+    }
+  };
+
+  const loadSupabaseColumns = async () => {
+    if (!formData.supabase_url || !formData.supabase_key) return;
+    
+    const tableName = formData.supabase_table || formData.table_name;
+    if (!tableName) return;
+
+    setLoadingColumns(true);
+    try {
+      const columnsList = await databaseConnectionsService.getSupabaseColumnsWithCredentials(
+        formData.supabase_url,
+        formData.supabase_key,
+        formData.supabase_key_type || 'anon',
+        tableName
+      );
+      
+      // Converter para formato compatível com NocoDBColumn
+      const convertedColumns: NocoDBColumn[] = columnsList.map((col, index) => ({
+        id: `col_${index}`,
+        title: col.name,
+        column_name: col.name,
+        uidt: mapSupabaseTypeToNocoDB(col.dataType),
+        dt: col.dataType,
+      }));
+      
+      setColumns(convertedColumns);
+      updateFieldMappingsFromColumns(convertedColumns);
+    } catch (error: any) {
+      console.error('Erro ao carregar colunas do Supabase:', error);
+      toast.error('Erro ao carregar colunas da tabela');
+    } finally {
+      setLoadingColumns(false);
+    }
+  };
+
+  const loadPostgresColumns = async () => {
+    // Para PostgreSQL direto, precisaríamos de um endpoint específico
+    // Por enquanto, mostrar mensagem informativa
+    console.log('PostgreSQL column loading not yet implemented');
+  };
+
+  // Mapear tipos do Supabase para tipos do NocoDB (para ícones)
+  const mapSupabaseTypeToNocoDB = (dataType: string): string => {
+    const typeMap: Record<string, string> = {
+      'integer': 'Number',
+      'bigint': 'Number',
+      'smallint': 'Number',
+      'numeric': 'Decimal',
+      'real': 'Decimal',
+      'double precision': 'Decimal',
+      'boolean': 'Checkbox',
+      'text': 'LongText',
+      'varchar': 'SingleLineText',
+      'character varying': 'SingleLineText',
+      'uuid': 'SingleLineText',
+      'date': 'Date',
+      'timestamp': 'DateTime',
+      'timestamp with time zone': 'DateTime',
+      'timestamp without time zone': 'DateTime',
+      'timestamptz': 'DateTime',
+      'time': 'Duration',
+      'json': 'LongText',
+      'jsonb': 'LongText',
+      'ARRAY': 'MultiSelect',
+    };
+    return typeMap[dataType.toLowerCase()] || 'SingleLineText';
+  };
+
+  // Função auxiliar para atualizar mapeamentos de campos
+  const updateFieldMappingsFromColumns = (columnsList: NocoDBColumn[]) => {
+    if (fieldMappings.length === 0 && columnsList.length > 0) {
+      const defaultMappings: FieldMapping[] = columnsList.map((col, index) => ({
+        columnName: col.column_name || col.title,
+        label: col.title,
+        visible: true,
+        editable: true,
+        displayOrder: index,
+      }));
+      setFieldMappings(defaultMappings);
+      onFormDataChange({
+        ...formData,
+        fieldMappings: defaultMappings,
+      });
+    } else if (fieldMappings.length > 0 && columnsList.length > 0) {
+      const existingColumnNames = new Set(fieldMappings.map(m => m.columnName));
+      const newColumns = columnsList.filter(col => !existingColumnNames.has(col.column_name || col.title));
+      
+      if (newColumns.length > 0) {
+        const maxOrder = Math.max(...fieldMappings.map(m => m.displayOrder ?? 0), -1);
+        const newMappings: FieldMapping[] = newColumns.map((col, index) => ({
+          columnName: col.column_name || col.title,
+          label: col.title,
+          visible: true,
+          editable: true,
+          displayOrder: maxOrder + index + 1,
+        }));
+        
+        const updatedMappings = [...fieldMappings, ...newMappings];
+        setFieldMappings(updatedMappings);
+        onFormDataChange({
+          ...formData,
+          fieldMappings: updatedMappings,
+        });
+        
+        toast.success(`${newColumns.length} novo(s) campo(s) adicionado(s) ao mapeamento`);
+      }
     }
   };
 
@@ -389,12 +503,16 @@ export function DatabaseAdvancedTab({ formData, onFormDataChange }: DatabaseAdva
                       onCheckedChange={() => handleUserToggle(user.id)}
                     />
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">{user.name}</p>
-                      <p className="text-xs text-muted-foreground truncate">ID: {user.id}</p>
+                      <p className="font-medium truncate">
+                        {user.user_metadata?.name || user.email || 'Sem nome'}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {user.email || user.id}
+                      </p>
                     </div>
-                    {user.connected && (
+                    {user.email_confirmed_at && (
                       <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                        Online
+                        Verificado
                       </span>
                     )}
                   </div>
@@ -405,8 +523,8 @@ export function DatabaseAdvancedTab({ formData, onFormDataChange }: DatabaseAdva
         </CardContent>
       </Card>
 
-      {/* Seção 2: Vínculo de Dados (apenas para NocoDB) */}
-      {formData.type === 'NOCODB' && (
+      {/* Seção 2: Vínculo de Dados (para NocoDB, Supabase e PostgreSQL) */}
+      {(formData.type === 'NOCODB' || formData.type === 'SUPABASE' || formData.type === 'POSTGRES') && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center space-x-2">
@@ -426,9 +544,18 @@ export function DatabaseAdvancedTab({ formData, onFormDataChange }: DatabaseAdva
             ) : columns.length === 0 ? (
               <div className="text-center py-8">
                 <p className="text-muted-foreground">
-                  Configure a conexão NocoDB primeiro para carregar as colunas
+                  {formData.type === 'NOCODB' 
+                    ? 'Configure a conexão NocoDB primeiro para carregar as colunas'
+                    : formData.type === 'SUPABASE'
+                    ? 'Selecione uma tabela na aba Conexão para carregar as colunas'
+                    : 'Configure a conexão PostgreSQL primeiro para carregar as colunas'
+                  }
                 </p>
-                <Button variant="outline" size="sm" onClick={loadColumns} className="mt-2">
+                <Button variant="outline" size="sm" onClick={() => {
+                  if (formData.type === 'NOCODB') loadColumns();
+                  else if (formData.type === 'SUPABASE') loadSupabaseColumns();
+                  else loadPostgresColumns();
+                }} className="mt-2">
                   <RefreshCw className="h-4 w-4 mr-2" />
                   Tentar Carregar
                 </Button>
@@ -471,8 +598,8 @@ export function DatabaseAdvancedTab({ formData, onFormDataChange }: DatabaseAdva
         </Card>
       )}
 
-      {/* Seção 3: Mapeador de Campos (apenas para NocoDB) */}
-      {formData.type === 'NOCODB' && fieldMappings.length > 0 && (
+      {/* Seção 3: Mapeador de Campos (para NocoDB, Supabase e PostgreSQL) */}
+      {(formData.type === 'NOCODB' || formData.type === 'SUPABASE' || formData.type === 'POSTGRES') && fieldMappings.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center space-x-2">
@@ -492,7 +619,11 @@ export function DatabaseAdvancedTab({ formData, onFormDataChange }: DatabaseAdva
                 <Button 
                   variant="outline" 
                   size="sm" 
-                  onClick={loadColumns}
+                  onClick={() => {
+                    if (formData.type === 'NOCODB') loadColumns();
+                    else if (formData.type === 'SUPABASE') loadSupabaseColumns();
+                    else loadPostgresColumns();
+                  }}
                   disabled={loadingColumns}
                 >
                   {loadingColumns ? (
@@ -681,8 +812,8 @@ export function DatabaseAdvancedTab({ formData, onFormDataChange }: DatabaseAdva
         </Card>
       )}
 
-      {/* Seção 4: Configuração de Visualizações (apenas para NocoDB) */}
-      {formData.type === 'NOCODB' && columns.length > 0 && (
+      {/* Seção 4: Configuração de Visualizações (para NocoDB, Supabase e PostgreSQL) */}
+      {(formData.type === 'NOCODB' || formData.type === 'SUPABASE' || formData.type === 'POSTGRES') && columns.length > 0 && (
         <ViewConfigurationSection
           viewConfig={viewConfig}
           columns={columns}
@@ -691,11 +822,11 @@ export function DatabaseAdvancedTab({ formData, onFormDataChange }: DatabaseAdva
       )}
 
       {/* Mensagem para outros tipos de banco */}
-      {formData.type !== 'NOCODB' && (
+      {formData.type !== 'NOCODB' && formData.type !== 'SUPABASE' && formData.type !== 'POSTGRES' && (
         <Card>
           <CardContent className="pt-6">
             <p className="text-center text-muted-foreground">
-              As configurações avançadas de vínculo e mapeamento de campos estão disponíveis apenas para conexões NocoDB.
+              As configurações avançadas de vínculo e mapeamento de campos estão disponíveis para conexões NocoDB, Supabase e PostgreSQL.
             </p>
           </CardContent>
         </Card>

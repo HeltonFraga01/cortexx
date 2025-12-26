@@ -1,7 +1,8 @@
 /**
  * CustomThemeService
  * 
- * Business logic for custom theme CRUD operations.
+ * Business logic for custom UI theme CRUD operations.
+ * Manages account-specific UI themes (colors, CSS, branding).
  */
 
 const { logger } = require('../utils/logger');
@@ -18,15 +19,31 @@ class CustomThemeService {
    * @returns {Object} Created theme
    */
   async create(data) {
-    const { name, description, connectionId, schema, previewImage } = data;
+    const { 
+      accountId, 
+      name, 
+      primaryColor, 
+      secondaryColor, 
+      backgroundColor, 
+      textColor, 
+      accentColor, 
+      logoUrl, 
+      customCss, 
+      isActive 
+    } = data;
 
     try {
       const { data: result, error } = await SupabaseService.insert('custom_themes', {
+        account_id: accountId,
         name,
-        description: description || null,
-        connection_id: connectionId || null,
-        schema: schema,
-        preview_image: previewImage || null
+        primary_color: primaryColor || null,
+        secondary_color: secondaryColor || null,
+        background_color: backgroundColor || null,
+        text_color: textColor || null,
+        accent_color: accentColor || null,
+        logo_url: logoUrl || null,
+        custom_css: customCss || null,
+        is_active: isActive || false
       });
 
       if (error) throw error;
@@ -42,13 +59,13 @@ class CustomThemeService {
 
   /**
    * Get a custom theme by ID
-   * @param {number} id - Theme ID
+   * @param {string} id - Theme ID
    * @returns {Object|null} Theme or null if not found
    */
   async getById(id) {
     try {
       const { data, error } = await SupabaseService.queryAsAdmin('custom_themes', (query) =>
-        query.select('id, name, description, connection_id, schema, preview_image, created_at, updated_at')
+        query.select('id, account_id, name, primary_color, secondary_color, background_color, text_color, accent_color, logo_url, custom_css, is_active, created_at, updated_at')
           .eq('id', id)
           .single()
       );
@@ -69,14 +86,14 @@ class CustomThemeService {
    * @returns {Array} List of themes
    */
   async list(options = {}) {
-    const { connectionId, limit = 100, offset = 0 } = options;
+    const { accountId, limit = 100, offset = 0 } = options;
 
     try {
       const { data, error } = await SupabaseService.queryAsAdmin('custom_themes', (query) => {
-        let q = query.select('id, name, description, connection_id, schema, preview_image, created_at, updated_at');
+        let q = query.select('id, account_id, name, primary_color, secondary_color, background_color, text_color, accent_color, logo_url, custom_css, is_active, created_at, updated_at');
         
-        if (connectionId) {
-          q = q.eq('connection_id', connectionId);
+        if (accountId) {
+          q = q.eq('account_id', accountId);
         }
         
         return q.order('updated_at', { ascending: false })
@@ -94,12 +111,22 @@ class CustomThemeService {
 
   /**
    * Update a custom theme
-   * @param {number} id - Theme ID
+   * @param {string} id - Theme ID
    * @param {Object} data - Updated data
    * @returns {Object} Updated theme
    */
   async update(id, data) {
-    const { name, description, connectionId, schema, previewImage } = data;
+    const { 
+      name, 
+      primaryColor, 
+      secondaryColor, 
+      backgroundColor, 
+      textColor, 
+      accentColor, 
+      logoUrl, 
+      customCss, 
+      isActive 
+    } = data;
 
     try {
       const existing = await this.getById(id);
@@ -112,10 +139,14 @@ class CustomThemeService {
       };
       
       if (name !== undefined && name !== null) updateData.name = name;
-      if (description !== undefined) updateData.description = description;
-      if (connectionId !== undefined) updateData.connection_id = connectionId;
-      if (schema !== undefined && schema !== null) updateData.schema = schema;
-      if (previewImage !== undefined) updateData.preview_image = previewImage;
+      if (primaryColor !== undefined) updateData.primary_color = primaryColor;
+      if (secondaryColor !== undefined) updateData.secondary_color = secondaryColor;
+      if (backgroundColor !== undefined) updateData.background_color = backgroundColor;
+      if (textColor !== undefined) updateData.text_color = textColor;
+      if (accentColor !== undefined) updateData.accent_color = accentColor;
+      if (logoUrl !== undefined) updateData.logo_url = logoUrl;
+      if (customCss !== undefined) updateData.custom_css = customCss;
+      if (isActive !== undefined) updateData.is_active = isActive;
 
       const { data: result, error } = await SupabaseService.update('custom_themes', id, updateData);
 
@@ -132,7 +163,7 @@ class CustomThemeService {
 
   /**
    * Delete a custom theme
-   * @param {number} id - Theme ID
+   * @param {string} id - Theme ID
    * @returns {boolean} Success
    */
   async delete(id) {
@@ -161,12 +192,12 @@ class CustomThemeService {
    * @returns {number} Count
    */
   async count(options = {}) {
-    const { connectionId } = options;
+    const { accountId } = options;
 
     try {
       const filters = {};
-      if (connectionId) {
-        filters.connection_id = connectionId;
+      if (accountId) {
+        filters.account_id = accountId;
       }
 
       const { count, error } = await SupabaseService.count('custom_themes', filters);
@@ -185,22 +216,20 @@ class CustomThemeService {
    * @private
    */
   _formatTheme(row) {
-    let schema;
-    try {
-      schema = typeof row.schema === 'string' ? JSON.parse(row.schema) : row.schema;
-    } catch (e) {
-      schema = { blocks: [] };
-    }
-
     return {
       id: row.id,
+      accountId: row.account_id,
       name: row.name,
-      description: row.description,
-      connection_id: row.connection_id,
-      schema,
-      preview_image: row.preview_image,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
+      primaryColor: row.primary_color,
+      secondaryColor: row.secondary_color,
+      backgroundColor: row.background_color,
+      textColor: row.text_color,
+      accentColor: row.accent_color,
+      logoUrl: row.logo_url,
+      customCss: row.custom_css,
+      isActive: row.is_active,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     };
   }
 }
