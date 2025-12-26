@@ -62,6 +62,9 @@ export function PuckPageBuilder({
   // File input ref for import
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Import counter to force Puck re-mount on import
+  const [importKey, setImportKey] = useState(0);
+
   // Puck data state
   const [puckData, setPuckData] = useState<PuckData>(() => {
     if (initialTheme) {
@@ -193,6 +196,9 @@ export function PuckPageBuilder({
         const content = e.target?.result as string;
         const data = JSON.parse(content);
         
+        console.log('📦 Importing theme file:', file.name);
+        console.log('📦 Parsed data:', data);
+        
         const validation = validateImportedTheme(data);
         if (!validation.valid) {
           toast.error(`Arquivo inválido: ${validation.errors.join(', ')}`);
@@ -201,10 +207,18 @@ export function PuckPageBuilder({
 
         const imported = importThemeFromPackage(validation.package!);
         
+        console.log('📦 Imported puckData:', imported.puckData);
+        console.log('📦 Imported puckData.content:', imported.puckData.content);
+        
         // Update state with imported data
         setPuckData(imported.puckData);
         setThemeName(imported.name);
         setThemeDescription(imported.description);
+        
+        // Force Puck to re-mount with new data
+        setImportKey(prev => prev + 1);
+        
+        console.log('📦 Import complete, key incremented');
         
         // Show info about used fields
         if (imported.usedFields.length > 0) {
@@ -227,77 +241,79 @@ export function PuckPageBuilder({
     event.target.value = '';
   }, []);
 
-  // Custom header actions for Puck
-  const headerActions = useMemo(() => (
-    <div className="flex items-center gap-3">
-      {/* Block count indicator */}
-      <Badge variant="secondary" className="gap-1.5 font-normal">
-        <Blocks className="h-3 w-3" />
-        {puckData.content.length} {puckData.content.length === 1 ? 'bloco' : 'blocos'}
-      </Badge>
-      
-      {/* Connection indicator */}
-      {connection && (
-        <Badge variant="outline" className="gap-1.5 font-normal">
-          <Database className="h-3 w-3" />
-          {connection.name}
+  // Custom header actions override for Puck
+  const overrides = useMemo(() => ({
+    headerActions: ({ children }: { children: React.ReactNode }) => (
+      <div className="flex items-center gap-3">
+        {/* Block count indicator */}
+        <Badge variant="secondary" className="gap-1.5 font-normal">
+          <Blocks className="h-3 w-3" />
+          {puckData.content.length} {puckData.content.length === 1 ? 'bloco' : 'blocos'}
         </Badge>
-      )}
-
-      {/* Preview record indicator */}
-      {previewRecord && (
-        <Badge variant="outline" className="gap-1.5 font-normal bg-primary/10">
-          <Eye className="h-3 w-3" />
-          Preview ativo
-        </Badge>
-      )}
-
-      {/* Import button */}
-      <Button 
-        onClick={handleImportClick}
-        variant="outline"
-        size="sm"
-        className="gap-2"
-        title="Importar tema de arquivo"
-      >
-        <Upload className="h-4 w-4" />
-        <span className="hidden sm:inline">Importar</span>
-      </Button>
-
-      {/* Download/Export button */}
-      <Button 
-        onClick={handleDownload}
-        variant="outline"
-        size="sm"
-        className="gap-2"
-        disabled={!themeName.trim() || puckData.content.length === 0}
-        title="Exportar tema como arquivo"
-      >
-        <Download className="h-4 w-4" />
-        <span className="hidden sm:inline">Exportar</span>
-      </Button>
-      
-      {/* Save button */}
-      <Button 
-        onClick={() => handleSave(puckData)} 
-        disabled={saving || !themeName.trim()}
-        size="sm"
-        className="gap-2"
-      >
-        {saving ? (
-          <>
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Salvando...
-          </>
-        ) : (
-          <>
-            <Save className="h-4 w-4" />
-            Salvar Tema
-          </>
+        
+        {/* Connection indicator */}
+        {connection && (
+          <Badge variant="outline" className="gap-1.5 font-normal">
+            <Database className="h-3 w-3" />
+            {connection.name}
+          </Badge>
         )}
-      </Button>
-    </div>
-  ), [puckData, saving, handleSave, handleDownload, handleImportClick, themeName, connection, previewRecord]);
+
+        {/* Preview record indicator */}
+        {previewRecord && (
+          <Badge variant="outline" className="gap-1.5 font-normal bg-primary/10">
+            <Eye className="h-3 w-3" />
+            Preview ativo
+          </Badge>
+        )}
+
+        {/* Import button */}
+        <Button 
+          onClick={handleImportClick}
+          variant="outline"
+          size="sm"
+          className="gap-2"
+          title="Importar tema de arquivo"
+        >
+          <Upload className="h-4 w-4" />
+          <span className="hidden sm:inline">Importar</span>
+        </Button>
+
+        {/* Download/Export button */}
+        <Button 
+          onClick={handleDownload}
+          variant="outline"
+          size="sm"
+          className="gap-2"
+          disabled={!themeName.trim() || puckData.content.length === 0}
+          title="Exportar tema como arquivo"
+        >
+          <Download className="h-4 w-4" />
+          <span className="hidden sm:inline">Exportar</span>
+        </Button>
+        
+        {/* Save button - replaces default Publish */}
+        <Button 
+          onClick={() => handleSave(puckData)} 
+          disabled={saving || !themeName.trim()}
+          size="sm"
+          className="gap-2"
+        >
+          {saving ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Salvando...
+            </>
+          ) : (
+            <>
+              <Save className="h-4 w-4" />
+              Salvar Tema
+            </>
+          )}
+        </Button>
+      </div>
+    ),
+  }), [puckData, saving, handleSave, handleDownload, handleImportClick, themeName, connection, previewRecord]);
 
   return (
     <div className="h-full flex flex-col gap-3">
@@ -363,11 +379,12 @@ export function PuckPageBuilder({
       {/* Puck Editor - Full height */}
       <div className="flex-1 min-h-0 border rounded-lg overflow-hidden bg-card">
         <Puck
+          key={importKey}
           config={config}
           data={puckData}
           onChange={handlePuckChange}
           onPublish={handleSave}
-          headerActions={headerActions}
+          overrides={overrides}
           viewports={[
             { width: 360, height: 'auto', label: 'Mobile', icon: 'Smartphone' },
             { width: 768, height: 'auto', label: 'Tablet', icon: 'Tablet' },
