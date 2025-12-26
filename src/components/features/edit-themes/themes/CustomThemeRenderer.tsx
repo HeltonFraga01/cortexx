@@ -2,10 +2,12 @@
  * CustomThemeRenderer
  * 
  * Renders a custom theme by parsing ThemeSchema and rendering blocks dynamically.
+ * Supports both legacy block rendering and Puck-based rendering.
  */
 
 import { useState, useEffect } from 'react';
 import { blockRegistry } from '@/components/features/page-builder/BlockRegistry';
+import { PuckThemeRenderer } from '@/components/features/page-builder/puck';
 import type { ThemeSchema, ThemeBlock } from '@/types/page-builder';
 import type { EditThemeProps } from '@/types/edit-themes';
 import { Loader2, AlertCircle } from 'lucide-react';
@@ -16,6 +18,7 @@ import '@/components/features/page-builder/blocks';
 
 interface CustomThemeRendererProps extends EditThemeProps {
   schema: ThemeSchema;
+  usePuckRenderer?: boolean; // Flag to use Puck renderer instead of legacy
 }
 
 function BlockRenderer({
@@ -96,6 +99,7 @@ function processBlocksWithParentRows(blocks: ThemeBlock[]): ThemeBlock[] {
 
 export function CustomThemeRenderer({
   schema,
+  usePuckRenderer = false,
   ...themeProps
 }: CustomThemeRendererProps) {
   if (!schema?.blocks) {
@@ -120,7 +124,26 @@ export function CustomThemeRenderer({
     );
   }
 
-  // Process blocks to organize children into Row blocks
+  // Use Puck renderer if flag is set
+  if (usePuckRenderer) {
+    return (
+      <PuckThemeRenderer
+        theme={schema}
+        connection={themeProps.connection}
+        record={themeProps.record}
+        formData={themeProps.formData}
+        fieldMetadata={themeProps.fieldMetadata}
+        onRecordChange={themeProps.onRecordChange}
+        onSave={themeProps.onSave}
+        onBack={themeProps.onBack}
+        saving={themeProps.saving}
+        disabled={themeProps.disabled}
+        hasChanges={themeProps.hasChanges}
+      />
+    );
+  }
+
+  // Process blocks to organize children into Row blocks (legacy renderer)
   const processedBlocks = processBlocksWithParentRows(schema.blocks);
 
   return (

@@ -10,6 +10,9 @@ export { BuilderCanvas } from './BuilderCanvas';
 export { PropertiesPanel } from './PropertiesPanel';
 export { ThemePreview } from './ThemePreview';
 
+// Puck-based components (new)
+export { PuckPageBuilder, PuckThemeRenderer } from './puck';
+
 // Registry
 export { blockRegistry, BlockRegistry } from './BlockRegistry';
 
@@ -18,3 +21,6 @@ export * from './blocks';
 
 // Utilities
 export * from './utils';
+
+// Puck utilities
+export * from './puck/utils';

@@ -2,11 +2,12 @@
  * Page Builder Page
  * 
  * Admin page for creating and editing custom themes using the visual Page Builder.
+ * Uses Puck library for professional visual editing experience.
  */
 
 import { useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { PageBuilder } from '@/components/features/page-builder';
+import { PuckPageBuilder } from '@/components/features/page-builder/puck';
 import { 
   createCustomTheme, 
   updateCustomTheme, 
@@ -114,7 +115,7 @@ export function PageBuilderPage() {
       </div>
       
       <div className="flex-1 min-h-0">
-        <PageBuilder
+        <PuckPageBuilder
           initialTheme={initialTheme}
           onSave={handleSave}
           saving={saving}

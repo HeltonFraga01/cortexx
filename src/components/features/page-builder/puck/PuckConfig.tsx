@@ -1,0 +1,798 @@
+/**
+ * Puck Configuration
+ * 
+ * Defines all available components, their fields, and categories
+ * for the Puck visual editor.
+ */
+
+import type { Config, ComponentConfig } from '@measured/puck';
+import { FieldSelectField } from './fields/FieldSelectField';
+import { FieldMultiSelectField } from './fields/FieldMultiSelectField';
+
+// Import existing block components
+import { HeaderBlockComponent } from '../blocks/HeaderBlock';
+import { FormGridBlockComponent } from '../blocks/FormGridBlock';
+import { SingleFieldBlockComponent } from '../blocks/SingleFieldBlock';
+import { AvatarBlockComponent } from '../blocks/AvatarBlock';
+import { SectionBlockComponent } from '../blocks/SectionBlock';
+import { DividerBlockComponent } from '../blocks/DividerBlock';
+import { SaveButtonBlockComponent } from '../blocks/SaveButtonBlock';
+import { InfoCardBlockComponent } from '../blocks/InfoCardBlock';
+import { TextBlockComponent } from '../blocks/TextBlock';
+import { ImageBlockComponent } from '../blocks/ImageBlock';
+import { BadgeBlockComponent } from '../blocks/BadgeBlock';
+import { StatsBlockComponent } from '../blocks/StatsBlock';
+import { LinkButtonBlockComponent } from '../blocks/LinkButtonBlock';
+import { ListBlockComponent } from '../blocks/ListBlock';
+import { TabsBlockComponent } from '../blocks/TabsBlock';
+import { RowBlockComponent } from '../blocks/RowBlock';
+
+import type { DatabaseConnection, FieldMetadata } from '@/lib/types';
+import type { ThemeBlock } from '@/types/page-builder';
+
+/**
+ * Context passed to all Puck components during rendering
+ */
+export interface PuckRenderContext {
+  connection: DatabaseConnection | null;
+  record: Record<string, any>;
+  formData: Record<string, any>;
+  fieldMetadata: FieldMetadata[];
+  onRecordChange: (data: Record<string, any>) => void;
+  onSave?: () => Promise<void>;
+  onBack?: () => void;
+  saving?: boolean;
+  disabled?: boolean;
+  hasChanges?: boolean;
+  isPreview?: boolean;
+}
+
+// Global render context (set by PuckPageBuilder/PuckThemeRenderer)
+let renderContext: PuckRenderContext = {
+  connection: null,
+  record: {},
+  formData: {},
+  fieldMetadata: [],
+  onRecordChange: () => {},
+  isPreview: true,
+};
+
+export function setRenderContext(context: PuckRenderContext) {
+  renderContext = context;
+}
+
+export function getRenderContext(): PuckRenderContext {
+  return renderContext;
+}
+
+/**
+ * Wrapper to adapt existing block components to Puck format
+ */
+function createPuckComponent<P extends Record<string, any>>(
+  BlockComponent: React.ComponentType<any>,
+  defaultProps: P
+): ComponentConfig<P> {
+  return {
+    defaultProps,
+    render: (props) => {
+      const ctx = getRenderContext();
+      
+      // Create a ThemeBlock-like structure for the existing component
+      const block: ThemeBlock = {
+        id: (props as any).id || 'puck-block',
+        type: 'header', // Will be overridden by actual type
+        props: props as Record<string, any>,
+      };
+
+      if (!ctx.connection) {
+        return (
+          <div className="p-4 border-2 border-dashed border-muted rounded-lg text-center text-muted-foreground">
+            Selecione uma conexão para visualizar este bloco
+          </div>
+        );
+      }
+
+      return (
+        <BlockComponent
+          block={block}
+          connection={ctx.connection}
+          record={ctx.record}
+          formData={ctx.formData}
+          fieldMetadata={ctx.fieldMetadata}
+          onRecordChange={ctx.onRecordChange}
+          onSave={ctx.onSave}
+          onBack={ctx.onBack}
+          saving={ctx.saving}
+          disabled={ctx.disabled}
+          hasChanges={ctx.hasChanges}
+          isPreview={ctx.isPreview}
+        />
+      );
+    },
+  };
+}
+
+/**
+ * Create the Puck configuration with all components
+ */
+export function createPuckConfig(): Config {
+  return {
+    categories: {
+      layout: {
+        title: 'Layout',
+        components: ['Row', 'Section', 'Divider'],
+      },
+      fields: {
+        title: 'Campos',
+        components: ['FormGrid', 'SingleField'],
+      },
+      display: {
+        title: 'Exibição',
+        components: ['Header', 'Avatar', 'Text', 'Image', 'Badge', 'Stats', 'InfoCard', 'List'],
+      },
+      actions: {
+        title: 'Ações',
+        components: ['SaveButton', 'LinkButton', 'Tabs'],
+      },
+    },
+    components: {
+      // Header Component
+      Header: {
+        ...createPuckComponent(HeaderBlockComponent, {
+          titleField: '',
+          subtitleField: '',
+          showBackButton: true,
+        }),
+        label: 'Cabeçalho',
+        fields: {
+          titleField: {
+            type: 'custom',
+            label: 'Campo do Título',
+            render: FieldSelectField,
+          },
+          subtitleField: {
+            type: 'custom',
+            label: 'Campo do Subtítulo',
+            render: FieldSelectField,
+          },
+          showBackButton: {
+            type: 'radio',
+            label: 'Mostrar Botão Voltar',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+        },
+      },
+
+      // FormGrid Component
+      FormGrid: {
+        ...createPuckComponent(FormGridBlockComponent, {
+          columns: 2,
+          fields: [],
+          title: '',
+          showCard: true,
+          spacing: 'normal',
+        }),
+        label: 'Grid de Campos',
+        fields: {
+          title: {
+            type: 'text',
+            label: 'Título da Seção',
+          },
+          columns: {
+            type: 'select',
+            label: 'Colunas',
+            options: [
+              { label: '1 Coluna', value: 1 },
+              { label: '2 Colunas', value: 2 },
+              { label: '3 Colunas', value: 3 },
+            ],
+          },
+          fields: {
+            type: 'custom',
+            label: 'Campos',
+            render: FieldMultiSelectField,
+          },
+          showCard: {
+            type: 'radio',
+            label: 'Mostrar Card',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+          spacing: {
+            type: 'select',
+            label: 'Espaçamento',
+            options: [
+              { label: 'Compacto', value: 'compact' },
+              { label: 'Normal', value: 'normal' },
+              { label: 'Espaçado', value: 'relaxed' },
+            ],
+          },
+        },
+      },
+
+      // SingleField Component
+      SingleField: {
+        ...createPuckComponent(SingleFieldBlockComponent, {
+          fieldName: '',
+          customLabel: '',
+          fullWidth: false,
+          showLabel: true,
+        }),
+        label: 'Campo Individual',
+        fields: {
+          fieldName: {
+            type: 'custom',
+            label: 'Campo',
+            render: FieldSelectField,
+          },
+          customLabel: {
+            type: 'text',
+            label: 'Label Personalizado',
+          },
+          fullWidth: {
+            type: 'radio',
+            label: 'Largura Total',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+        },
+      },
+
+      // Avatar Component
+      Avatar: {
+        ...createPuckComponent(AvatarBlockComponent, {
+          imageField: '',
+          nameField: '',
+          statusField: '',
+          size: 'large',
+          alignment: 'center',
+        }),
+        label: 'Avatar',
+        fields: {
+          imageField: {
+            type: 'custom',
+            label: 'Campo da Imagem',
+            render: FieldSelectField,
+          },
+          nameField: {
+            type: 'custom',
+            label: 'Campo do Nome',
+            render: FieldSelectField,
+          },
+          statusField: {
+            type: 'custom',
+            label: 'Campo de Status',
+            render: FieldSelectField,
+          },
+          size: {
+            type: 'select',
+            label: 'Tamanho',
+            options: [
+              { label: 'Pequeno', value: 'small' },
+              { label: 'Médio', value: 'medium' },
+              { label: 'Grande', value: 'large' },
+            ],
+          },
+          alignment: {
+            type: 'select',
+            label: 'Alinhamento',
+            options: [
+              { label: 'Esquerda', value: 'left' },
+              { label: 'Centro', value: 'center' },
+              { label: 'Direita', value: 'right' },
+            ],
+          },
+        },
+      },
+
+      // Section Component
+      Section: {
+        ...createPuckComponent(SectionBlockComponent, {
+          title: 'Seção',
+          collapsible: true,
+          defaultOpen: true,
+        }),
+        label: 'Seção',
+        fields: {
+          title: {
+            type: 'text',
+            label: 'Título',
+          },
+          collapsible: {
+            type: 'radio',
+            label: 'Colapsável',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+          defaultOpen: {
+            type: 'radio',
+            label: 'Aberto por Padrão',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+        },
+      },
+
+      // Divider Component
+      Divider: {
+        ...createPuckComponent(DividerBlockComponent, {
+          spacing: 'normal',
+          showLine: true,
+        }),
+        label: 'Divisor',
+        fields: {
+          spacing: {
+            type: 'select',
+            label: 'Espaçamento',
+            options: [
+              { label: 'Compacto', value: 'compact' },
+              { label: 'Normal', value: 'normal' },
+              { label: 'Espaçado', value: 'relaxed' },
+            ],
+          },
+          showLine: {
+            type: 'radio',
+            label: 'Mostrar Linha',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+        },
+      },
+
+      // SaveButton Component
+      SaveButton: {
+        ...createPuckComponent(SaveButtonBlockComponent, {
+          label: 'Salvar Alterações',
+          position: 'right',
+          variant: 'default',
+          fullWidth: false,
+        }),
+        label: 'Botão Salvar',
+        fields: {
+          label: {
+            type: 'text',
+            label: 'Texto do Botão',
+          },
+          position: {
+            type: 'select',
+            label: 'Posição',
+            options: [
+              { label: 'Esquerda', value: 'left' },
+              { label: 'Centro', value: 'center' },
+              { label: 'Direita', value: 'right' },
+            ],
+          },
+          fullWidth: {
+            type: 'radio',
+            label: 'Largura Total',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+        },
+      },
+
+      // InfoCard Component
+      InfoCard: {
+        ...createPuckComponent(InfoCardBlockComponent, {
+          fieldName: '',
+          label: '',
+          showConnectionInfo: false,
+        }),
+        label: 'Card de Info',
+        fields: {
+          showConnectionInfo: {
+            type: 'radio',
+            label: 'Mostrar Info da Conexão',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+          fieldName: {
+            type: 'custom',
+            label: 'Campo',
+            render: FieldSelectField,
+          },
+          label: {
+            type: 'text',
+            label: 'Label',
+          },
+        },
+      },
+
+      // Text Component
+      Text: {
+        ...createPuckComponent(TextBlockComponent, {
+          textField: '',
+          staticText: '',
+          variant: 'body',
+          alignment: 'left',
+          color: 'default',
+        }),
+        label: 'Texto',
+        fields: {
+          textField: {
+            type: 'custom',
+            label: 'Campo do Texto',
+            render: FieldSelectField,
+          },
+          staticText: {
+            type: 'textarea',
+            label: 'Texto Estático',
+          },
+          variant: {
+            type: 'select',
+            label: 'Estilo',
+            options: [
+              { label: 'Título 1', value: 'heading1' },
+              { label: 'Título 2', value: 'heading2' },
+              { label: 'Título 3', value: 'heading3' },
+              { label: 'Corpo', value: 'body' },
+              { label: 'Pequeno', value: 'small' },
+              { label: 'Legenda', value: 'caption' },
+            ],
+          },
+          alignment: {
+            type: 'select',
+            label: 'Alinhamento',
+            options: [
+              { label: 'Esquerda', value: 'left' },
+              { label: 'Centro', value: 'center' },
+              { label: 'Direita', value: 'right' },
+            ],
+          },
+          color: {
+            type: 'select',
+            label: 'Cor',
+            options: [
+              { label: 'Padrão', value: 'default' },
+              { label: 'Suave', value: 'muted' },
+              { label: 'Primária', value: 'primary' },
+              { label: 'Destrutiva', value: 'destructive' },
+            ],
+          },
+        },
+      },
+
+      // Image Component
+      Image: {
+        ...createPuckComponent(ImageBlockComponent, {
+          imageField: '',
+          altTextField: '',
+          size: 'medium',
+          alignment: 'center',
+          rounded: 'none',
+          objectFit: 'cover',
+        }),
+        label: 'Imagem',
+        fields: {
+          imageField: {
+            type: 'custom',
+            label: 'Campo da Imagem',
+            render: FieldSelectField,
+          },
+          altTextField: {
+            type: 'custom',
+            label: 'Campo do Alt Text',
+            render: FieldSelectField,
+          },
+          size: {
+            type: 'select',
+            label: 'Tamanho',
+            options: [
+              { label: 'Pequeno', value: 'small' },
+              { label: 'Médio', value: 'medium' },
+              { label: 'Grande', value: 'large' },
+              { label: 'Largura Total', value: 'full' },
+            ],
+          },
+          alignment: {
+            type: 'select',
+            label: 'Alinhamento',
+            options: [
+              { label: 'Esquerda', value: 'left' },
+              { label: 'Centro', value: 'center' },
+              { label: 'Direita', value: 'right' },
+            ],
+          },
+          rounded: {
+            type: 'select',
+            label: 'Bordas',
+            options: [
+              { label: 'Sem arredondamento', value: 'none' },
+              { label: 'Pequeno', value: 'small' },
+              { label: 'Médio', value: 'medium' },
+              { label: 'Grande', value: 'large' },
+              { label: 'Circular', value: 'full' },
+            ],
+          },
+        },
+      },
+
+      // Badge Component
+      Badge: {
+        ...createPuckComponent(BadgeBlockComponent, {
+          textField: '',
+          staticText: '',
+          variant: 'default',
+          alignment: 'left',
+        }),
+        label: 'Badge',
+        fields: {
+          textField: {
+            type: 'custom',
+            label: 'Campo do Texto',
+            render: FieldSelectField,
+          },
+          staticText: {
+            type: 'text',
+            label: 'Texto Estático',
+          },
+          variant: {
+            type: 'select',
+            label: 'Variante',
+            options: [
+              { label: 'Padrão', value: 'default' },
+              { label: 'Secundário', value: 'secondary' },
+              { label: 'Destrutivo', value: 'destructive' },
+              { label: 'Contorno', value: 'outline' },
+            ],
+          },
+          alignment: {
+            type: 'select',
+            label: 'Alinhamento',
+            options: [
+              { label: 'Esquerda', value: 'left' },
+              { label: 'Centro', value: 'center' },
+              { label: 'Direita', value: 'right' },
+            ],
+          },
+        },
+      },
+
+      // Stats Component
+      Stats: {
+        ...createPuckComponent(StatsBlockComponent, {
+          valueField: '',
+          labelField: '',
+          staticLabel: '',
+          format: 'number',
+          size: 'medium',
+          showCard: true,
+          alignment: 'center',
+        }),
+        label: 'Estatística',
+        fields: {
+          valueField: {
+            type: 'custom',
+            label: 'Campo do Valor',
+            render: FieldSelectField,
+          },
+          labelField: {
+            type: 'custom',
+            label: 'Campo do Label',
+            render: FieldSelectField,
+          },
+          staticLabel: {
+            type: 'text',
+            label: 'Label Estático',
+          },
+          format: {
+            type: 'select',
+            label: 'Formato',
+            options: [
+              { label: 'Número', value: 'number' },
+              { label: 'Moeda (R$)', value: 'currency' },
+              { label: 'Porcentagem', value: 'percentage' },
+              { label: 'Decimal', value: 'decimal' },
+            ],
+          },
+          size: {
+            type: 'select',
+            label: 'Tamanho',
+            options: [
+              { label: 'Pequeno', value: 'small' },
+              { label: 'Médio', value: 'medium' },
+              { label: 'Grande', value: 'large' },
+            ],
+          },
+          showCard: {
+            type: 'radio',
+            label: 'Mostrar Card',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+        },
+      },
+
+      // LinkButton Component
+      LinkButton: {
+        ...createPuckComponent(LinkButtonBlockComponent, {
+          urlField: '',
+          staticUrl: '',
+          labelField: '',
+          staticLabel: 'Abrir Link',
+          variant: 'default',
+          size: 'default',
+          alignment: 'left',
+          showIcon: true,
+          openInNewTab: true,
+        }),
+        label: 'Botão Link',
+        fields: {
+          urlField: {
+            type: 'custom',
+            label: 'Campo da URL',
+            render: FieldSelectField,
+          },
+          staticUrl: {
+            type: 'text',
+            label: 'URL Estática',
+          },
+          labelField: {
+            type: 'custom',
+            label: 'Campo do Label',
+            render: FieldSelectField,
+          },
+          staticLabel: {
+            type: 'text',
+            label: 'Label Estático',
+          },
+          variant: {
+            type: 'select',
+            label: 'Variante',
+            options: [
+              { label: 'Padrão', value: 'default' },
+              { label: 'Secundário', value: 'secondary' },
+              { label: 'Contorno', value: 'outline' },
+              { label: 'Ghost', value: 'ghost' },
+              { label: 'Link', value: 'link' },
+            ],
+          },
+          showIcon: {
+            type: 'radio',
+            label: 'Mostrar Ícone',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+          openInNewTab: {
+            type: 'radio',
+            label: 'Abrir em Nova Aba',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+        },
+      },
+
+      // List Component
+      List: {
+        ...createPuckComponent(ListBlockComponent, {
+          arrayField: '',
+          listStyle: 'bullet',
+          alignment: 'left',
+          spacing: 'normal',
+        }),
+        label: 'Lista',
+        fields: {
+          arrayField: {
+            type: 'custom',
+            label: 'Campo do Array',
+            render: FieldSelectField,
+          },
+          listStyle: {
+            type: 'select',
+            label: 'Estilo',
+            options: [
+              { label: 'Marcadores', value: 'bullet' },
+              { label: 'Numerada', value: 'numbered' },
+              { label: 'Sem marcadores', value: 'none' },
+            ],
+          },
+          spacing: {
+            type: 'select',
+            label: 'Espaçamento',
+            options: [
+              { label: 'Compacto', value: 'compact' },
+              { label: 'Normal', value: 'normal' },
+              { label: 'Espaçado', value: 'relaxed' },
+            ],
+          },
+        },
+      },
+
+      // Tabs Component
+      Tabs: {
+        ...createPuckComponent(TabsBlockComponent, {
+          tabs: [
+            { id: 'tab-1', label: 'Aba 1' },
+            { id: 'tab-2', label: 'Aba 2' },
+          ],
+          defaultTab: 'tab-1',
+        }),
+        label: 'Abas',
+        fields: {
+          defaultTab: {
+            type: 'text',
+            label: 'Aba Padrão',
+          },
+        },
+      },
+
+      // Row Component
+      Row: {
+        ...createPuckComponent(RowBlockComponent, {
+          columns: 2,
+          columnWidths: ['50%', '50%'],
+          gap: 'medium',
+          verticalAlign: 'top',
+          stackOnMobile: true,
+        }),
+        label: 'Linha/Colunas',
+        fields: {
+          columns: {
+            type: 'select',
+            label: 'Colunas',
+            options: [
+              { label: '1 Coluna', value: 1 },
+              { label: '2 Colunas', value: 2 },
+              { label: '3 Colunas', value: 3 },
+              { label: '4 Colunas', value: 4 },
+            ],
+          },
+          gap: {
+            type: 'select',
+            label: 'Espaçamento',
+            options: [
+              { label: 'Nenhum', value: 'none' },
+              { label: 'Pequeno', value: 'small' },
+              { label: 'Médio', value: 'medium' },
+              { label: 'Grande', value: 'large' },
+            ],
+          },
+          verticalAlign: {
+            type: 'select',
+            label: 'Alinhamento Vertical',
+            options: [
+              { label: 'Topo', value: 'top' },
+              { label: 'Centro', value: 'center' },
+              { label: 'Base', value: 'bottom' },
+              { label: 'Esticar', value: 'stretch' },
+            ],
+          },
+          stackOnMobile: {
+            type: 'radio',
+            label: 'Empilhar no Mobile',
+            options: [
+              { label: 'Sim', value: true },
+              { label: 'Não', value: false },
+            ],
+          },
+        },
+      },
+    },
+  };
+}
+
+// Export singleton config
+export const puckConfig = createPuckConfig();
