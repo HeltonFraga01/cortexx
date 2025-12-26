@@ -2,6 +2,159 @@ const axios = require('axios');
 const { logger } = require('./logger');
 
 /**
+ * Circuit Breaker implementation for external service resilience
+ * Prevents cascade failures when WUZAPI is unavailable
+ */
+class CircuitBreaker {
+  constructor(options = {}) {
+    this.failureThreshold = options.failureThreshold || 5;
+    this.resetTimeout = options.resetTimeout || 30000; // 30 seconds
+    this.successThreshold = options.successThreshold || 2;
+    
+    this.failures = 0;
+    this.successes = 0;
+    this.state = 'CLOSED'; // CLOSED, OPEN, HALF_OPEN
+    this.lastFailure = null;
+  }
+
+  /**
+   * Check if request should be allowed
+   * @returns {boolean} - Whether the request can proceed
+   */
+  canRequest() {
+    if (this.state === 'CLOSED') {
+      return true;
+    }
+    
+    if (this.state === 'OPEN') {
+      // Check if reset timeout has passed
+      if (Date.now() - this.lastFailure >= this.resetTimeout) {
+        this.state = 'HALF_OPEN';
+        this.successes = 0;
+        logger.info('Circuit breaker transitioning to HALF_OPEN', {
+          failures: this.failures,
+          resetTimeout: this.resetTimeout
+        });
+        return true;
+      }
+      return false;
+    }
+    
+    // HALF_OPEN - allow limited requests
+    return true;
+  }
+
+  /**
+   * Record a successful request
+   */
+  onSuccess() {
+    if (this.state === 'HALF_OPEN') {
+      this.successes++;
+      if (this.successes >= this.successThreshold) {
+        this.state = 'CLOSED';
+        this.failures = 0;
+        this.successes = 0;
+        logger.info('Circuit breaker CLOSED - service recovered');
+      }
+    } else {
+      this.failures = 0;
+    }
+  }
+
+  /**
+   * Record a failed request
+   */
+  onFailure() {
+    this.failures++;
+    this.lastFailure = Date.now();
+    
+    if (this.state === 'HALF_OPEN') {
+      this.state = 'OPEN';
+      logger.warn('Circuit breaker OPEN - service still failing', {
+        failures: this.failures
+      });
+    } else if (this.failures >= this.failureThreshold) {
+      this.state = 'OPEN';
+      logger.warn('Circuit breaker OPEN - failure threshold reached', {
+        failures: this.failures,
+        threshold: this.failureThreshold
+      });
+    }
+  }
+
+  /**
+   * Get current circuit breaker state
+   */
+  getState() {
+    return {
+      state: this.state,
+      failures: this.failures,
+      successes: this.successes,
+      lastFailure: this.lastFailure,
+      isOpen: this.state === 'OPEN'
+    };
+  }
+
+  /**
+   * Reset circuit breaker to initial state
+   */
+  reset() {
+    this.state = 'CLOSED';
+    this.failures = 0;
+    this.successes = 0;
+    this.lastFailure = null;
+  }
+}
+
+/**
+ * Retry handler with exponential backoff
+ */
+class RetryHandler {
+  constructor(options = {}) {
+    this.maxRetries = options.maxRetries || 3;
+    this.initialDelay = options.initialDelay || 1000;
+    this.maxDelay = options.maxDelay || 10000;
+    this.backoffMultiplier = options.backoffMultiplier || 2;
+    this.retryableStatuses = options.retryableStatuses || [408, 429, 500, 502, 503, 504];
+  }
+
+  /**
+   * Check if error is retryable
+   */
+  isRetryable(error) {
+    // Network errors are retryable
+    if (error.code === 'ECONNABORTED' || 
+        error.code === 'ECONNREFUSED' || 
+        error.code === 'ETIMEDOUT' ||
+        error.code === 'ENOTFOUND') {
+      return true;
+    }
+
+    // Check HTTP status codes
+    if (error.response && this.retryableStatuses.includes(error.response.status)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Calculate delay for retry attempt
+   */
+  getDelay(attempt) {
+    const delay = this.initialDelay * Math.pow(this.backoffMultiplier, attempt);
+    return Math.min(delay, this.maxDelay);
+  }
+
+  /**
+   * Sleep for specified milliseconds
+   */
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+}
+
+/**
  * Cliente base para comunicação com a WuzAPI
  * Centraliza configurações de timeout, headers e base URL
  * Suporta configurações dinâmicas do banco de dados via ApiSettingsService
@@ -16,6 +169,21 @@ class WuzAPIClient {
     this._configCache = null;
     this._configCacheExpiry = null;
     this._configCacheTTL = 30000; // 30 seconds cache
+    
+    // Circuit breaker for resilience
+    this.circuitBreaker = new CircuitBreaker({
+      failureThreshold: parseInt(process.env.WUZAPI_CIRCUIT_FAILURE_THRESHOLD) || 5,
+      resetTimeout: parseInt(process.env.WUZAPI_CIRCUIT_RESET_TIMEOUT) || 30000,
+      successThreshold: 2
+    });
+    
+    // Retry handler with exponential backoff
+    this.retryHandler = new RetryHandler({
+      maxRetries: parseInt(process.env.WUZAPI_MAX_RETRIES) || 3,
+      initialDelay: 1000,
+      maxDelay: 10000,
+      backoffMultiplier: 2
+    });
     
     // Criar instância do axios com configurações padrão
     this.client = axios.create({
@@ -48,8 +216,74 @@ class WuzAPIClient {
     
     logger.info('WuzAPIClient initialized', {
       baseURL: this.baseURL,
-      timeout: this.timeout
+      timeout: this.timeout,
+      circuitBreaker: 'enabled',
+      retryEnabled: true
     });
+  }
+
+  /**
+   * Execute request with circuit breaker and retry logic
+   * @private
+   */
+  async _executeWithResilience(requestFn, context = {}) {
+    // Check circuit breaker
+    if (!this.circuitBreaker.canRequest()) {
+      const state = this.circuitBreaker.getState();
+      logger.warn('WuzAPI request blocked by circuit breaker', {
+        state: state.state,
+        failures: state.failures,
+        ...context
+      });
+      return {
+        success: false,
+        status: 503,
+        error: 'Service temporarily unavailable (circuit breaker open)',
+        code: 'CIRCUIT_OPEN',
+        circuitState: state
+      };
+    }
+
+    let lastError;
+    
+    for (let attempt = 0; attempt <= this.retryHandler.maxRetries; attempt++) {
+      try {
+        const response = await requestFn();
+        
+        // Success - notify circuit breaker
+        this.circuitBreaker.onSuccess();
+        
+        return {
+          success: true,
+          status: response.status,
+          data: response.data
+        };
+      } catch (error) {
+        lastError = error;
+        
+        // Check if retryable
+        if (!this.retryHandler.isRetryable(error) || attempt >= this.retryHandler.maxRetries) {
+          // Not retryable or max retries reached
+          this.circuitBreaker.onFailure();
+          break;
+        }
+        
+        // Wait before retry
+        const delay = this.retryHandler.getDelay(attempt);
+        logger.debug('WuzAPI request retry', {
+          attempt: attempt + 1,
+          maxRetries: this.retryHandler.maxRetries,
+          delay,
+          error: error.message,
+          ...context
+        });
+        
+        await this.retryHandler.sleep(delay);
+      }
+    }
+
+    // All retries failed
+    return this._handleError(lastError);
   }
 
   /**
@@ -115,18 +349,12 @@ class WuzAPIClient {
    * @returns {Promise<Object>} Resposta da WuzAPI
    */
   async get(endpoint, options = {}) {
-    try {
-      await this._ensureConfig();
-      const response = await this.client.get(endpoint, options);
-      
-      return {
-        success: true,
-        status: response.status,
-        data: response.data
-      };
-    } catch (error) {
-      return this._handleError(error);
-    }
+    await this._ensureConfig();
+    
+    return this._executeWithResilience(
+      () => this.client.get(endpoint, options),
+      { method: 'GET', endpoint }
+    );
   }
 
   /**
@@ -137,18 +365,12 @@ class WuzAPIClient {
    * @returns {Promise<Object>} Resposta da WuzAPI
    */
   async post(endpoint, data = {}, options = {}) {
-    try {
-      await this._ensureConfig();
-      const response = await this.client.post(endpoint, data, options);
-      
-      return {
-        success: true,
-        status: response.status,
-        data: response.data
-      };
-    } catch (error) {
-      return this._handleError(error);
-    }
+    await this._ensureConfig();
+    
+    return this._executeWithResilience(
+      () => this.client.post(endpoint, data, options),
+      { method: 'POST', endpoint }
+    );
   }
 
   /**
@@ -158,18 +380,12 @@ class WuzAPIClient {
    * @returns {Promise<Object>} Resposta da WuzAPI
    */
   async delete(endpoint, options = {}) {
-    try {
-      await this._ensureConfig();
-      const response = await this.client.delete(endpoint, options);
-      
-      return {
-        success: true,
-        status: response.status,
-        data: response.data
-      };
-    } catch (error) {
-      return this._handleError(error);
-    }
+    await this._ensureConfig();
+    
+    return this._executeWithResilience(
+      () => this.client.delete(endpoint, options),
+      { method: 'DELETE', endpoint }
+    );
   }
 
   /**
@@ -408,6 +624,22 @@ class WuzAPIClient {
       baseURL: this.baseURL,
       timeout: this.timeout
     };
+  }
+
+  /**
+   * Get circuit breaker state for health checks
+   * @returns {Object} Circuit breaker state
+   */
+  getCircuitBreakerState() {
+    return this.circuitBreaker.getState();
+  }
+
+  /**
+   * Reset circuit breaker (for manual recovery)
+   */
+  resetCircuitBreaker() {
+    this.circuitBreaker.reset();
+    logger.info('WuzAPI circuit breaker manually reset');
   }
 
   /**

@@ -1,10 +1,74 @@
 /**
  * Sistema de logging estruturado para WUZAPI Manager
  * Suporta diferentes níveis de log e formatação JSON
+ * 
+ * Includes EPIPE error handling to prevent crashes when stdout/stderr is closed
+ * (common in containerized environments or when piping output)
  */
 
 const fs = require('fs');
 const path = require('path');
+
+/**
+ * Handle EPIPE errors gracefully
+ * EPIPE occurs when stdout/stderr is closed (common in containers/pipes)
+ * Instead of crashing, we exit gracefully
+ */
+const handleEPIPE = (err) => {
+  if (err && err.code === 'EPIPE') {
+    // Stdout/stderr closed, exit gracefully without crash
+    // Don't try to log - the stream is closed
+    process.exit(0);
+  }
+};
+
+// Attach EPIPE handlers early, before any logging
+// These prevent crashes when stdout/stderr is closed
+process.stdout.on('error', handleEPIPE);
+process.stderr.on('error', handleEPIPE);
+
+/**
+ * Safe write to stream - handles EPIPE gracefully
+ * @param {WritableStream} stream - The stream to write to
+ * @param {string} data - The data to write
+ * @returns {boolean} - Whether the write was successful
+ */
+const safeWrite = (stream, data) => {
+  try {
+    if (stream && !stream.destroyed && stream.writable) {
+      stream.write(data);
+      return true;
+    }
+    return false;
+  } catch (err) {
+    if (err.code !== 'EPIPE') {
+      // Re-throw non-EPIPE errors
+      throw err;
+    }
+    // EPIPE errors are silently ignored
+    return false;
+  }
+};
+
+/**
+ * Safe console output - wraps console methods with EPIPE protection
+ */
+const safeConsole = {
+  log: (...args) => {
+    try {
+      console.log(...args);
+    } catch (err) {
+      if (err.code !== 'EPIPE') throw err;
+    }
+  },
+  error: (...args) => {
+    try {
+      console.error(...args);
+    } catch (err) {
+      if (err.code !== 'EPIPE') throw err;
+    }
+  }
+};
 
 class Logger {
   constructor(options = {}) {
@@ -110,11 +174,11 @@ class Logger {
 
     const formattedMessage = this.formatMessage(level, message, meta);
     
-    // Output para console
+    // Output para console usando safeConsole para evitar EPIPE crashes
     if (level === 'error' || level === 'fatal') {
-      console.error(formattedMessage);
+      safeConsole.error(formattedMessage);
     } else {
-      console.log(formattedMessage);
+      safeConsole.log(formattedMessage);
     }
     
     // Escrever em arquivo
@@ -385,19 +449,8 @@ const requestLogger = (req, res, next) => {
   next();
 };
 
-// Handler para erros não capturados
-process.on('uncaughtException', (error) => {
-  logger.fatal('Uncaught Exception', { error: error.message, stack: error.stack });
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection', { 
-    reason: reason?.message || reason,
-    stack: reason?.stack,
-    promise: promise.toString()
-  });
-});
+// Note: uncaughtException and unhandledRejection handlers are centralized in server/index.js
+// to avoid duplicate handlers and ensure consistent behavior
 
 // Rotação diária de logs (não criar em ambiente de teste)
 if (process.env.NODE_ENV !== 'test') {

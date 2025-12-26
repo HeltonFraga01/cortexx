@@ -88,6 +88,7 @@ const adminAuditRoutes = require('./routes/adminAuditRoutes');
 const adminReportRoutes = require('./routes/adminReportRoutes');
 const adminSettingsRoutes = require('./routes/adminSettingsRoutes');
 const adminApiSettingsRoutes = require('./routes/adminApiSettingsRoutes');
+const adminTenantApiSettingsRoutes = require('./routes/adminTenantApiSettingsRoutes');
 const adminStripeRoutes = require('./routes/adminStripeRoutes');
 const adminCreditPackagesRoutes = require('./routes/adminCreditPackagesRoutes');
 const stripeWebhookRoutes = require('./routes/stripeWebhookRoutes');
@@ -578,7 +579,15 @@ app.get('/health', async (req, res) => {
         responseTime: wuzapiStatus.responseTime,
         lastCheck: wuzapiStatus.timestamp,
         cached: wuzapiStatus.cached || false,
-        error: wuzapiStatus.error || null
+        error: wuzapiStatus.error || null,
+        circuitBreaker: (() => {
+          try {
+            const wuzapiClient = require('./utils/wuzapiClient');
+            return wuzapiClient.getCircuitBreakerState();
+          } catch (e) {
+            return { state: 'unknown', error: e.message };
+          }
+        })()
       },
       s3_storage: s3Status,
       redis: redisStatus
@@ -680,6 +689,7 @@ app.use('/api/admin/audit', adminAuditRoutes);
 app.use('/api/admin/reports', adminReportRoutes);
 app.use('/api/admin/settings', adminSettingsRoutes);
 app.use('/api/admin/api-settings', adminApiSettingsRoutes);
+app.use('/api/admin/tenant/api-settings', adminTenantApiSettingsRoutes);
 app.use('/api/admin/stripe', adminStripeRoutes);
 app.use('/api/admin/credit-packages', adminCreditPackagesRoutes);
 // Generic admin routes
