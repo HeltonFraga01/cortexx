@@ -58,7 +58,20 @@ function requireFeature(featureName) {
     try {
       // Skip feature check for admin users (JWT or session)
       const userRole = getUserRole(req);
+      
+      // Debug logging for feature enforcement
+      logger.debug('Feature enforcement check', {
+        featureName,
+        userRole,
+        hasUser: !!req.user,
+        userRoleFromUser: req.user?.role,
+        sessionRole: req.session?.role,
+        isAdminFeature: isAdminFeature(featureName),
+        path: req.path
+      });
+      
       if (userRole === 'admin' || userRole === 'superadmin') {
+        logger.debug('Feature check bypassed for admin', { featureName, userRole });
         return next();
       }
       

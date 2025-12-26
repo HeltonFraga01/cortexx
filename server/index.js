@@ -699,6 +699,7 @@ app.use('/api/admin/landing-page', landingPageRoutes);
 app.use('/api/admin/table-permissions', adminTablePermissionsRoutes);
 app.use('/api/admin/tables', adminTablesRoutes);
 app.use('/api/admin/custom-themes', adminCustomThemesRoutes);
+app.use('/api/admin/page-builder-themes', require('./routes/adminPageBuilderThemesRoutes'));
 app.use('/api/admin/automation', adminAutomationRoutes);
 app.use('/api/admin/custom-links', customLinksRoutes); // Rotas admin de custom links
 
@@ -750,6 +751,7 @@ app.use('/api/user/outgoing-webhooks', require('./routes/userWebhookRoutes'));
 
 // Rotas de Custom Themes (read-only para usuários)
 app.use('/api/user/custom-themes', userCustomThemesRoutes);
+app.use('/api/user/page-builder-themes', require('./routes/userPageBuilderThemesRoutes'));
 
 // User Account Routes (subscription, quotas, features)
 app.use('/api/user/plans', userPlanRoutes); // Available plans for upgrade - MUST come BEFORE generic user routes

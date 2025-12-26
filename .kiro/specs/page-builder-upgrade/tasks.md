@@ -133,6 +133,31 @@
 
 ---
 
+## Task 10: Theme Export/Import Functionality
+
+**Requirements:** REQ-8 (Salvamento e Carregamento) - Extended with export/import
+
+### Subtasks:
+- [x] 10.1 Create themeExporter.ts utility with export functions
+- [x] 10.2 Define ExportedThemePackage format with metadata and AI instructions
+- [x] 10.3 Add downloadThemeAsJson function for file download
+- [x] 10.4 Add validateImportedTheme function for import validation
+- [x] 10.5 Add importThemeFromPackage function for theme restoration
+- [x] 10.6 Add Export button to PuckPageBuilder header
+- [x] 10.7 Add Import button with file input to PuckPageBuilder
+- [x] 10.8 Export themeExporter utilities from utils/index.ts
+- [x] 10.9 Create page_builder_themes database table (migration 023)
+- [x] 10.10 Create PageBuilderThemeService.js backend service
+- [x] 10.11 Create adminPageBuilderThemesRoutes.js (CRUD endpoints)
+- [x] 10.12 Create userPageBuilderThemesRoutes.js (read-only endpoints)
+- [x] 10.13 Register new routes in server/routes/index.js
+- [x] 10.14 Create page-builder-themes.ts frontend service
+- [x] 10.15 Update PageBuilderPage.tsx to use new service
+- [x] 10.16 Update ThemesListPage.tsx to use new service
+- [x] 10.17 Update EditThemeSelector.tsx to use new service
+
+---
+
 ## Summary
 
 All core implementation tasks have been completed:
@@ -146,6 +171,7 @@ All core implementation tasks have been completed:
 7. **Legacy Migration** - Automatic detection and migration of legacy theme formats
 8. **Integration** - PageBuilderPage updated to use new Puck-based editor
 9. **Layout Components with DropZones** - Columns, Container, and Card components with native Puck DropZones for nested component support
+10. **Theme Export/Import** - Export themes as JSON with AI-friendly instructions, import from files
 
 ### Files Created:
 - `src/components/features/page-builder/puck/PuckPageBuilder.tsx`
@@ -156,11 +182,20 @@ All core implementation tasks have been completed:
 - `src/components/features/page-builder/puck/fields/index.ts`
 - `src/components/features/page-builder/puck/utils/schemaConverter.ts`
 - `src/components/features/page-builder/puck/utils/legacyMigration.ts`
+- `src/components/features/page-builder/puck/utils/themeExporter.ts`
 - `src/components/features/page-builder/puck/utils/index.ts`
 - `src/components/features/page-builder/puck/index.ts`
+- `src/services/page-builder-themes.ts`
+- `server/migrations/023_create_page_builder_themes_table.sql`
+- `server/services/PageBuilderThemeService.js`
+- `server/routes/adminPageBuilderThemesRoutes.js`
+- `server/routes/userPageBuilderThemesRoutes.js`
 
 ### Files Modified:
-- `src/pages/admin/PageBuilderPage.tsx` - Now uses PuckPageBuilder
+- `src/pages/admin/PageBuilderPage.tsx` - Now uses PuckPageBuilder and new service
+- `src/pages/admin/ThemesListPage.tsx` - Updated to use page-builder-themes service
+- `src/components/features/edit-themes/EditThemeSelector.tsx` - Updated to use page-builder-themes service
 - `src/components/features/edit-themes/themes/CustomThemeRenderer.tsx` - Added PuckThemeRenderer support
 - `src/components/features/page-builder/index.ts` - Added Puck exports
+- `server/routes/index.js` - Registered new page builder theme routes
 - `package.json` - Added @measured/puck dependency

@@ -13,9 +13,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Palette, Check, ImageOff, Loader2, Edit, Plus, Blocks } from 'lucide-react';
 import { themeRegistry } from './ThemeRegistry';
-import { listCustomThemes } from '@/services/custom-themes';
+import { listPageBuilderThemes, type PageBuilderTheme } from '@/services/page-builder-themes';
 import type { EditThemeConfig } from '@/lib/types';
-import type { CustomTheme } from '@/types/page-builder';
 import { cn } from '@/lib/utils';
 import { useNavigate } from 'react-router-dom';
 
@@ -25,7 +24,7 @@ import './themes';
 interface EditThemeSelectorProps {
   config: EditThemeConfig | null | undefined;
   onConfigChange: (config: EditThemeConfig) => void;
-  connectionId?: number;
+  connectionId?: string;
 }
 
 export function EditThemeSelector({
@@ -35,7 +34,7 @@ export function EditThemeSelector({
 }: EditThemeSelectorProps) {
   const navigate = useNavigate();
   const [imageErrors, setImageErrors] = useState<Set<string>>(new Set());
-  const [customThemes, setCustomThemes] = useState<CustomTheme[]>([]);
+  const [customThemes, setCustomThemes] = useState<PageBuilderTheme[]>([]);
   const [loadingCustom, setLoadingCustom] = useState(false);
   
   // Get available built-in themes from registry
@@ -46,7 +45,7 @@ export function EditThemeSelector({
     const loadCustomThemes = async () => {
       setLoadingCustom(true);
       try {
-        const response = await listCustomThemes({ connectionId });
+        const response = await listPageBuilderThemes({ connectionId });
         if (response.success && response.data?.themes) {
           setCustomThemes(response.data.themes);
         }
@@ -234,9 +233,9 @@ export function EditThemeSelector({
                       </Button>
                       
                       <div className="aspect-video w-full rounded bg-muted overflow-hidden mb-2 flex items-center justify-center">
-                        {theme.preview_image ? (
+                        {theme.previewImage ? (
                           <img
-                            src={theme.preview_image}
+                            src={theme.previewImage}
                             alt={`Preview do tema ${theme.name}`}
                             className="w-full h-full object-cover"
                           />
@@ -253,7 +252,7 @@ export function EditThemeSelector({
                           </Badge>
                         </div>
                         <p className="text-xs text-muted-foreground line-clamp-1">
-                          {theme.description || `${theme.schema.blocks.length} blocos`}
+                          {theme.description || `${theme.schema?.blocks?.length || 0} blocos`}
                         </p>
                       </div>
                     </button>

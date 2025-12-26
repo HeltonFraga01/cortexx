@@ -9,10 +9,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { PuckPageBuilder } from '@/components/features/page-builder/puck';
 import { 
-  createCustomTheme, 
-  updateCustomTheme, 
-  getCustomTheme 
-} from '@/services/custom-themes';
+  createPageBuilderTheme, 
+  updatePageBuilderTheme, 
+  getPageBuilderTheme 
+} from '@/services/page-builder-themes';
 import type { ThemeSchema } from '@/types/page-builder';
 import { toast } from 'sonner';
 import { Loader2, ArrowLeft } from 'lucide-react';
@@ -34,7 +34,7 @@ export function PageBuilderPage() {
     const loadTheme = async () => {
       setLoading(true);
       try {
-        const response = await getCustomTheme(parseInt(themeId, 10));
+        const response = await getPageBuilderTheme(themeId);
         if (response.success && response.data) {
           setInitialTheme(response.data.schema);
         } else {
@@ -56,7 +56,7 @@ export function PageBuilderPage() {
     setSaving(true);
     try {
       if (isEditMode && themeId) {
-        const response = await updateCustomTheme(parseInt(themeId, 10), {
+        const response = await updatePageBuilderTheme(themeId, {
           name: schema.name,
           description: schema.description,
           connectionId: schema.connectionId,
@@ -69,7 +69,7 @@ export function PageBuilderPage() {
           toast.error(response.error || 'Erro ao atualizar tema');
         }
       } else {
-        const response = await createCustomTheme({
+        const response = await createPageBuilderTheme({
           name: schema.name,
           description: schema.description,
           connectionId: schema.connectionId,

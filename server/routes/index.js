@@ -23,9 +23,33 @@ const userWebhookRoutes = require('./userWebhookRoutes');
 const adminTablePermissionsRoutes = require('./adminTablePermissionsRoutes');
 const adminTablesRoutes = require('./adminTablesRoutes');
 const adminCustomThemesRoutes = require('./adminCustomThemesRoutes');
+
+// Debug: Log before requiring adminPageBuilderThemesRoutes
+logger.info('About to require adminPageBuilderThemesRoutes');
+let adminPageBuilderThemesRoutes;
+try {
+  adminPageBuilderThemesRoutes = require('./adminPageBuilderThemesRoutes');
+  logger.info('adminPageBuilderThemesRoutes required successfully', { 
+    type: typeof adminPageBuilderThemesRoutes,
+    hasStack: !!adminPageBuilderThemesRoutes?.stack
+  });
+} catch (error) {
+  logger.error('Failed to require adminPageBuilderThemesRoutes', { 
+    error: error.message, 
+    stack: error.stack 
+  });
+  // Create a dummy router to prevent crashes
+  const express = require('express');
+  adminPageBuilderThemesRoutes = express.Router();
+  adminPageBuilderThemesRoutes.all('*', (req, res) => {
+    res.status(500).json({ error: 'Page builder routes failed to load' });
+  });
+}
+
 const adminAutomationRoutes = require('./adminAutomationRoutes');
 const userTableAccessRoutes = require('./userTableAccessRoutes');
 const userCustomThemesRoutes = require('./userCustomThemesRoutes');
+const userPageBuilderThemesRoutes = require('./userPageBuilderThemesRoutes');
 const contactImportRoutes = require('./contactImportRoutes');
 const userContactsRoutes = require('./userContactsRoutes');
 const mediaRoutes = require('./mediaRoutes');
@@ -159,6 +183,7 @@ function setupRoutes(app) {
   app.use('/api/admin/table-permissions', adminTablePermissionsRoutes);
   app.use('/api/admin/tables', adminTablesRoutes);
   app.use('/api/admin/custom-themes', adminCustomThemesRoutes);
+  app.use('/api/admin/page-builder-themes', adminPageBuilderThemesRoutes);
   app.use('/api/admin/automation', adminAutomationRoutes);
   app.use('/api/database-connections', databaseRoutes);
   // IMPORTANTE: Rotas mais específicas devem vir antes das genéricas
@@ -191,6 +216,7 @@ function setupRoutes(app) {
   app.use('/api/user/bots', tenantRateLimiter, userBotRoutes);
   app.use('/api/user/outgoing-webhooks', tenantRateLimiter, userWebhookRoutes);
   app.use('/api/user/custom-themes', tenantRateLimiter, userCustomThemesRoutes);
+  app.use('/api/user/page-builder-themes', tenantRateLimiter, userPageBuilderThemesRoutes);
   app.use('/api/user', tenantRateLimiter, userRoutes);
   app.use('/api/webhook', tenantRateLimiter, webhookRoutes);
   app.use('/api/chat', tenantRateLimiter, chatRoutes);

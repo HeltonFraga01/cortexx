@@ -1,7 +1,7 @@
 /**
  * Themes List Page
  * 
- * Admin page for listing, editing, and deleting custom themes.
+ * Admin page for listing, editing, and deleting page builder themes.
  */
 
 import { useState, useEffect } from 'react';
@@ -18,22 +18,25 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useConfirmDialog } from '@/hooks/useConfirmDialog';
-import { listCustomThemes, deleteCustomTheme } from '@/services/custom-themes';
-import type { CustomTheme } from '@/types/page-builder';
+import { 
+  listPageBuilderThemes, 
+  deletePageBuilderTheme,
+  type PageBuilderTheme 
+} from '@/services/page-builder-themes';
 import { toast } from 'sonner';
-import { Plus, Edit, Trash2, Loader2, Blocks, Calendar, Database } from 'lucide-react';
+import { Plus, Edit, Trash2, Loader2, Blocks, Calendar } from 'lucide-react';
 
 export function ThemesListPage() {
   const navigate = useNavigate();
-  const [themes, setThemes] = useState<CustomTheme[]>([]);
+  const [themes, setThemes] = useState<PageBuilderTheme[]>([]);
   const [loading, setLoading] = useState(true);
-  const [deleting, setDeleting] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const { confirm, ConfirmDialog } = useConfirmDialog();
 
   const loadThemes = async () => {
     setLoading(true);
     try {
-      const response = await listCustomThemes();
+      const response = await listPageBuilderThemes();
       if (response.success && response.data) {
         setThemes(response.data.themes || []);
       } else {
@@ -50,7 +53,7 @@ export function ThemesListPage() {
     loadThemes();
   }, []);
 
-  const handleDelete = async (theme: CustomTheme) => {
+  const handleDelete = async (theme: PageBuilderTheme) => {
     const confirmed = await confirm({
       title: 'Excluir Tema',
       description: `Tem certeza que deseja excluir o tema "${theme.name}"? Esta ação não pode ser desfeita.`,
@@ -62,7 +65,7 @@ export function ThemesListPage() {
 
     setDeleting(theme.id);
     try {
-      const response = await deleteCustomTheme(theme.id);
+      const response = await deletePageBuilderTheme(theme.id);
       if (response.success) {
         toast.success('Tema excluído com sucesso');
         setThemes(prev => prev.filter(t => t.id !== theme.id));
@@ -155,7 +158,7 @@ export function ThemesListPage() {
                     <TableCell className="text-muted-foreground text-sm">
                       <div className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
-                        {formatDate(theme.updated_at)}
+                        {formatDate(theme.updatedAt)}
                       </div>
                     </TableCell>
                     <TableCell className="text-right">

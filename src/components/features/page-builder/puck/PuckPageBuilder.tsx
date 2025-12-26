@@ -5,7 +5,7 @@
  * Wraps Puck with connection selection, theme metadata, and save functionality.
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Puck, type Data as PuckData } from '@measured/puck';
 import '@measured/puck/puck.css';
 import './puck-overrides.css';
@@ -27,8 +27,14 @@ import { safeMigrateLegacyTheme } from './utils/legacyMigration';
 
 import type { ThemeSchema } from '@/types/page-builder';
 import type { DatabaseConnection, FieldMetadata } from '@/lib/types';
-import { Save, Loader2, Database, FileText, Blocks, Eye } from 'lucide-react';
+import { Save, Loader2, Database, FileText, Blocks, Eye, Download, Upload } from 'lucide-react';
 import { toast } from 'sonner';
+import { 
+  exportThemePackage, 
+  downloadThemeAsJson,
+  validateImportedTheme,
+  importThemeFromPackage,
+} from './utils/themeExporter';
 
 interface PuckPageBuilderProps {
   initialTheme?: ThemeSchema;
@@ -52,6 +58,9 @@ export function PuckPageBuilder({
   
   // Preview record state
   const [previewRecord, setPreviewRecord] = useState<Record<string, unknown> | null>(null);
+
+  // File input ref for import
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Puck data state
   const [puckData, setPuckData] = useState<PuckData>(() => {
@@ -138,6 +147,86 @@ export function PuckPageBuilder({
     }
   }, [themeName, themeDescription, connectionId, initialTheme, onSave]);
 
+  // Handle download/export
+  const handleDownload = useCallback(() => {
+    if (!themeName.trim()) {
+      toast.error('Defina um nome para o tema antes de exportar');
+      return;
+    }
+
+    if (puckData.content.length === 0) {
+      toast.error('Adicione pelo menos um bloco antes de exportar');
+      return;
+    }
+
+    try {
+      const themePackage = exportThemePackage(
+        puckData,
+        themeName,
+        themeDescription,
+        connection,
+        fields,
+        initialTheme?.id
+      );
+      
+      downloadThemeAsJson(themePackage);
+      toast.success('Tema exportado com sucesso!');
+    } catch (error) {
+      console.error('Failed to export theme:', error);
+      toast.error('Erro ao exportar tema');
+    }
+  }, [puckData, themeName, themeDescription, connection, fields, initialTheme?.id]);
+
+  // Handle import click
+  const handleImportClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  // Handle file import
+  const handleFileImport = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result as string;
+        const data = JSON.parse(content);
+        
+        const validation = validateImportedTheme(data);
+        if (!validation.valid) {
+          toast.error(`Arquivo inválido: ${validation.errors.join(', ')}`);
+          return;
+        }
+
+        const imported = importThemeFromPackage(validation.package!);
+        
+        // Update state with imported data
+        setPuckData(imported.puckData);
+        setThemeName(imported.name);
+        setThemeDescription(imported.description);
+        
+        // Show info about used fields
+        if (imported.usedFields.length > 0) {
+          toast.info(
+            `Tema importado! Campos utilizados: ${imported.usedFields.join(', ')}. ` +
+            'Selecione uma conexão para mapear os campos.'
+          );
+        } else {
+          toast.success('Tema importado com sucesso!');
+        }
+      } catch (error) {
+        console.error('Failed to import theme:', error);
+        toast.error('Erro ao importar tema: arquivo JSON inválido');
+      }
+    };
+    
+    reader.readAsText(file);
+    
+    // Reset input so same file can be selected again
+    event.target.value = '';
+  }, []);
+
   // Custom header actions for Puck
   const headerActions = useMemo(() => (
     <div className="flex items-center gap-3">
@@ -162,6 +251,31 @@ export function PuckPageBuilder({
           Preview ativo
         </Badge>
       )}
+
+      {/* Import button */}
+      <Button 
+        onClick={handleImportClick}
+        variant="outline"
+        size="sm"
+        className="gap-2"
+        title="Importar tema de arquivo"
+      >
+        <Upload className="h-4 w-4" />
+        <span className="hidden sm:inline">Importar</span>
+      </Button>
+
+      {/* Download/Export button */}
+      <Button 
+        onClick={handleDownload}
+        variant="outline"
+        size="sm"
+        className="gap-2"
+        disabled={!themeName.trim() || puckData.content.length === 0}
+        title="Exportar tema como arquivo"
+      >
+        <Download className="h-4 w-4" />
+        <span className="hidden sm:inline">Exportar</span>
+      </Button>
       
       {/* Save button */}
       <Button 
@@ -183,10 +297,19 @@ export function PuckPageBuilder({
         )}
       </Button>
     </div>
-  ), [puckData, saving, handleSave, themeName, connection, previewRecord]);
+  ), [puckData, saving, handleSave, handleDownload, handleImportClick, themeName, connection, previewRecord]);
 
   return (
     <div className="h-full flex flex-col gap-3">
+      {/* Hidden file input for import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        onChange={handleFileImport}
+        className="hidden"
+      />
+
       {/* Compact Theme Metadata Header */}
       <Card className="border-border/50 shadow-sm">
         <CardContent className="py-3 px-4">

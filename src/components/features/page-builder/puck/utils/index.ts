@@ -19,3 +19,14 @@ export {
   safeMigrateLegacyTheme,
   validateMigratedTheme,
 } from './legacyMigration';
+
+export {
+  exportThemePackage,
+  downloadThemeAsJson,
+  validateImportedTheme,
+  importThemeFromPackage,
+  EXPORT_FORMAT_VERSION,
+  type ExportedThemePackage,
+  type ExportedFieldMapping,
+  type ExportedConnectionInfo,
+} from './themeExporter';
