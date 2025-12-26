@@ -355,6 +355,55 @@ export class DatabaseConnectionsService {
     }
   }
 
+  /**
+   * Buscar metadados do NocoDB (nomes de projeto e tabela) via backend
+   * Evita problemas de CORS ao buscar os nomes reais
+   */
+  async getNocoDBMetadata(connectionId: number): Promise<{ project: { id: string; title: string } | null; table: { id: string; title: string } | null }> {
+    try {
+      const response = await backendApi.get<ApiResponse<any>>(`/database-connections/${connectionId}/nocodb/metadata`);
+
+      if (!response.success) {
+        console.error('Erro ao buscar metadados NocoDB:', response.error);
+        return { project: null, table: null };
+      }
+
+      return response.data?.data || { project: null, table: null };
+    } catch (error: any) {
+      console.error('Erro ao buscar metadados NocoDB:', error);
+      return { project: null, table: null };
+    }
+  }
+
+  /**
+   * Buscar metadados do NocoDB com credenciais temporárias (antes de salvar)
+   */
+  async getNocoDBMetadataWithCredentials(
+    host: string,
+    nocodbToken: string,
+    nocodbProjectId?: string,
+    nocodbTableId?: string
+  ): Promise<{ project: { id: string; title: string } | null; table: { id: string; title: string } | null }> {
+    try {
+      const response = await backendApi.post<ApiResponse<any>>('/database-connections/nocodb/metadata', {
+        host,
+        nocodb_token: nocodbToken,
+        nocodb_project_id: nocodbProjectId,
+        nocodb_table_id: nocodbTableId,
+      });
+
+      if (!response.success) {
+        console.error('Erro ao buscar metadados NocoDB:', response.error);
+        return { project: null, table: null };
+      }
+
+      return response.data?.data || { project: null, table: null };
+    } catch (error: any) {
+      console.error('Erro ao buscar metadados NocoDB:', error);
+      return { project: null, table: null };
+    }
+  }
+
 
 
   /**

@@ -72,6 +72,19 @@ This implementation adds native Supabase support to the Database Navigation syst
     - Changed testNocoDBConnection to use backend endpoint
     - Added testNocoDBCredentials method
     - Updated testAndUpdateConnectionStatus to use backend for NocoDB
+  - [x] 6.4 Fix NocoDB edit form dropdowns showing empty
+    - When editing a NocoDB connection, Project/Table dropdowns were empty
+    - Root cause: API calls to NocoDB fail due to CORS, leaving arrays empty
+    - Solution: When API calls fail but saved values exist, add them as fallback options
+    - Updated loadConnection, loadProjects, loadTables functions
+    - Also added Supabase table pre-selection when editing
+  - [x] 6.5 Show real names instead of IDs in NocoDB dropdowns
+    - Created backend endpoint GET /:id/nocodb/metadata to fetch project/table names
+    - Created backend endpoint POST /nocodb/metadata for temp credentials
+    - Added getNocoDBMetadata and getNocoDBMetadataWithCredentials to frontend service
+    - Added getProjectMetadata, getTableMetadata, getConnectionMetadata to NocoDBConnectionService
+    - Updated loadConnection to fetch names via backend (avoids CORS)
+    - Now shows "Clientes" instead of "mo8mujzwlpnlvv1" in dropdowns
 
 ## Notes
 

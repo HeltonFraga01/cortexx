@@ -109,10 +109,39 @@ export function DatabaseConnectionForm() {
         formData.nocodb_token,
         workspaceId
       );
-      setProjects(projectList);
+      
+      // Se não conseguiu carregar projetos mas tem um selecionado, manter como opção
+      if (projectList.length === 0 && selectedProject) {
+        // Tentar buscar o nome via metadados
+        const metadata = await databaseConnectionsService.getNocoDBMetadataWithCredentials(
+          formData.host,
+          formData.nocodb_token,
+          selectedProject
+        );
+        const projectTitle = metadata.project?.title || selectedProject;
+        setProjects([{ id: selectedProject, title: projectTitle }]);
+      } else {
+        setProjects(projectList);
+      }
     } catch (error: any) {
       console.error('Erro ao carregar projetos:', error);
-      setProjects([]);
+      // Se falhou mas tem um projeto selecionado, manter como opção
+      if (selectedProject) {
+        // Tentar buscar o nome via metadados
+        try {
+          const metadata = await databaseConnectionsService.getNocoDBMetadataWithCredentials(
+            formData.host!,
+            formData.nocodb_token!,
+            selectedProject
+          );
+          const projectTitle = metadata.project?.title || selectedProject;
+          setProjects([{ id: selectedProject, title: projectTitle }]);
+        } catch {
+          setProjects([{ id: selectedProject, title: selectedProject }]);
+        }
+      } else {
+        setProjects([]);
+      }
     } finally {
       setLoadingProjects(false);
     }
@@ -128,10 +157,41 @@ export function DatabaseConnectionForm() {
         formData.nocodb_token,
         projectId
       );
-      setTables(tableList);
+      
+      // Se não conseguiu carregar tabelas mas tem uma selecionada, manter como opção
+      if (tableList.length === 0 && selectedTable) {
+        // Tentar buscar o nome via metadados
+        const metadata = await databaseConnectionsService.getNocoDBMetadataWithCredentials(
+          formData.host,
+          formData.nocodb_token,
+          projectId,
+          selectedTable
+        );
+        const tableTitle = metadata.table?.title || selectedTable;
+        setTables([{ id: selectedTable, title: tableTitle }]);
+      } else {
+        setTables(tableList);
+      }
     } catch (error: any) {
       console.error('Erro ao carregar tabelas:', error);
-      setTables([]);
+      // Se falhou mas tem uma tabela selecionada, manter como opção
+      if (selectedTable) {
+        // Tentar buscar o nome via metadados
+        try {
+          const metadata = await databaseConnectionsService.getNocoDBMetadataWithCredentials(
+            formData.host!,
+            formData.nocodb_token!,
+            projectId,
+            selectedTable
+          );
+          const tableTitle = metadata.table?.title || selectedTable;
+          setTables([{ id: selectedTable, title: tableTitle }]);
+        } catch {
+          setTables([{ id: selectedTable, title: selectedTable }]);
+        }
+      } else {
+        setTables([]);
+      }
     } finally {
       setLoadingTables(false);
     }
@@ -151,9 +211,37 @@ export function DatabaseConnectionForm() {
           setSelectedProject(projectId);
           setSelectedTable(tableId);
 
-          // Carregar projetos e tabelas para popular os dropdowns
+          // Buscar metadados via backend para obter os nomes reais (evita CORS)
+          if (connection.id) {
+            try {
+              const metadata = await databaseConnectionsService.getNocoDBMetadata(connection.id);
+              
+              // Usar os nomes reais dos metadados
+              const projectTitle = metadata.project?.title || projectId;
+              const tableTitle = metadata.table?.title || tableId;
+              
+              // Definir as opções com os nomes reais
+              if (projectId) {
+                setProjects([{ id: projectId, title: projectTitle }]);
+              }
+              if (tableId) {
+                setTables([{ id: tableId, title: tableTitle }]);
+              }
+            } catch (error) {
+              console.error('Erro ao carregar metadados NocoDB:', error);
+              // Fallback: usar IDs como títulos
+              if (projectId) {
+                setProjects([{ id: projectId, title: projectId }]);
+              }
+              if (tableId) {
+                setTables([{ id: tableId, title: tableId }]);
+              }
+            }
+          }
+
+          // Tentar carregar listas completas via API direta (pode falhar por CORS)
           if (connection.host && connection.nocodb_token) {
-            // Carregar workspaces primeiro
+            // Carregar workspaces
             try {
               const workspaceList = await databaseConnectionsService.getNocoDBWorkspaces(
                 connection.host,
@@ -171,10 +259,13 @@ export function DatabaseConnectionForm() {
                 connection.host,
                 connection.nocodb_token
               );
-              setProjects(projectList);
+              // Só substituir se conseguiu carregar a lista
+              if (projectList.length > 0) {
+                setProjects(projectList);
+              }
             } catch (error) {
               console.error('Erro ao carregar projetos:', error);
-              setProjects([]);
+              // Manter a opção já definida com metadados
             }
 
             // Carregar tabelas do projeto selecionado
@@ -185,13 +276,21 @@ export function DatabaseConnectionForm() {
                   connection.nocodb_token,
                   projectId
                 );
-                setTables(tableList);
+                // Só substituir se conseguiu carregar a lista
+                if (tableList.length > 0) {
+                  setTables(tableList);
+                }
               } catch (error) {
                 console.error('Erro ao carregar tabelas:', error);
-                setTables([]);
+                // Manter a opção já definida com metadados
               }
             }
           }
+        }
+
+        // Supabase: carregar tabela selecionada
+        if (connection.type === 'SUPABASE' && connection.supabase_table) {
+          setSelectedSupabaseTable(connection.supabase_table);
         }
       }
     } catch (error: any) {

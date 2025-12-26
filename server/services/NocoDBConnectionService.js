@@ -356,6 +356,88 @@ class NocoDBConnectionService {
   }
 
   /**
+   * Get project metadata (name, title, etc.)
+   * @param {Object} connection - Connection config
+   * @param {string} projectId - Project ID
+   * @returns {Promise<Object>} Project metadata
+   */
+  static async getProjectMetadata(connection, projectId) {
+    try {
+      const client = this.createClient(connection);
+      const response = await client.get(`/api/v1/db/meta/projects/${projectId}`);
+      
+      return {
+        id: response.data?.id || projectId,
+        title: response.data?.title || response.data?.name || projectId,
+        description: response.data?.description || ''
+      };
+    } catch (error) {
+      logger.error('Failed to get NocoDB project metadata', {
+        host: connection.host,
+        projectId,
+        error: error.message
+      });
+      // Return fallback with ID as title
+      return {
+        id: projectId,
+        title: projectId,
+        description: ''
+      };
+    }
+  }
+
+  /**
+   * Get table metadata (name, title, etc.)
+   * @param {Object} connection - Connection config
+   * @param {string} tableId - Table ID
+   * @returns {Promise<Object>} Table metadata
+   */
+  static async getTableMetadata(connection, tableId) {
+    try {
+      const client = this.createClient(connection);
+      const response = await client.get(`/api/v1/db/meta/tables/${tableId}`);
+      
+      return {
+        id: response.data?.id || tableId,
+        title: response.data?.title || response.data?.table_name || tableId,
+        table_name: response.data?.table_name || tableId
+      };
+    } catch (error) {
+      logger.error('Failed to get NocoDB table metadata', {
+        host: connection.host,
+        tableId,
+        error: error.message
+      });
+      // Return fallback with ID as title
+      return {
+        id: tableId,
+        title: tableId,
+        table_name: tableId
+      };
+    }
+  }
+
+  /**
+   * Get metadata for both project and table
+   * @param {Object} connection - Connection config
+   * @returns {Promise<Object>} Combined metadata
+   */
+  static async getConnectionMetadata(connection) {
+    const projectId = connection.nocodb_project_id || connection.database;
+    const tableId = connection.nocodb_table_id || connection.table_name;
+
+    const [projectMeta, tableMeta] = await Promise.all([
+      projectId ? this.getProjectMetadata(connection, projectId) : Promise.resolve(null),
+      tableId ? this.getTableMetadata(connection, tableId) : Promise.resolve(null)
+    ]);
+
+    return {
+      project: projectMeta,
+      table: tableMeta
+    };
+  }
+
+  /**
    * Create a standardized error
    * @param {string} code - Error code
    * @param {string} message - Error message

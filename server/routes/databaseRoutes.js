@@ -1044,4 +1044,119 @@ router.post('/test-nocodb-credentials', async (req, res) => {
   }
 });
 
+// GET /api/database-connections/:id/nocodb/metadata - Obter metadados do projeto e tabela NocoDB
+router.get('/:id/nocodb/metadata', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const connection = await DatabaseConnectionService.getConnectionById(id);
+
+    if (!connection) {
+      return res.status(404).json({
+        success: false,
+        error: 'Conexão não encontrada',
+        code: 'CONNECTION_NOT_FOUND',
+      });
+    }
+
+    if (connection.type !== 'NOCODB') {
+      return res.status(400).json({
+        success: false,
+        error: 'Tipo inválido',
+        code: 'INVALID_TYPE',
+        message: 'Esta rota é apenas para conexões do tipo NOCODB',
+      });
+    }
+
+    // Log credential access
+    securityLogger.logSensitiveDataAccess({
+      userId: req.session?.userId,
+      ip: req.ip,
+      resource: `database_connection:${id}:nocodb_token`,
+      action: 'get_nocodb_metadata',
+    });
+
+    const circuitKey = `nocodb:${id}`;
+    const metadata = await withCircuitBreaker(circuitKey, async () => {
+      return await NocoDBConnectionService.getConnectionMetadata(connection);
+    });
+
+    res.json({
+      success: true,
+      data: metadata,
+    });
+  } catch (err) {
+    logger.error('Erro ao obter metadados NocoDB', {
+      connectionId: id,
+      error: err.message,
+      userId: req.session?.userId,
+    });
+
+    if (err.code === 'CIRCUIT_OPEN') {
+      return res.status(503).json({
+        success: false,
+        error: 'Serviço temporariamente indisponível',
+        code: 'CIRCUIT_OPEN',
+        message: err.userMessage,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao obter metadados',
+      message: err.userMessage || err.message,
+    });
+  }
+});
+
+// POST /api/database-connections/nocodb/metadata - Obter metadados com credenciais temporárias
+router.post('/nocodb/metadata', async (req, res) => {
+  const { host, nocodb_token, nocodb_project_id, nocodb_table_id } = req.body;
+
+  // Basic validation
+  if (!host || !nocodb_token) {
+    return res.status(400).json({
+      success: false,
+      error: 'Dados inválidos',
+      code: 'VALIDATION_ERROR',
+      message: 'Host e token são obrigatórios',
+    });
+  }
+
+  try {
+    // Log credential access
+    securityLogger.logSensitiveDataAccess({
+      userId: req.session?.userId,
+      ip: req.ip,
+      resource: 'nocodb_credentials:temp',
+      action: 'get_metadata_temp_credentials',
+    });
+
+    const tempConnection = {
+      host,
+      nocodb_token,
+      nocodb_project_id,
+      nocodb_table_id,
+    };
+
+    const metadata = await NocoDBConnectionService.getConnectionMetadata(tempConnection);
+
+    res.json({
+      success: true,
+      data: metadata,
+    });
+  } catch (err) {
+    logger.error('Erro ao obter metadados NocoDB (temp)', {
+      error: err.message,
+      userId: req.session?.userId,
+    });
+
+    return res.status(500).json({
+      success: false,
+      error: 'Erro ao obter metadados',
+      message: err.userMessage || err.message,
+    });
+  }
+});
+
 module.exports = router;
