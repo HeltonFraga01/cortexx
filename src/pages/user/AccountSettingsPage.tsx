@@ -2,6 +2,7 @@
  * AccountSettingsPage - User account settings with subscription, quotas, and features
  * 
  * Uses tabs for organization: Assinatura, Quotas, Features
+ * Uses useAccountSummary hook for request deduplication
  * 
  * Requirements: 1.1, 1.3, 1.5
  */
@@ -16,33 +17,25 @@ import { QuotaUsageCard } from '@/components/user/QuotaUsageCard'
 import { FeaturesList } from '@/components/user/FeaturesList'
 import { BillingHistory } from '@/components/user/billing/BillingHistory'
 import { PlanUpgradeCard } from '@/components/user/PlanUpgradeCard'
-import { getAccountSummary, type AccountSummary } from '@/services/user-subscription'
+import { useAccountSummary } from '@/hooks/useAccountSummary'
 import { useToast } from '@/hooks/use-toast'
 
 export function AccountSettingsPage() {
-  const [data, setData] = useState<AccountSummary | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
   const [showUpgrade, setShowUpgrade] = useState(false)
   const { toast } = useToast()
+  
+  // Use centralized hook for request deduplication
+  const { data, isLoading, error } = useAccountSummary()
 
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        const summary = await getAccountSummary()
-        setData(summary)
-      } catch (error) {
-        toast({
-          title: 'Erro',
-          description: 'Não foi possível carregar os dados da conta.',
-          variant: 'destructive'
-        })
-      } finally {
-        setIsLoading(false)
-      }
+    if (error) {
+      toast({
+        title: 'Erro',
+        description: 'Não foi possível carregar os dados da conta.',
+        variant: 'destructive'
+      })
     }
-
-    loadData()
-  }, [toast])
+  }, [error, toast])
 
   const handleUpgrade = () => {
     setShowUpgrade(true)

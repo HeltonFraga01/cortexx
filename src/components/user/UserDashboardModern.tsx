@@ -4,7 +4,7 @@
  * Requirements: 1.1, 1.2, 1.5, 8.1, 9.1, 9.2, 9.3, 9.4, 9.5, 10.1, 10.2, 10.3, 10.4, 10.5
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,7 @@ import { RefreshCw, MessageSquare, CheckCircle, Clock, Users, AlertCircle } from
 import { toast } from 'sonner'
 import { useSupabaseInbox } from '@/contexts/SupabaseInboxContext'
 import { useAuth } from '@/contexts/AuthContext'
-import { getAccountSummary } from '@/services/user-subscription'
+import { useAccountSummary } from '@/hooks/useAccountSummary'
 import {
   getDashboardMetrics,
   getMessageActivity,
@@ -22,16 +22,37 @@ import {
 import {
   InboxOverviewCard,
   ConversationStatsCard,
-  MessageActivityChart,
   AgentPerformanceCard,
   CampaignStatusCard,
   QuotaUsagePanel,
-  ContactGrowthChart,
   QuickActionsPanel,
   ModernStatsCard,
   DashboardHeader
 } from './dashboard'
+
+// Lazy load non-critical chart components for better LCP
+const MessageActivityChart = lazy(() => 
+  import('./dashboard/MessageActivityChart').then(m => ({ default: m.MessageActivityChart }))
+)
+const ContactGrowthChart = lazy(() => 
+  import('./dashboard/ContactGrowthChart').then(m => ({ default: m.ContactGrowthChart }))
+)
 import type { DashboardMetrics, MessageActivityData, ContactGrowthData } from '@/types/dashboard'
+import { Skeleton } from '@/components/ui/skeleton'
+
+// Chart loading skeleton component
+function ChartSkeleton({ height = 300 }: { height?: number }) {
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="space-y-4">
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className={`w-full`} style={{ height }} />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 const REFRESH_INTERVAL = 30000 // 30 seconds for inbox status
 
@@ -53,8 +74,13 @@ export function UserDashboardModern({ onSwitchToConnection }: UserDashboardModer
   
   const [selectedInboxId, setSelectedInboxId] = useState<string | null>(null)
   const [chartViewMode, setChartViewMode] = useState<'daily' | 'hourly'>('daily')
-  const [hasManagementPermission, setHasManagementPermission] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined)
+
+  // Use centralized hook for account summary (request deduplication)
+  const { data: accountSummary } = useAccountSummary()
+  const hasManagementPermission = accountSummary?.features.some(
+    f => f.featureName === 'agent_management' && f.enabled
+  ) || accountSummary?.subscription?.planName !== 'free'
 
   // Memoize inbox IDs for API calls - use context selection
   const inboxIdsForApi = useMemo(() => {
@@ -97,22 +123,6 @@ export function UserDashboardModern({ onSwitchToConnection }: UserDashboardModer
     queryFn: () => getContactGrowth(30, inboxIdsForApi),
     staleTime: 300000 // 5 minutes
   })
-
-  // Fetch account summary for management permissions
-  useEffect(() => {
-    async function checkPermissions() {
-      try {
-        const summary = await getAccountSummary()
-        setHasManagementPermission(
-          summary.features.some(f => f.featureName === 'agent_management' && f.enabled) ||
-          summary.subscription?.planName !== 'free'
-        )
-      } catch {
-        setHasManagementPermission(false)
-      }
-    }
-    checkPermissions()
-  }, [])
 
   // Update lastUpdated when metrics change
   useEffect(() => {
@@ -282,12 +292,14 @@ export function UserDashboardModern({ onSwitchToConnection }: UserDashboardModer
       <div className="grid gap-4 grid-cols-1 lg:grid-cols-3">
         {/* Message Activity Chart - Spans 2 columns on lg */}
         <div className="lg:col-span-2">
-          <MessageActivityChart
-            data={messageActivity || []}
-            viewMode={chartViewMode}
-            onViewModeChange={setChartViewMode}
-            isLoading={activityLoading}
-          />
+          <Suspense fallback={<ChartSkeleton height={300} />}>
+            <MessageActivityChart
+              data={messageActivity || []}
+              viewMode={chartViewMode}
+              onViewModeChange={setChartViewMode}
+              isLoading={activityLoading}
+            />
+          </Suspense>
         </div>
 
         {/* Conversation Stats */}
@@ -325,13 +337,15 @@ export function UserDashboardModern({ onSwitchToConnection }: UserDashboardModer
       </div>
 
       {/* Contact Growth Chart - Full width */}
-      <ContactGrowthChart
-        data={contactGrowth || []}
-        totalContacts={metrics?.contacts?.total || 0}
-        growthPercentage={metrics?.contacts?.growthPercentage || 0}
-        isLoading={growthLoading}
-        compact
-      />
+      <Suspense fallback={<ChartSkeleton height={200} />}>
+        <ContactGrowthChart
+          data={contactGrowth || []}
+          totalContacts={metrics?.contacts?.total || 0}
+          growthPercentage={metrics?.contacts?.growthPercentage || 0}
+          isLoading={growthLoading}
+          compact
+        />
+      </Suspense>
 
       {/* Quick Actions */}
       <QuickActionsPanel hasManagementPermission={hasManagementPermission} />

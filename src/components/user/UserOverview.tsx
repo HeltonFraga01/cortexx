@@ -35,7 +35,7 @@ import { useInboxConnectionData } from '@/hooks/useInboxConnectionData'
 import type { WebhookConfigData } from '@/components/shared/inbox'
 
 import { WuzAPIService } from '@/services/wuzapi'
-import { getAccountSummary, type QuotaStatus } from '@/services/user-subscription'
+import { useAccountSummary } from '@/hooks/useAccountSummary'
 import { supabase } from '@/lib/supabase'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
@@ -83,8 +83,6 @@ const UserOverview = () => {
   const avatarFetchAttemptedRef = useRef<string | null>(null)
   const [savingWebhook, setSavingWebhook] = useState(false)
   const [localWebhookConfig, setLocalWebhookConfig] = useState<WebhookConfigData | null>(null)
-  const [quotas, setQuotas] = useState<QuotaStatus[]>([])
-  const [hasManagementPermission, setHasManagementPermission] = useState(false)
   const [showCreditPurchase, setShowCreditPurchase] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
   // Novos estados para ações rápidas e cópia
@@ -94,6 +92,13 @@ const UserOverview = () => {
   const { user } = useAuth()
   const inboxContext = useSupabaseInboxOptional()
   const navigate = useNavigate()
+  
+  // Use centralized hook for account summary (request deduplication)
+  const { data: accountSummary } = useAccountSummary()
+  const quotas = accountSummary?.quotas ?? []
+  const hasManagementPermission = accountSummary?.features.some(
+    f => f.featureName === 'agent_management' && f.enabled
+  ) || accountSummary?.subscription?.planName !== 'free'
 
   // Obter inbox selecionada do contexto para exibir dados de conexão
   // Prioridade: seleção única > primeira da seleção múltipla > activeInbox
@@ -142,20 +147,6 @@ const UserOverview = () => {
   })
 
   const wuzapi = new WuzAPIService()
-
-  const fetchAccountSummary = async () => {
-    try {
-      const summary = await getAccountSummary()
-      setQuotas(summary.quotas)
-      setHasManagementPermission(
-        summary.features.some(f => f.featureName === 'agent_management' && f.enabled) ||
-        summary.subscription?.planName !== 'free'
-      )
-    } catch (error) {
-      console.error('Error fetching account summary:', error)
-      setQuotas([])
-    }
-  }
 
   // Buscar avatar usando o token da inbox selecionada
   const fetchUserAvatar = useCallback(async (jid: string, token: string) => {
@@ -443,7 +434,6 @@ const UserOverview = () => {
   // Efeito para carregar dados iniciais
   useEffect(() => {
     fetchDashboardStats()
-    fetchAccountSummary()
     setInitialLoading(false)
   }, [])
 

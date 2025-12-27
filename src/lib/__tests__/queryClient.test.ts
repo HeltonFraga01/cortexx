@@ -11,14 +11,14 @@ describe('QueryClient Configuration', () => {
   })
 
   describe('Default Options', () => {
-    it('should have staleTime of 30 seconds', () => {
+    it('should have staleTime of 5 minutes', () => {
       const defaults = queryClient.getDefaultOptions()
-      expect(defaults.queries?.staleTime).toBe(30 * 1000)
+      expect(defaults.queries?.staleTime).toBe(5 * 60 * 1000)
     })
 
-    it('should have gcTime of 5 minutes', () => {
+    it('should have gcTime of 10 minutes', () => {
       const defaults = queryClient.getDefaultOptions()
-      expect(defaults.queries?.gcTime).toBe(5 * 60 * 1000)
+      expect(defaults.queries?.gcTime).toBe(10 * 60 * 1000)
     })
 
     it('should disable refetchOnWindowFocus', () => {
@@ -26,9 +26,19 @@ describe('QueryClient Configuration', () => {
       expect(defaults.queries?.refetchOnWindowFocus).toBe(false)
     })
 
-    it('should enable refetchOnReconnect', () => {
+    it('should disable refetchOnReconnect', () => {
       const defaults = queryClient.getDefaultOptions()
-      expect(defaults.queries?.refetchOnReconnect).toBe('always')
+      expect(defaults.queries?.refetchOnReconnect).toBe(false)
+    })
+
+    it('should disable refetchOnMount', () => {
+      const defaults = queryClient.getDefaultOptions()
+      expect(defaults.queries?.refetchOnMount).toBe(false)
+    })
+
+    it('should enable structuralSharing', () => {
+      const defaults = queryClient.getDefaultOptions()
+      expect(defaults.queries?.structuralSharing).toBe(true)
     })
   })
 
@@ -59,58 +69,41 @@ describe('QueryClient Configuration', () => {
       const retry = defaults.queries?.retry as (failureCount: number, error: Error) => boolean
 
       const error408 = Object.assign(new Error('Request Timeout'), { status: 408 })
-      expect(retry(1, error408)).toBe(true)
+      expect(retry(0, error408)).toBe(true)
     })
 
-    it('should retry on 5xx errors up to 3 times', () => {
+    it('should retry only once on 5xx errors', () => {
       const defaults = queryClient.getDefaultOptions()
       const retry = defaults.queries?.retry as (failureCount: number, error: Error) => boolean
 
       const error500 = Object.assign(new Error('Server Error'), { status: 500 })
       
-      expect(retry(1, error500)).toBe(true)
-      expect(retry(2, error500)).toBe(true)
-      expect(retry(3, error500)).toBe(false)
+      expect(retry(0, error500)).toBe(true)
+      expect(retry(1, error500)).toBe(false)
     })
 
-    it('should retry on network errors', () => {
+    it('should retry only once on network errors', () => {
       const defaults = queryClient.getDefaultOptions()
       const retry = defaults.queries?.retry as (failureCount: number, error: Error) => boolean
 
       const networkError = new Error('Network Error')
       
-      expect(retry(1, networkError)).toBe(true)
-      expect(retry(2, networkError)).toBe(true)
+      expect(retry(0, networkError)).toBe(true)
+      expect(retry(1, networkError)).toBe(false)
     })
   })
 
   describe('Retry Delay', () => {
-    it('should have exponential backoff', () => {
+    it('should have fixed retry delay of 1 second', () => {
       const defaults = queryClient.getDefaultOptions()
-      const retryDelay = defaults.queries?.retryDelay as (attemptIndex: number) => number
-
-      // First retry: 1000ms
-      expect(retryDelay(0)).toBe(1000)
-      // Second retry: 2000ms
-      expect(retryDelay(1)).toBe(2000)
-      // Third retry: 4000ms
-      expect(retryDelay(2)).toBe(4000)
-    })
-
-    it('should cap retry delay at 30 seconds', () => {
-      const defaults = queryClient.getDefaultOptions()
-      const retryDelay = defaults.queries?.retryDelay as (attemptIndex: number) => number
-
-      // Very high attempt index should still cap at 30s
-      expect(retryDelay(10)).toBe(30000)
-      expect(retryDelay(20)).toBe(30000)
+      expect(defaults.queries?.retryDelay).toBe(1000)
     })
   })
 
   describe('Mutation Options', () => {
-    it('should retry mutations once', () => {
+    it('should not retry mutations', () => {
       const defaults = queryClient.getDefaultOptions()
-      expect(defaults.mutations?.retry).toBe(1)
+      expect(defaults.mutations?.retry).toBe(0)
     })
   })
 

@@ -158,7 +158,7 @@ export interface DatabaseConnection {
   id?: string;
   account_id?: string;
   name: string;
-  type: 'POSTGRES' | 'MYSQL' | 'NOCODB' | 'API' | 'SQLITE' | 'SUPABASE';
+  type: 'POSTGRES' | 'MYSQL' | 'NOCODB' | 'API' | 'SUPABASE';
   host: string;
   port?: number;
   database_name?: string;

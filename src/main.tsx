@@ -17,11 +17,22 @@ logEnvironmentInfo();
 // Initialize performance monitoring after hydration
 if (typeof window !== 'undefined') {
   // Delay initialization to not block initial render
-  requestIdleCallback?.(() => {
-    initPerformanceMonitoring();
-  }) || setTimeout(() => {
-    initPerformanceMonitoring();
-  }, 0);
+  const initPerfMonitoring = () => {
+    try {
+      initPerformanceMonitoring().catch(() => {
+        // Silently ignore - web-vitals may not be available
+      });
+    } catch {
+      // Silently ignore initialization errors
+    }
+  };
+  
+  // Use requestIdleCallback if available, otherwise setTimeout
+  if ('requestIdleCallback' in window) {
+    requestIdleCallback(initPerfMonitoring, { timeout: 2000 });
+  } else {
+    setTimeout(initPerfMonitoring, 0);
+  }
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

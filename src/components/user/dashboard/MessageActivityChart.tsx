@@ -112,39 +112,47 @@ export function MessageActivityChart({
             Sem dados de mensagens no período
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-              <XAxis
-                dataKey="date"
-                tickFormatter={formatDate}
-                tick={{ fontSize: 10 }}
-                className="text-muted-foreground"
-              />
-              <YAxis tick={{ fontSize: 10 }} className="text-muted-foreground" width={30} />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend
-                formatter={(value) => (value === 'incoming' ? 'Recebidas' : 'Enviadas')}
-                wrapperStyle={{ fontSize: '11px' }}
-              />
-              <Line
-                type="monotone"
-                dataKey="incoming"
-                stroke="hsl(var(--chart-1))"
-                strokeWidth={2}
-                dot={{ r: 2 }}
-                activeDot={{ r: 4 }}
-              />
-              <Line
-                type="monotone"
-                dataKey="outgoing"
-                stroke="hsl(var(--chart-2))"
-                strokeWidth={2}
-                dot={{ r: 2 }}
-                activeDot={{ r: 4 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <div 
+            className="h-[200px]" 
+            style={{ 
+              contain: 'layout style paint',
+              willChange: 'transform'
+            }}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={formatDate}
+                  tick={{ fontSize: 10 }}
+                  className="text-muted-foreground"
+                />
+                <YAxis tick={{ fontSize: 10 }} className="text-muted-foreground" width={30} />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend
+                  formatter={(value) => (value === 'incoming' ? 'Recebidas' : 'Enviadas')}
+                  wrapperStyle={{ fontSize: '11px' }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="incoming"
+                  stroke="hsl(var(--chart-1))"
+                  strokeWidth={2}
+                  dot={{ r: 2 }}
+                  activeDot={{ r: 4 }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="outgoing"
+                  stroke="hsl(var(--chart-2))"
+                  strokeWidth={2}
+                  dot={{ r: 2 }}
+                  activeDot={{ r: 4 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         )}
       </CardContent>
     </Card>

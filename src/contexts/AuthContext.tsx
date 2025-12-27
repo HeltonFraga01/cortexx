@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { authService, getUserRole, getRedirectPath, requiresPasswordChange, type UserRole } from '@/services/auth-service';
+import { queryClient } from '@/lib/queryClient';
+import { getAccountSummary } from '@/services/user-subscription';
 import type { User as SupabaseUser, Session } from '@supabase/supabase-js';
 
 /**
@@ -82,6 +84,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  /**
+   * Prefetch critical data after successful authentication
+   * This improves LCP by having data ready when dashboard loads
+   */
+  const prefetchCriticalData = useCallback(() => {
+    // Prefetch account summary - used by multiple dashboard components
+    queryClient.prefetchQuery({
+      queryKey: ['user', 'account-summary'],
+      queryFn: getAccountSummary,
+      staleTime: 5 * 60 * 1000, // 5 minutes
+    }).catch(() => {
+      // Silently ignore prefetch errors - data will be fetched on demand
+    });
+  }, []);
 
   /**
    * Get current access token
@@ -182,6 +199,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       setSession(authSession);
       setUser(mapSupabaseUser(authUser, authSession.access_token));
+
+      // Prefetch critical data after successful login for better LCP
+      // This runs in the background and doesn't block the login flow
+      prefetchCriticalData();
 
       return { 
         success: true, 

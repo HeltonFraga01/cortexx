@@ -15,7 +15,8 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 import type { Agent, Permission, AvailabilityStatus } from '@/types/multi-user'
 import type { UserSubscription, UserFeature } from '@/types/admin-management'
 import * as agentAuth from '@/services/agent-auth'
-import { getAccountSummary, type QuotaStatus } from '@/services/user-subscription'
+import { useAccountSummary } from '@/hooks/useAccountSummary'
+import type { QuotaStatus } from '@/services/user-subscription'
 import { useAuth } from '@/contexts/AuthContext'
 
 interface AgentContextValue {
@@ -61,28 +62,30 @@ export function AgentProvider({ children }: AgentProviderProps) {
   // Get user authentication state from AuthContext
   const { user: authUser, isAuthenticated: isUserAuthenticated } = useAuth()
   
+  // Use centralized hook for account summary (request deduplication)
+  const { data: accountSummary, refetch: refetchAccountSummary } = useAccountSummary()
+  
   const [agent, setAgent] = useState<Agent | null>(null)
   const [account, setAccount] = useState<{ id: string; name: string; timezone: string; locale: string } | null>(null)
   const [permissions, setPermissions] = useState<Permission[]>([])
-  const [subscription, setSubscription] = useState<UserSubscription | null>(null)
-  const [quotas, setQuotas] = useState<QuotaStatus[]>([])
-  const [features, setFeatures] = useState<UserFeature[]>([])
   const [isLoading, setIsLoading] = useState(true)
+
+  // Derive subscription, quotas, features from hook data
+  const subscription = accountSummary?.subscription ?? null
+  const quotas = accountSummary?.quotas ?? []
+  const features = accountSummary?.features ?? []
 
   // Check if user is authenticated (either as agent or as user)
   const isAuthenticated = !!agent || isUserAuthenticated
 
-  // Load account data (subscription, quotas, features)
+  // Load account data (subscription, quotas, features) - now just refetches the hook
   const loadAccountData = useCallback(async () => {
     try {
-      const summary = await getAccountSummary()
-      setSubscription(summary.subscription)
-      setQuotas(summary.quotas)
-      setFeatures(summary.features)
+      await refetchAccountSummary()
     } catch (error) {
       console.error('Failed to load account data:', error)
     }
-  }, [])
+  }, [refetchAccountSummary])
 
   // Load current agent on mount (for agent authentication)
   useEffect(() => {

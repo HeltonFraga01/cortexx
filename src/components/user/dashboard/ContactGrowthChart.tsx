@@ -120,50 +120,58 @@ export function ContactGrowthChart({
             Sem dados de contatos no período
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={compact ? 140 : 200}>
-            <ComposedChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-              <XAxis
-                dataKey="date"
-                tickFormatter={formatDate}
-                tick={{ fontSize: 10 }}
-                className="text-muted-foreground"
-                interval="preserveStartEnd"
-              />
-              <YAxis
-                yAxisId="left"
-                tick={{ fontSize: 10 }}
-                className="text-muted-foreground"
-                width={30}
-              />
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                tick={{ fontSize: 10 }}
-                className="text-muted-foreground"
-                width={30}
-              />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend
-                formatter={(value) => (value === 'newContacts' ? 'Novos contatos' : 'Acumulado')}
-                wrapperStyle={{ fontSize: '11px' }}
-              />
-              <Bar
-                yAxisId="left"
-                dataKey="newContacts"
-                fill="hsl(var(--chart-1))"
-                radius={[4, 4, 0, 0]}
-              />
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="cumulative"
-                stroke="hsl(var(--chart-2))"
-                strokeWidth={2}
-                dot={false}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
+          <div 
+            className={compact ? 'h-[140px]' : 'h-[200px]'}
+            style={{ 
+              contain: 'layout style paint',
+              willChange: 'transform'
+            }}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={formatDate}
+                  tick={{ fontSize: 10 }}
+                  className="text-muted-foreground"
+                  interval="preserveStartEnd"
+                />
+                <YAxis
+                  yAxisId="left"
+                  tick={{ fontSize: 10 }}
+                  className="text-muted-foreground"
+                  width={30}
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tick={{ fontSize: 10 }}
+                  className="text-muted-foreground"
+                  width={30}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend
+                  formatter={(value) => (value === 'newContacts' ? 'Novos contatos' : 'Acumulado')}
+                  wrapperStyle={{ fontSize: '11px' }}
+                />
+                <Bar
+                  yAxisId="left"
+                  dataKey="newContacts"
+                  fill="hsl(var(--chart-1))"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="cumulative"
+                  stroke="hsl(var(--chart-2))"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
         )}
       </CardContent>
     </Card>
