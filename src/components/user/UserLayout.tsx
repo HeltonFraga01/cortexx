@@ -33,6 +33,9 @@ import {
   Shield,
   ClipboardList,
   Building2,
+  Target,
+  Layers,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -71,6 +74,7 @@ const UserLayout = ({ children }: UserLayoutProps) => {
   const [customLinks, setCustomLinks] = useState<CustomLink[]>([]);
   const [mensagensExpanded, setMensagensExpanded] = useState(false);
   const [equipeExpanded, setEquipeExpanded] = useState(false);
+  const [crmExpanded, setCrmExpanded] = useState(false);
   const { user, logout } = useAuth();
   const brandingConfig = useBrandingConfig();
   const location = useLocation();
@@ -99,6 +103,14 @@ const UserLayout = ({ children }: UserLayoutProps) => {
     }
   }, [location.pathname]);
 
+  // Auto-expand CRM menu when on a CRM route
+  useEffect(() => {
+    const crmRoutes = ['/user/crm', '/user/segments', '/user/custom-fields'];
+    if (crmRoutes.some(route => location.pathname.startsWith(route))) {
+      setCrmExpanded(true);
+    }
+  }, [location.pathname]);
+
   // Itens antes dos bancos dinâmicos
   const navigationBefore = [
     { name: 'Dashboard', href: '/user', icon: BarChart3 },
@@ -121,6 +133,13 @@ const UserLayout = ({ children }: UserLayoutProps) => {
     { name: 'Caixas de Entrada', href: '/user/inboxes', icon: Inbox },
     { name: 'Papéis', href: '/user/roles', icon: Shield },
     { name: 'Auditoria', href: '/user/audit', icon: ClipboardList },
+  ];
+
+  // Sub-itens do menu CRM
+  const crmSubItems = [
+    { name: 'Dashboard', href: '/user/crm', icon: BarChart3 },
+    { name: 'Segmentos', href: '/user/segments', icon: Layers },
+    { name: 'Campos Personalizados', href: '/user/custom-fields', icon: SlidersHorizontal },
   ];
 
   // Itens depois dos bancos dinâmicos e links customizados
@@ -295,6 +314,50 @@ const UserLayout = ({ children }: UserLayoutProps) => {
                 {equipeExpanded && (
                   <div className="ml-4 mt-1 space-y-1">
                     {equipeSubItems.map((item) => {
+                      const Icon = item.icon;
+                      const isActive = location.pathname === item.href;
+                      return (
+                        <Link
+                          key={item.name}
+                          to={item.href}
+                          onClick={() => setSidebarOpen(false)}
+                          className={cn(
+                            NAV_ITEM_BASE,
+                            isActive ? NAV_ITEM_ACTIVE : NAV_ITEM_INACTIVE
+                          )}
+                        >
+                          <Icon className="h-4 w-4 flex-shrink-0" />
+                          <span className="truncate text-sm">{item.name}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* CRM menu with sub-items */}
+              <div>
+                <button
+                  onClick={() => setCrmExpanded(!crmExpanded)}
+                  className={cn(
+                    NAV_ITEM_BASE,
+                    "w-full justify-between",
+                    ['/user/crm', '/user/segments', '/user/custom-fields'].some(r => location.pathname.startsWith(r)) ? NAV_ITEM_ACTIVE : NAV_ITEM_INACTIVE
+                  )}
+                >
+                  <div className="flex items-center space-x-3">
+                    <Target className="h-5 w-5 flex-shrink-0" />
+                    <span className="truncate">CRM</span>
+                  </div>
+                  {crmExpanded ? (
+                    <ChevronDown className="h-4 w-4 flex-shrink-0" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 flex-shrink-0" />
+                  )}
+                </button>
+                {crmExpanded && (
+                  <div className="ml-4 mt-1 space-y-1">
+                    {crmSubItems.map((item) => {
                       const Icon = item.icon;
                       const isActive = location.pathname === item.href;
                       return (
@@ -594,6 +657,70 @@ const UserLayout = ({ children }: UserLayoutProps) => {
                   {equipeExpanded && (
                     <div className="ml-4 mt-1 space-y-1">
                       {equipeSubItems.map((item) => {
+                        const Icon = item.icon;
+                        const isActive = location.pathname === item.href;
+                        return (
+                          <Link
+                            key={item.name}
+                            to={item.href}
+                            className={cn(
+                              NAV_ITEM_BASE,
+                              "space-x-3",
+                              isActive ? NAV_ITEM_ACTIVE : NAV_ITEM_INACTIVE
+                            )}
+                          >
+                            <Icon className="h-4 w-4 flex-shrink-0" />
+                            <span className="truncate text-sm">{item.name}</span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* CRM menu with sub-items (Desktop) */}
+              {sidebarCollapsed ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Link
+                      to="/user/crm"
+                      className={cn(
+                        NAV_ITEM_BASE,
+                        NAV_ITEM_COLLAPSED,
+                        ['/user/crm', '/user/segments', '/user/custom-fields'].some(r => location.pathname.startsWith(r)) ? NAV_ITEM_ACTIVE : NAV_ITEM_INACTIVE
+                      )}
+                    >
+                      <Target className="h-5 w-5" />
+                    </Link>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    CRM
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <div>
+                  <button
+                    onClick={() => setCrmExpanded(!crmExpanded)}
+                    className={cn(
+                      NAV_ITEM_BASE,
+                      "w-full justify-between space-x-3",
+                      ['/user/crm', '/user/segments', '/user/custom-fields'].some(r => location.pathname.startsWith(r)) ? NAV_ITEM_ACTIVE : NAV_ITEM_INACTIVE
+                    )}
+                  >
+                    <div className="flex items-center space-x-3">
+                      <Target className="h-5 w-5 flex-shrink-0" />
+                      <span className="truncate">CRM</span>
+                    </div>
+                    {crmExpanded ? (
+                      <ChevronDown className="h-4 w-4 flex-shrink-0" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 flex-shrink-0" />
+                    )}
+                  </button>
+                  {crmExpanded && (
+                    <div className="ml-4 mt-1 space-y-1">
+                      {crmSubItems.map((item) => {
                         const Icon = item.icon;
                         const isActive = location.pathname === item.href;
                         return (

@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Diagnóstico com MCP em PT-BR",
+  "description": "Ao enviar um prompt, garante que: 1) Não use \"| tail -XX\" em comandos, 2) Responda sempre em português do Brasil, 3) Use ferramentas/MCP disponíveis para mais poder e informação, 4) Para problemas: faça diagnóstico com causas prováveis e soluções, depois use ferramentas para confirmar resolução",
+  "version": "1",
+  "when": {
+    "type": "promptSubmit"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "echo \"🇧🇷 Modo PT-BR ativado | 🔧 MCP habilitado | 🚫 tail -XX desabilitado\""
+  }
+}

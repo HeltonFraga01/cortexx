@@ -57,6 +57,13 @@ const botProxyRoutes = require('./botProxyRoutes');
 const linkPreviewRoutes = require('./linkPreviewRoutes');
 const userDashboardRoutes = require('./userDashboardRoutes');
 
+// CRM Routes (Contact CRM Evolution)
+const userCRMRoutes = require('./userCRMRoutes');
+const userPurchaseRoutes = require('./userPurchaseRoutes');
+const userCreditRoutes = require('./userCreditRoutes');
+const userCustomFieldRoutes = require('./userCustomFieldRoutes');
+const userSegmentRoutes = require('./userSegmentRoutes');
+
 // Job Status Routes (queue monitoring)
 const jobStatusRoutes = require('./jobStatusRoutes');
 
@@ -226,6 +233,13 @@ function setupRoutes(app) {
   app.use('/api/bot', tenantRateLimiter, botProxyRoutes);
   app.use('/api/link-preview', tenantRateLimiter, linkPreviewRoutes);
   app.use('/api/user/dashboard', tenantRateLimiter, userDashboardRoutes);
+  
+  // CRM Routes (Contact CRM Evolution)
+  app.use('/api/user/crm', tenantRateLimiter, userCRMRoutes);
+  app.use('/api/user/purchases', tenantRateLimiter, userPurchaseRoutes);
+  app.use('/api/user/credits', tenantRateLimiter, userCreditRoutes);
+  app.use('/api/user/custom-fields', tenantRateLimiter, userCustomFieldRoutes);
+  app.use('/api/user/segments', tenantRateLimiter, userSegmentRoutes);
   
   // Chat API v1 (external API with API key auth)
   // Requirements: REQ-2.1, REQ-2.2 (chat-api-realtime-migration)

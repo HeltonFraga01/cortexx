@@ -12,6 +12,7 @@ const { logger } = require('../utils/logger');
 const StripeService = require('../services/StripeService');
 const SubscriptionService = require('../services/SubscriptionService');
 const SupabaseService = require('../services/SupabaseService');
+const ContactPurchaseService = require('../services/ContactPurchaseService');
 
 /**
  * Get webhook secret from global_settings
@@ -142,6 +143,11 @@ async function handleCheckoutCompleted(session) {
       accountId: targetAccountId, 
       subscriptionId: session.subscription 
     });
+  }
+
+  // CRM Integration: Create purchase for one-time payments
+  if (session.mode === 'payment') {
+    await createCRMPurchaseFromCheckout(session);
   }
 }
 
@@ -299,7 +305,7 @@ async function handlePaymentFailed(invoice) {
 }
 
 /**
- * Handle invoice.paid event (for credit purchases)
+ * Handle invoice.paid event (for credit purchases and CRM integration)
  */
 async function handleInvoicePaid(invoice) {
   logger.info('Processing invoice.paid', { 
@@ -322,6 +328,185 @@ async function handleInvoicePaid(invoice) {
     if (account) {
       await handleCreditPurchase(account.id, parseInt(metadata.creditAmount), invoice.id);
     }
+  }
+
+  // CRM Integration: Create purchase record for contact matching
+  await createCRMPurchaseFromInvoice(invoice);
+}
+
+/**
+ * Create CRM purchase record from Stripe invoice
+ * Matches contact by email/phone and creates purchase for LTV tracking
+ * Requirements: 9.5 (Contact CRM Evolution)
+ */
+async function createCRMPurchaseFromInvoice(invoice) {
+  try {
+    // Skip if no customer or amount
+    if (!invoice.customer || !invoice.amount_paid || invoice.amount_paid <= 0) {
+      return;
+    }
+
+    // Get customer details from Stripe
+    const customerEmail = invoice.customer_email;
+    const customerName = invoice.customer_name;
+    const customerPhone = invoice.customer_phone;
+
+    // Find account by Stripe customer ID
+    const { data: account } = await SupabaseService.adminClient
+      .from('accounts')
+      .select('id, tenant_id')
+      .eq('stripe_customer_id', invoice.customer)
+      .single();
+
+    if (!account) {
+      logger.debug('No account found for Stripe customer, skipping CRM purchase', {
+        customerId: invoice.customer
+      });
+      return;
+    }
+
+    // Check if purchase already exists (by external_id)
+    const existingQueryFn = (query) => query
+      .select('id')
+      .eq('external_id', invoice.id)
+      .eq('account_id', account.id)
+      .single();
+
+    const { data: existingPurchase } = await SupabaseService.adminClient
+      .from('contact_purchases')
+      .select('id')
+      .eq('external_id', invoice.id)
+      .eq('account_id', account.id)
+      .single();
+
+    if (existingPurchase) {
+      logger.debug('CRM purchase already exists for invoice', { invoiceId: invoice.id });
+      return;
+    }
+
+    // Build product description from line items
+    const productNames = (invoice.lines?.data || [])
+      .map(line => line.description || line.price?.product?.name)
+      .filter(Boolean)
+      .join(', ');
+
+    // Process webhook purchase (will find or create contact)
+    const result = await ContactPurchaseService.processWebhookPurchase(
+      account.id,
+      account.tenant_id,
+      {
+        phone: customerPhone,
+        email: customerEmail,
+        customerName: customerName,
+        externalId: invoice.id,
+        amountCents: invoice.amount_paid,
+        currency: (invoice.currency || 'brl').toUpperCase(),
+        productName: productNames || 'Stripe Payment',
+        description: `Invoice ${invoice.number || invoice.id}`,
+        metadata: {
+          stripeInvoiceId: invoice.id,
+          stripeCustomerId: invoice.customer,
+          invoiceNumber: invoice.number,
+          subscriptionId: invoice.subscription,
+          source: 'stripe_webhook'
+        }
+      }
+    );
+
+    if (result.duplicate) {
+      logger.debug('Duplicate CRM purchase from invoice', { invoiceId: invoice.id });
+    } else {
+      logger.info('CRM purchase created from Stripe invoice', {
+        invoiceId: invoice.id,
+        purchaseId: result.purchase?.id,
+        contactId: result.contact?.id,
+        contactCreated: result.contactCreated,
+        amountCents: invoice.amount_paid
+      });
+    }
+  } catch (error) {
+    // Log but don't fail the webhook - CRM integration is secondary
+    logger.warn('Failed to create CRM purchase from invoice', {
+      error: error.message,
+      invoiceId: invoice.id
+    });
+  }
+}
+
+/**
+ * Create CRM purchase from checkout session
+ * Called when checkout.session.completed for one-time payments
+ * Requirements: 9.5 (Contact CRM Evolution)
+ */
+async function createCRMPurchaseFromCheckout(session) {
+  try {
+    // Skip subscription checkouts (handled via invoice.paid)
+    if (session.mode === 'subscription') {
+      return;
+    }
+
+    // Skip if no amount
+    if (!session.amount_total || session.amount_total <= 0) {
+      return;
+    }
+
+    const metadata = session.metadata || {};
+    const { accountId } = metadata;
+
+    if (!accountId) {
+      logger.debug('No accountId in checkout metadata, skipping CRM purchase');
+      return;
+    }
+
+    // Get account tenant
+    const { data: account } = await SupabaseService.adminClient
+      .from('accounts')
+      .select('id, tenant_id')
+      .eq('id', accountId)
+      .single();
+
+    if (!account) {
+      return;
+    }
+
+    // Get customer details
+    const customerEmail = session.customer_details?.email;
+    const customerName = session.customer_details?.name;
+    const customerPhone = session.customer_details?.phone;
+
+    // Process webhook purchase
+    const result = await ContactPurchaseService.processWebhookPurchase(
+      account.id,
+      account.tenant_id,
+      {
+        phone: customerPhone,
+        email: customerEmail,
+        customerName: customerName,
+        externalId: session.id,
+        amountCents: session.amount_total,
+        currency: (session.currency || 'brl').toUpperCase(),
+        productName: metadata.productName || 'Checkout Payment',
+        description: `Checkout ${session.id}`,
+        metadata: {
+          stripeSessionId: session.id,
+          stripeCustomerId: session.customer,
+          source: 'stripe_checkout'
+        }
+      }
+    );
+
+    if (!result.duplicate) {
+      logger.info('CRM purchase created from checkout', {
+        sessionId: session.id,
+        purchaseId: result.purchase?.id,
+        contactId: result.contact?.id
+      });
+    }
+  } catch (error) {
+    logger.warn('Failed to create CRM purchase from checkout', {
+      error: error.message,
+      sessionId: session.id
+    });
   }
 }
 

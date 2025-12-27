@@ -9,6 +9,7 @@ const { logger } = require('../utils/logger');
 const { createCampaignWorker } = require('./campaignWorker');
 const { createImportWorker } = require('./importWorker');
 const { createReportWorker } = require('./reportWorker');
+const { createCRMWorker } = require('./crmWorker');
 
 /**
  * Active worker instances
@@ -17,6 +18,7 @@ const workers = {
   campaign: null,
   import: null,
   report: null,
+  crm: null,
 };
 
 /**
@@ -26,6 +28,7 @@ const workers = {
  * @param {boolean} options.campaign - Enable campaign worker
  * @param {boolean} options.import - Enable import worker
  * @param {boolean} options.report - Enable report worker
+ * @param {boolean} options.crm - Enable CRM worker
  * @param {number} options.campaignConcurrency - Campaign worker concurrency
  * @param {number} options.importConcurrency - Import worker concurrency
  * @param {number} options.reportConcurrency - Report worker concurrency
@@ -36,12 +39,13 @@ function initializeWorkers(options = {}) {
     campaign = true,
     import: enableImport = true,
     report = true,
+    crm = true,
     campaignConcurrency = 5,
     importConcurrency = 2,
     reportConcurrency = 3,
   } = options;
 
-  logger.info('Initializing workers', { campaign, import: enableImport, report });
+  logger.info('Initializing workers', { campaign, import: enableImport, report, crm });
 
   if (campaign && !workers.campaign) {
     workers.campaign = createCampaignWorker({ concurrency: campaignConcurrency });
@@ -53,6 +57,11 @@ function initializeWorkers(options = {}) {
 
   if (report && !workers.report) {
     workers.report = createReportWorker({ concurrency: reportConcurrency });
+  }
+
+  if (crm && !workers.crm) {
+    workers.crm = createCRMWorker();
+    workers.crm.start();
   }
 
   const activeWorkers = Object.entries(workers)

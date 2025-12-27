@@ -17,8 +17,12 @@ if (!process.env.SUPABASE_URL) {
 }
 
 if (!process.env.SESSION_SECRET) {
-  console.warn('⚠️ SESSION_SECRET não encontrada! Usando fallback inseguro para desenvolvimento (NÃO USE EM PRODUÇÃO).');
-  process.env.SESSION_SECRET = 'dev_fallback_secret_key_12345';
+  // CRITICAL: Fail fast if SESSION_SECRET is not configured
+  // This prevents the server from starting with an insecure fallback
+  console.error('❌ ERRO CRÍTICO: SESSION_SECRET não configurada!');
+  console.error('Configure SESSION_SECRET no arquivo .env antes de iniciar o servidor.');
+  console.error('Gere uma chave segura com: node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'hex\'))"');
+  process.exit(1);
 }
 
 // Task 6.7: Initialize OpenTelemetry tracing BEFORE other imports
@@ -116,6 +120,13 @@ const sessionInboxWebhookRoutes = require('./routes/sessionInboxWebhookRoutes');
 const resellerRoutes = require('./routes/resellerRoutes');
 const databaseRoutes = require('./routes/databaseRoutes');
 const userDashboardRoutes = require('./routes/userDashboardRoutes');
+
+// CRM Routes (Contact CRM Evolution)
+const userCRMRoutes = require('./routes/userCRMRoutes');
+const userPurchaseRoutes = require('./routes/userPurchaseRoutes');
+const userCreditRoutes = require('./routes/userCreditRoutes');
+const userCustomFieldRoutes = require('./routes/userCustomFieldRoutes');
+const userSegmentRoutes = require('./routes/userSegmentRoutes');
 
 // Superadmin Routes
 const superadminAuthRoutes = require('./routes/superadminAuthRoutes');
@@ -774,6 +785,14 @@ if (process.env.NODE_ENV !== 'production') {
 // MUST come BEFORE generic userRoutes to avoid route conflicts
 app.use('/api/user/dashboard', userDashboardRoutes);
 
+// CRM Routes (Contact CRM Evolution)
+// MUST come BEFORE generic userRoutes to avoid route conflicts
+app.use('/api/user/crm', userCRMRoutes);
+app.use('/api/user/purchases', userPurchaseRoutes);
+app.use('/api/user/credits', userCreditRoutes);
+app.use('/api/user/custom-fields', userCustomFieldRoutes);
+app.use('/api/user/segments', userSegmentRoutes);
+
 app.use('/api/user', userRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/chat/inbox', chatInboxRoutes);
@@ -1374,7 +1393,7 @@ startServer().then(server => {
 
   // Configurar graceful shutdown
   let isShuttingDown = false;
-  const gracefulShutdown = (signal) => {
+  const gracefulShutdown = async (signal) => {
     // Prevenir múltiplas chamadas de shutdown
     if (isShuttingDown) {
       logger.warn('Shutdown já em andamento, ignorando sinal duplicado', { signal });
@@ -1401,48 +1420,72 @@ startServer().then(server => {
       process.exit(exitCode);
     };
 
-    server.close(() => {
+    server.close(async () => {
       logger.info('Servidor HTTP encerrado');
 
-      // Parar StateSynchronizer
-      if (app.locals.stateSynchronizer) {
-        app.locals.stateSynchronizer.stopSync();
-        logger.info('StateSynchronizer encerrado');
+      try {
+        // Fechar WebSocket connections
+        if (app.locals.io) {
+          app.locals.io.close();
+          logger.info('WebSocket server encerrado');
+        }
+
+        // Parar StateSynchronizer
+        if (app.locals.stateSynchronizer) {
+          app.locals.stateSynchronizer.stopSync();
+          logger.info('StateSynchronizer encerrado');
+        }
+
+        // Parar CampaignScheduler
+        if (app.locals.campaignScheduler) {
+          app.locals.campaignScheduler.stop();
+          logger.info('CampaignScheduler encerrado');
+        }
+
+        // Parar SingleMessageScheduler
+        if (app.locals.singleMessageScheduler) {
+          app.locals.singleMessageScheduler.stop();
+          logger.info('SingleMessageScheduler encerrado');
+        }
+
+        // Parar LogRotationService
+        if (app.locals.logRotationService) {
+          app.locals.logRotationService.stop();
+          logger.info('LogRotationService encerrado');
+        }
+
+        // Parar sistema de alertas
+        alertManager.stop();
+        logger.info('Sistema de alertas encerrado');
+
+        // Destruir CacheService (inclui desconexão do Redis)
+        try {
+          await CacheService.destroy();
+          logger.info('CacheService destruído');
+        } catch (cacheError) {
+          logger.warn('Erro ao destruir CacheService', { error: cacheError.message });
+        }
+
+        // Fechar streams de log
+        logger.close();
+
+        // Supabase connections are managed by the client library
+        logShutdownComplete(0);
+      } catch (error) {
+        logger.error('Erro durante shutdown', { error: error.message });
+        logShutdownComplete(1);
       }
-
-      // Parar CampaignScheduler
-      if (app.locals.campaignScheduler) {
-        app.locals.campaignScheduler.stop();
-        logger.info('CampaignScheduler encerrado');
-      }
-
-      // Parar sistema de alertas
-      alertManager.stop();
-      logger.info('Sistema de alertas encerrado');
-
-      // Desconectar Redis
-      redisClient.disconnect().then(() => {
-        logger.info('Redis desconectado');
-      }).catch((err) => {
-        logger.warn('Erro ao desconectar Redis', { error: err.message });
-      });
-
-      // Fechar streams de log
-      logger.close();
-
-      // Supabase connections are managed by the client library
-      logShutdownComplete(0);
     });
 
-    // Forçar encerramento após 10 segundos
+    // Forçar encerramento após 30 segundos (aumentado para permitir cleanup completo)
     setTimeout(() => {
       const shutdownDuration = Date.now() - shutdownStartTime;
-      logger.error('Forçando encerramento após timeout', { 
+      logger.error('⚠️ Forçando encerramento após timeout de 30s', { 
         signal,
         shutdownDurationMs: shutdownDuration 
       });
       process.exit(1);
-    }, 10000);
+    }, 30000);
   };
 
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));

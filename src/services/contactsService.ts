@@ -5,8 +5,7 @@
  * Implementa filtros, busca, operações com tags e grupos, exportação e estatísticas.
  */
 
-import { Contact } from './bulkCampaignService';
-import { Tag, ContactGroup } from './contactsApiService';
+import { Contact, Tag, ContactGroup } from './contactsApiService';
 import { 
   validatePhoneFormat, 
   normalizePhoneNumber, 

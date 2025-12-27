@@ -9,7 +9,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback, memo, useContext } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { List, ListImperativeAPI } from 'react-window';
-import { Edit2, Trash2, Tag as TagIcon, ChevronLeft, ChevronRight, X, Check, MessageCircle } from 'lucide-react';
+import { Edit2, Trash2, Tag as TagIcon, ChevronLeft, ChevronRight, X, Check, MessageCircle, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { useChatApi } from '@/hooks/useChatApi';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -17,7 +17,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Contact } from '@/services/bulkCampaignService';
+import { Contact } from '@/services/contactsApiService';
 import { Tag } from '@/services/contactsStorageService';
 import { contactsService } from '@/services/contactsService';
 import { ContactTagsInline } from './ContactTagsInline';
@@ -305,9 +305,19 @@ export function ContactsTable({
         </div>
 
         {/* Ações inline */}
-        <div className="w-24 sm:w-32 px-1 sm:px-4 flex items-center justify-end gap-0.5 flex-shrink-0" role="cell">
+        <div className="w-28 sm:w-36 px-1 sm:px-4 flex items-center justify-end gap-0.5 flex-shrink-0" role="cell">
           {!isEditing && (
             <>
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={() => navigate(`/user/contacts/${contact.id}`)}
+                className="text-muted-foreground hover:text-foreground transition-all duration-200 hover:scale-110 h-7 w-7 p-0"
+                aria-label={`Ver detalhes de ${contact.name || contact.phone}`}
+                title="Ver detalhes CRM"
+              >
+                <Eye className="h-3 w-3 sm:h-4 sm:w-4" aria-hidden="true" />
+              </Button>
               <Button 
                 variant="ghost" 
                 size="sm"
@@ -389,7 +399,7 @@ export function ContactsTable({
               <div className="flex-1 px-1 sm:px-4 py-2 sm:py-3 min-w-[100px]" role="columnheader">
                 <span className="truncate block">Tags</span>
               </div>
-              <div className="w-24 sm:w-32 px-1 sm:px-4 py-2 sm:py-3 text-right flex-shrink-0" role="columnheader">Ações</div>
+              <div className="w-28 sm:w-36 px-1 sm:px-4 py-2 sm:py-3 text-right flex-shrink-0" role="columnheader">Ações</div>
             </div>
 
             {/* Lista virtualizada */}

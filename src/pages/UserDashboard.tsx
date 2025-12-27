@@ -30,6 +30,11 @@ const RoleManagementPage = lazy(() => import('@/pages/user/RoleManagementPage'))
 const AuditLogPage = lazy(() => import('@/pages/user/AuditLogPage'));
 const ResellerDashboardPage = lazy(() => import('@/pages/user/ResellerDashboardPage'));
 const UserInboxEditPage = lazy(() => import('@/components/user/UserInboxEditPage'));
+// CRM Pages
+const CRMDashboardPage = lazy(() => import('@/components/features/crm/CRMDashboardPage').then(m => ({ default: m.CRMDashboardPage })));
+const ContactDetailPage = lazy(() => import('@/components/features/crm/ContactDetailPage').then(m => ({ default: m.ContactDetailPage })));
+const SegmentsPage = lazy(() => import('@/components/features/crm/SegmentsPage').then(m => ({ default: m.SegmentsPage })));
+const CustomFieldsManagementPage = lazy(() => import('@/components/features/crm/CustomFieldsManagementPage').then(m => ({ default: m.CustomFieldsManagementPage })));
 
 // Simple loading component for inner routes
 const InnerLoading = () => (
@@ -62,6 +67,12 @@ const UserDashboard = () => {
             <Route path="/chat" element={<ChatInboxPage />} />
             
             <Route path="/contacts" element={<UserContacts />} />
+            
+            {/* CRM Routes */}
+            <Route path="/crm" element={<CRMDashboardPage />} />
+            <Route path="/contacts/:contactId" element={<ContactDetailPage />} />
+            <Route path="/segments" element={<SegmentsPage />} />
+            <Route path="/custom-fields" element={<CustomFieldsManagementPage />} />
             
             {/* Database routes */}
             <Route path="/database" element={<UserDatabaseModern />} />

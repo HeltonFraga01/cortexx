@@ -335,6 +335,28 @@ class CacheService {
       stats: CacheService.getStats(),
     };
   }
+
+  /**
+   * Destroy the cache service and cleanup resources
+   * Called during graceful shutdown
+   * @returns {Promise<void>}
+   */
+  static async destroy() {
+    logger.info('Destroying CacheService...');
+    
+    try {
+      // Reset statistics
+      CacheService.resetStats();
+      
+      // Disconnect Redis client
+      await redisClient.disconnect();
+      
+      logger.info('CacheService destroyed successfully');
+    } catch (error) {
+      logger.error('Error destroying CacheService', { error: error.message });
+      throw error;
+    }
+  }
 }
 
 module.exports = CacheService;
