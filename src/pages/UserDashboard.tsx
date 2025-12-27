@@ -35,6 +35,7 @@ const CRMDashboardPage = lazy(() => import('@/components/features/crm/CRMDashboa
 const ContactDetailPage = lazy(() => import('@/components/features/crm/ContactDetailPage').then(m => ({ default: m.ContactDetailPage })));
 const SegmentsPage = lazy(() => import('@/components/features/crm/SegmentsPage').then(m => ({ default: m.SegmentsPage })));
 const CustomFieldsManagementPage = lazy(() => import('@/components/features/crm/CustomFieldsManagementPage').then(m => ({ default: m.CustomFieldsManagementPage })));
+const GlobalCalendarPage = lazy(() => import('@/components/features/crm/calendar/GlobalCalendarPage').then(m => ({ default: m.GlobalCalendarPage })));
 
 // Simple loading component for inner routes
 const InnerLoading = () => (
@@ -73,6 +74,7 @@ const UserDashboard = () => {
             <Route path="/contacts/:contactId" element={<ContactDetailPage />} />
             <Route path="/segments" element={<SegmentsPage />} />
             <Route path="/custom-fields" element={<CustomFieldsManagementPage />} />
+            <Route path="/agenda" element={<GlobalCalendarPage />} />
             
             {/* Database routes */}
             <Route path="/database" element={<UserDatabaseModern />} />

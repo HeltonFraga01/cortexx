@@ -1,0 +1,265 @@
+/**
+ * Contact Calendar Styles
+ * 
+ * Custom styles for react-big-calendar compatible with shadcn theme.
+ * 
+ * Requirements: 11.1 (CRM Contact Calendar)
+ */
+
+/* Base calendar container */
+.contact-calendar-container {
+  height: 600px;
+}
+
+.contact-calendar-container .rbc-calendar {
+  font-family: inherit;
+}
+
+/* Header styling */
+.contact-calendar-container .rbc-header {
+  padding: 8px 4px;
+  font-weight: 500;
+  font-size: 0.875rem;
+  color: hsl(var(--muted-foreground));
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+/* Month view cells */
+.contact-calendar-container .rbc-month-view {
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.contact-calendar-container .rbc-month-row {
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.contact-calendar-container .rbc-day-bg {
+  border-left: 1px solid hsl(var(--border));
+}
+
+.contact-calendar-container .rbc-day-bg:first-child {
+  border-left: none;
+}
+
+/* Today highlight */
+.contact-calendar-container .rbc-today {
+  background-color: hsl(var(--accent) / 0.3);
+}
+
+/* Off-range days */
+.contact-calendar-container .rbc-off-range-bg {
+  background-color: hsl(var(--muted) / 0.3);
+}
+
+.contact-calendar-container .rbc-off-range {
+  color: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Date cell */
+.contact-calendar-container .rbc-date-cell {
+  padding: 4px 8px;
+  text-align: right;
+  font-size: 0.875rem;
+}
+
+.contact-calendar-container .rbc-date-cell.rbc-now {
+  font-weight: 600;
+  color: hsl(var(--primary));
+}
+
+/* Events */
+.contact-calendar-container .rbc-event {
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.75rem;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.contact-calendar-container .rbc-event:hover {
+  opacity: 0.85;
+}
+
+.contact-calendar-container .rbc-event:focus {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.contact-calendar-container .rbc-event-content {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Event status colors */
+.contact-calendar-container .rbc-event.event-scheduled {
+  background-color: hsl(217 91% 60%);
+  color: white;
+}
+
+.contact-calendar-container .rbc-event.event-confirmed {
+  background-color: hsl(142 76% 36%);
+  color: white;
+}
+
+.contact-calendar-container .rbc-event.event-completed {
+  background-color: hsl(220 9% 46%);
+  color: white;
+}
+
+.contact-calendar-container .rbc-event.event-cancelled {
+  background-color: hsl(0 84% 60%);
+  color: white;
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.contact-calendar-container .rbc-event.event-no_show {
+  background-color: hsl(25 95% 53%);
+  color: white;
+}
+
+.contact-calendar-container .rbc-event.event-blocked {
+  background-color: hsl(220 9% 46%);
+  color: white;
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 4px,
+    rgba(255, 255, 255, 0.1) 4px,
+    rgba(255, 255, 255, 0.1) 8px
+  );
+}
+
+/* Show more link */
+.contact-calendar-container .rbc-show-more {
+  color: hsl(var(--primary));
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.contact-calendar-container .rbc-show-more:hover {
+  text-decoration: underline;
+}
+
+/* Week/Day view */
+.contact-calendar-container .rbc-time-view {
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.contact-calendar-container .rbc-time-header {
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.contact-calendar-container .rbc-time-content {
+  border-top: none;
+}
+
+.contact-calendar-container .rbc-time-gutter {
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.contact-calendar-container .rbc-timeslot-group {
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
+  min-height: 40px;
+}
+
+.contact-calendar-container .rbc-time-slot {
+  border-top: 1px solid hsl(var(--border) / 0.3);
+}
+
+.contact-calendar-container .rbc-day-slot .rbc-time-slot {
+  border-top: 1px solid hsl(var(--border) / 0.2);
+}
+
+.contact-calendar-container .rbc-current-time-indicator {
+  background-color: hsl(0 84% 60%);
+  height: 2px;
+}
+
+.contact-calendar-container .rbc-current-time-indicator::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: hsl(0 84% 60%);
+}
+
+/* Agenda view */
+.contact-calendar-container .rbc-agenda-view {
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.contact-calendar-container .rbc-agenda-table {
+  border: none;
+}
+
+.contact-calendar-container .rbc-agenda-date-cell,
+.contact-calendar-container .rbc-agenda-time-cell {
+  padding: 8px 12px;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.contact-calendar-container .rbc-agenda-event-cell {
+  padding: 8px 12px;
+}
+
+/* Popup overlay */
+.contact-calendar-container .rbc-overlay {
+  background-color: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  padding: 8px;
+  z-index: 50;
+}
+
+.contact-calendar-container .rbc-overlay-header {
+  font-weight: 600;
+  font-size: 0.875rem;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+/* Selected slot */
+.contact-calendar-container .rbc-slot-selection {
+  background-color: hsl(var(--primary) / 0.2);
+  border: 1px dashed hsl(var(--primary));
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .contact-calendar-container {
+    height: 450px;
+  }
+
+  .contact-calendar-container .rbc-header {
+    padding: 4px 2px;
+    font-size: 0.75rem;
+  }
+
+  .contact-calendar-container .rbc-date-cell {
+    padding: 2px 4px;
+    font-size: 0.75rem;
+  }
+
+  .contact-calendar-container .rbc-event {
+    font-size: 0.625rem;
+    padding: 1px 4px;
+  }
+}

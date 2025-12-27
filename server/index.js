@@ -128,6 +128,9 @@ const userCreditRoutes = require('./routes/userCreditRoutes');
 const userCustomFieldRoutes = require('./routes/userCustomFieldRoutes');
 const userSegmentRoutes = require('./routes/userSegmentRoutes');
 
+// CRM Calendar Routes (Contact Calendar)
+const userAppointmentRoutes = require('./routes/userAppointmentRoutes');
+
 // Superadmin Routes
 const superadminAuthRoutes = require('./routes/superadminAuthRoutes');
 const superadminTenantRoutes = require('./routes/superadminTenantRoutes');
@@ -792,6 +795,10 @@ app.use('/api/user/purchases', userPurchaseRoutes);
 app.use('/api/user/credits', userCreditRoutes);
 app.use('/api/user/custom-fields', userCustomFieldRoutes);
 app.use('/api/user/segments', userSegmentRoutes);
+
+// CRM Calendar Routes (Contact Calendar)
+// MUST come BEFORE generic userRoutes to avoid route conflicts
+app.use('/api/user/appointments', userAppointmentRoutes);
 
 app.use('/api/user', userRoutes);
 app.use('/api/chat', chatRoutes);

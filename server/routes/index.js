@@ -64,6 +64,9 @@ const userCreditRoutes = require('./userCreditRoutes');
 const userCustomFieldRoutes = require('./userCustomFieldRoutes');
 const userSegmentRoutes = require('./userSegmentRoutes');
 
+// CRM Calendar Routes (Contact Calendar)
+const userAppointmentRoutes = require('./userAppointmentRoutes');
+
 // Job Status Routes (queue monitoring)
 const jobStatusRoutes = require('./jobStatusRoutes');
 
@@ -240,6 +243,9 @@ function setupRoutes(app) {
   app.use('/api/user/credits', tenantRateLimiter, userCreditRoutes);
   app.use('/api/user/custom-fields', tenantRateLimiter, userCustomFieldRoutes);
   app.use('/api/user/segments', tenantRateLimiter, userSegmentRoutes);
+  
+  // CRM Calendar Routes (Contact Calendar)
+  app.use('/api/user/appointments', tenantRateLimiter, userAppointmentRoutes);
   
   // Chat API v1 (external API with API key auth)
   // Requirements: REQ-2.1, REQ-2.2 (chat-api-realtime-migration)

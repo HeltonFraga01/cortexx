@@ -27,7 +27,8 @@ import {
   MoreHorizontal,
   Clock,
   Activity,
-  RefreshCw
+  RefreshCw,
+  Calendar
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -58,6 +59,7 @@ import { EditContactForm } from './EditContactForm'
 import { CRMContactAttributesSection } from './CRMContactAttributesSection'
 import { CRMContactNotesSection } from './CRMContactNotesSection'
 import { CRMPreviousConversationsSection } from './CRMPreviousConversationsSection'
+import { ContactCalendar } from './calendar/ContactCalendar'
 
 import * as contactCRMService from '@/services/contactCRMService'
 import * as contactsApi from '@/services/contactsApiService'
@@ -491,6 +493,10 @@ export function ContactDetailPage() {
         <TabsList>
           <TabsTrigger value="overview">Visão Geral</TabsTrigger>
           <TabsTrigger value="timeline">Timeline</TabsTrigger>
+          <TabsTrigger value="agenda">
+            <Calendar className="h-4 w-4 mr-1" />
+            Agenda
+          </TabsTrigger>
           <TabsTrigger value="purchases">Compras</TabsTrigger>
           <TabsTrigger value="credits">Créditos</TabsTrigger>
           <TabsTrigger value="settings">Configurações</TabsTrigger>
@@ -579,6 +585,15 @@ export function ContactDetailPage() {
             onFilterChange={handleTimelineFilterChange}
             onLoadMore={handleTimelineLoadMore}
             hasMore={(timelineData?.data.length || 0) < (timelineData?.total || 0)}
+          />
+        </TabsContent>
+
+        {/* Agenda Tab */}
+        <TabsContent value="agenda">
+          <ContactCalendar
+            contactId={contactId!}
+            contactPhone={contact.phone}
+            contactName={contact.name}
           />
         </TabsContent>
 

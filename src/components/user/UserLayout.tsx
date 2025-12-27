@@ -36,6 +36,7 @@ import {
   Target,
   Layers,
   SlidersHorizontal,
+  Calendar,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -105,7 +106,7 @@ const UserLayout = ({ children }: UserLayoutProps) => {
 
   // Auto-expand CRM menu when on a CRM route
   useEffect(() => {
-    const crmRoutes = ['/user/crm', '/user/segments', '/user/custom-fields'];
+    const crmRoutes = ['/user/crm', '/user/segments', '/user/custom-fields', '/user/agenda'];
     if (crmRoutes.some(route => location.pathname.startsWith(route))) {
       setCrmExpanded(true);
     }
@@ -138,6 +139,7 @@ const UserLayout = ({ children }: UserLayoutProps) => {
   // Sub-itens do menu CRM
   const crmSubItems = [
     { name: 'Dashboard', href: '/user/crm', icon: BarChart3 },
+    { name: 'Agenda', href: '/user/agenda', icon: Calendar },
     { name: 'Segmentos', href: '/user/segments', icon: Layers },
     { name: 'Campos Personalizados', href: '/user/custom-fields', icon: SlidersHorizontal },
   ];
