@@ -14,6 +14,11 @@ export { CommunicationPreferences } from './CommunicationPreferences'
 export { ContactDetailPage } from './ContactDetailPage'
 export { EditContactForm } from './EditContactForm'
 
+// CRM-Chat Integration Components
+export { CRMContactAttributesSection } from './CRMContactAttributesSection'
+export { CRMContactNotesSection } from './CRMContactNotesSection'
+export { CRMPreviousConversationsSection } from './CRMPreviousConversationsSection'
+
 // Segments Components
 export { SegmentBuilder } from './SegmentBuilder'
 export { SegmentMembersList } from './SegmentMembersList'

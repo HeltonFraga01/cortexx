@@ -36,6 +36,7 @@ import {
   deleteContactNote,
   getConversationInfo,
   fetchConversationAvatar,
+  getContactAvatar,
   getMacros,
   executeMacro,
   getPreviousConversations,
@@ -118,6 +119,8 @@ import type {
   AgentBot
 } from '@/types/chat'
 
+import type { AvatarResponse } from '@/services/chat'
+
 export interface ChatApi {
   // Conversations
   getConversations: (filters?: ConversationFilters, pagination?: { limit?: number; offset?: number }) => Promise<ConversationsResponse>
@@ -181,6 +184,7 @@ export interface ChatApi {
   
   // Avatar
   fetchConversationAvatar: (conversationId: number) => Promise<{ avatarUrl?: string | null; conversationId?: number } | null>
+  getContactAvatar: (phone: string, preview?: boolean) => Promise<AvatarResponse | null>
   
   // Assignment (agent mode only)
   pickupConversation?: (conversationId: number) => Promise<PickupResponse>
@@ -263,6 +267,7 @@ export function useChatApi(): ChatApi {
         
         // Avatar
         fetchConversationAvatar: fetchAgentConversationAvatar,
+        getContactAvatar: getContactAvatar, // Same for both modes - uses user token
         
         // Assignment (agent mode only)
         pickupConversation: pickupAgentConversation,
@@ -338,6 +343,7 @@ export function useChatApi(): ChatApi {
       
       // Avatar
       fetchConversationAvatar,
+      getContactAvatar,
       
       isAgentMode: false
     }

@@ -3,11 +3,13 @@
  * 
  * Main CRM detail page for a contact with all sections:
  * Header, Metrics, Timeline, Purchases, Credits, Custom Fields, Preferences.
+ * Includes Chat integration: avatar fetch, attributes, notes, previous conversations.
  * 
  * Requirements: 8.1, 8.2, 8.3 (Contact CRM Evolution)
+ * Requirements: CRM-Chat Integration Spec
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -17,6 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
 import {
   ArrowLeft,
   Phone,
@@ -52,6 +55,9 @@ import { CreditBalance } from './CreditBalance'
 import { CustomFieldsEditor } from './CustomFieldsEditor'
 import { CommunicationPreferences } from './CommunicationPreferences'
 import { EditContactForm } from './EditContactForm'
+import { CRMContactAttributesSection } from './CRMContactAttributesSection'
+import { CRMContactNotesSection } from './CRMContactNotesSection'
+import { CRMPreviousConversationsSection } from './CRMPreviousConversationsSection'
 
 import * as contactCRMService from '@/services/contactCRMService'
 import * as contactsApi from '@/services/contactsApiService'
@@ -76,6 +82,8 @@ export function ContactDetailPage() {
   const [isEditing, setIsEditing] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [isStartingChat, setIsStartingChat] = useState(false)
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
+  const [isLoadingAvatar, setIsLoadingAvatar] = useState(false)
 
   // Fetch contact CRM data
   const { data: contact, isLoading: contactLoading, error: contactError } = useQuery({
@@ -126,6 +134,53 @@ export function ContactDetailPage() {
     queryKey: ['custom-field-definitions'],
     queryFn: () => customFieldService.getFieldDefinitions()
   })
+
+  // Derive contactJid from phone for chat integration
+  const contactJid = useMemo(() => {
+    if (!contact?.phone) return null
+    const cleanPhone = contact.phone.replace(/\D/g, '')
+    return `${cleanPhone}@s.whatsapp.net`
+  }, [contact?.phone])
+
+  // Update avatar when contact changes
+  useEffect(() => {
+    if (contact?.avatarUrl) {
+      setAvatarUrl(contact.avatarUrl)
+    }
+  }, [contact?.avatarUrl])
+
+  // Fetch WhatsApp avatar directly using phone number
+  const handleFetchAvatar = useCallback(async () => {
+    if (!contact?.phone || isLoadingAvatar) return
+    
+    setIsLoadingAvatar(true)
+    try {
+      // Clean phone number
+      const cleanPhone = contact.phone.replace(/\D/g, '')
+      
+      // Fetch avatar directly from WUZAPI using phone number
+      const result = await chatApi.getContactAvatar(cleanPhone)
+      
+      // Check if we got a valid URL
+      if (result && result.url) {
+        setAvatarUrl(result.url)
+        // Invalidate to update contact record
+        queryClient.invalidateQueries({ queryKey: ['contact-crm', contactId] })
+        toast.success('Foto atualizada')
+      } else {
+        // No avatar available - show info toast
+        toast.info('Foto não disponível', {
+          description: 'Este contato não possui foto de perfil no WhatsApp ou o WhatsApp está desconectado'
+        })
+      }
+    } catch (error) {
+      toast.error('Erro ao buscar foto', {
+        description: error instanceof Error ? error.message : 'Tente novamente'
+      })
+    } finally {
+      setIsLoadingAvatar(false)
+    }
+  }, [contact?.phone, isLoadingAvatar, chatApi, queryClient, contactId])
 
   // Mutations
   const updateScoreMutation = useMutation({
@@ -281,6 +336,11 @@ export function ContactDetailPage() {
     setCreditPage((p) => p + 1)
   }, [])
 
+  // Handler to navigate to a specific conversation
+  const handleNavigateToConversation = useCallback((conversationId: number) => {
+    navigate(`/user/chat?conversation=${conversationId}`)
+  }, [navigate])
+
   // Error state
   if (contactError) {
     return (
@@ -357,10 +417,22 @@ export function ContactDetailPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-start gap-4">
-              <Avatar className="h-16 w-16">
-                <AvatarImage src={contact.avatarUrl || undefined} />
-                <AvatarFallback className="text-lg">{initials}</AvatarFallback>
-              </Avatar>
+              <div className="relative">
+                <Avatar className="h-16 w-16 ring-2 ring-muted">
+                  <AvatarImage src={avatarUrl || contact.avatarUrl || undefined} />
+                  <AvatarFallback className="text-lg">{initials}</AvatarFallback>
+                </Avatar>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute -bottom-1 -right-1 h-7 w-7 rounded-full bg-background border shadow-sm"
+                  onClick={handleFetchAvatar}
+                  disabled={isLoadingAvatar}
+                  title="Buscar foto do WhatsApp"
+                >
+                  <RefreshCw className={cn("h-3 w-3", isLoadingAvatar && "animate-spin")} />
+                </Button>
+              </div>
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1">
                   <h1 className="text-xl font-semibold">
@@ -470,6 +542,22 @@ export function ContactDetailPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Chat Integration Sections */}
+          {contactJid && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <CRMContactAttributesSection contactJid={contactJid} />
+              <CRMContactNotesSection contactJid={contactJid} />
+            </div>
+          )}
+
+          {/* Previous Conversations */}
+          {contactJid && (
+            <CRMPreviousConversationsSection 
+              contactJid={contactJid} 
+              onNavigate={handleNavigateToConversation}
+            />
+          )}
 
           {/* Recent Timeline */}
           <ContactTimeline

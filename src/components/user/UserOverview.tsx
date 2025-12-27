@@ -88,6 +88,8 @@ const UserOverview = () => {
   // Novos estados para ações rápidas e cópia
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const [loadingAction, setLoadingAction] = useState<'qr' | 'refresh' | null>(null)
+  // Estado local para QR Code gerado (igual à página de edição)
+  const [qrCodeData, setQrCodeData] = useState<string | null>(null)
   
   const { user } = useAuth()
   const inboxContext = useSupabaseInboxOptional()
@@ -394,24 +396,74 @@ const UserOverview = () => {
       return
     }
     
+    // Verificar se já está logado
+    const currentStatus = sessionStatus || connectionData
+    if (currentStatus?.loggedIn) {
+      toast.info('Já conectado', {
+        description: 'A sessão WhatsApp já está conectada e autenticada'
+      })
+      return
+    }
+    
     setLoadingAction('qr')
     const loadingToast = toast.loading('Gerando QR Code...')
     try {
-      // Primeiro conectar a sessão
+      // Primeiro tentar conectar a sessão (ignora erro se já conectado)
       try {
-        await wuzapi.connectSession(token)
+        await wuzapi.connectSession(token, {
+          Subscribe: ['Message', 'ReadReceipt'],
+          Immediate: false
+        })
       } catch (e) {
-        console.log('Sessão existente ou erro:', e)
+        // Ignorar erro "already connected" - é esperado
+        const errorMsg = e instanceof Error ? e.message.toLowerCase() : ''
+        if (!errorMsg.includes('already connected')) {
+          console.log('Erro ao conectar sessão:', e)
+        }
       }
       
       await new Promise(r => setTimeout(r, 1000))
       
-      // Buscar QR Code via refetch
-      await refetchStatus()
-      toast.success('QR Code gerado!', { id: loadingToast })
+      // Buscar QR Code diretamente via WUZAPI
+      const qr = await wuzapi.getQRCode(token)
+      if (qr?.QRCode) {
+        // Armazenar QR code no estado local para exibição
+        setQrCodeData(qr.QRCode)
+        await refetchStatus()
+        toast.success('QR Code gerado!', { id: loadingToast })
+      } else {
+        // Se não tem QR, pode ser que já esteja logado
+        await refetchStatus()
+        const updatedStatus = sessionStatus || connectionData
+        if (updatedStatus?.loggedIn) {
+          toast.info('Já conectado', { 
+            id: loadingToast,
+            description: 'A sessão WhatsApp já está autenticada'
+          })
+        } else {
+          toast.error('QR Code não disponível', { 
+            id: loadingToast,
+            description: 'Tente novamente em alguns segundos'
+          })
+        }
+      }
     } catch (error) {
       console.error('Error generating QR:', error)
-      toast.error('Erro ao gerar QR Code', { id: loadingToast })
+      const errorMsg = error instanceof Error ? error.message : 'Erro desconhecido'
+      
+      // Tratar "already connected" como sucesso
+      if (errorMsg.toLowerCase().includes('already connected')) {
+        await refetchStatus()
+        toast.info('Já conectado', { 
+          id: loadingToast,
+          description: 'A sessão WhatsApp já está conectada'
+        })
+      } else {
+        toast.error('Erro ao gerar QR Code', { 
+          id: loadingToast,
+          description: errorMsg
+        })
+      }
     } finally {
       setLoadingAction(null)
     }
@@ -461,7 +513,16 @@ const UserOverview = () => {
   useEffect(() => {
     setAvatarUrl(null)
     avatarFetchAttemptedRef.current = null
+    setQrCodeData(null) // Limpar QR code quando inbox muda
   }, [activeInboxId])
+
+  // Efeito para limpar QR code quando usuário faz login
+  useEffect(() => {
+    const isLoggedIn = sessionStatus?.loggedIn ?? connectionData?.isLoggedIn
+    if (isLoggedIn && qrCodeData) {
+      setQrCodeData(null)
+    }
+  }, [sessionStatus?.loggedIn, connectionData?.isLoggedIn, qrCodeData])
 
   // Efeito para sincronizar webhook config local com dados do servidor
   useEffect(() => {
@@ -787,15 +848,15 @@ const UserOverview = () => {
                   isLoggedIn: sessionStatus?.loggedIn ?? connectionData.isLoggedIn ?? false
                 }}
                 isLoading={connecting}
-                loadingAction={connecting ? 'connect' : null}
+                loadingAction={loadingAction}
                 onConnect={handleConnect}
                 onDisconnect={handleDisconnect}
                 onLogout={handleLogout}
-                onGenerateQR={handleConnect}
+                onGenerateQR={handleGenerateQRQuick}
               />
 
-              {/* QR Code */}
-              {qrCode && (
+              {/* QR Code - exibe qrCodeData (gerado localmente) ou qrCode (do hook) */}
+              {(qrCodeData || qrCode) && !(sessionStatus?.loggedIn ?? connectionData?.isLoggedIn) && (
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
@@ -806,14 +867,28 @@ const UserOverview = () => {
                       Escaneie este QR Code com seu WhatsApp para fazer login
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="flex justify-center">
+                  <CardContent className="flex flex-col items-center gap-4">
                     <div className="bg-white p-4 rounded-lg shadow-sm">
                       <img 
-                        src={qrCode} 
+                        src={(qrCodeData || qrCode)?.startsWith('data:') 
+                          ? (qrCodeData || qrCode) 
+                          : `data:image/png;base64,${qrCodeData || qrCode}`
+                        } 
                         alt="QR Code WhatsApp" 
                         className="w-64 h-64"
                       />
                     </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setQrCodeData(null)
+                        refetchStatus()
+                      }}
+                    >
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Fechar e Verificar Status
+                    </Button>
                   </CardContent>
                 </Card>
               )}

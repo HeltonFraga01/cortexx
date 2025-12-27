@@ -319,6 +319,22 @@ router.post('/connect',
       
       // Verificar se a resposta foi bem-sucedida
       if (!response.success) {
+        // Handle "already connected" as success (Property 6: Already Connected Handling)
+        const errorMessage = (response.error || '').toLowerCase();
+        if (errorMessage.includes('already connected')) {
+          logger.info('WhatsApp session already connected', {
+            url: req.url,
+            method: req.method,
+            user_agent: req.get('User-Agent'),
+            ip: req.ip
+          });
+          return res.status(200).json({
+            success: true,
+            alreadyConnected: true,
+            message: 'Sessão já está conectada'
+          });
+        }
+        
         logger.error('Erro ao conectar sessão', {
           url: req.url,
           method: req.method,
@@ -345,6 +361,22 @@ router.post('/connect',
 
       return res.status(200).json(response.data);
     } catch (error) {
+      // Handle "already connected" in catch block as well
+      const errorMessage = (error.message || '').toLowerCase();
+      if (errorMessage.includes('already connected')) {
+        logger.info('WhatsApp session already connected (from exception)', {
+          url: req.url,
+          method: req.method,
+          user_agent: req.get('User-Agent'),
+          ip: req.ip
+        });
+        return res.status(200).json({
+          success: true,
+          alreadyConnected: true,
+          message: 'Sessão já está conectada'
+        });
+      }
+      
       logger.error('Erro ao conectar sessão', {
         url: req.url,
         method: req.method,
